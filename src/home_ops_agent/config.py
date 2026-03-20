@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     base_url: str = "https://agent.mnygaard.io"
 
     # Agent behavior
-    pr_check_interval_seconds: int = 300  # 5 minutes
+    pr_check_interval_seconds: int = 1800  # 30 minutes
     alert_cooldown_seconds: int = 900  # 15 minutes
 
     # Per-task model configuration (override via UI settings)

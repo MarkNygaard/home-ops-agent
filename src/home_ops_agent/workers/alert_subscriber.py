@@ -22,20 +22,35 @@ logger = logging.getLogger(__name__)
 _cooldowns: dict[str, datetime] = {}
 
 
-def _is_on_cooldown(alert_key: str) -> bool:
+async def _get_cooldown_seconds() -> int:
+    """Get alert cooldown from DB settings, falling back to env config."""
+    from sqlalchemy import select
+    from home_ops_agent.database import Setting
+    async with async_session() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "alert_cooldown_seconds")
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            return int(setting.value)
+    return settings.alert_cooldown_seconds
+
+
+async def _is_on_cooldown(alert_key: str) -> bool:
     """Check if an alert is still in cooldown period."""
     last_time = _cooldowns.get(alert_key)
     if last_time is None:
         return False
     elapsed = (datetime.now(timezone.utc) - last_time).total_seconds()
-    return elapsed < settings.alert_cooldown_seconds
+    cooldown = await _get_cooldown_seconds()
+    return elapsed < cooldown
 
 
 async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
     """Run the agent to investigate an alert."""
     alert_key = f"{alert.get('topic', '')}:{alert.get('title', '')}:{alert.get('message', '')[:50]}"
 
-    if _is_on_cooldown(alert_key):
+    if await _is_on_cooldown(alert_key):
         logger.debug("Alert on cooldown, skipping: %s", alert_key)
         return
 

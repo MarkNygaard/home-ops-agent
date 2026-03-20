@@ -12,6 +12,8 @@ from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import PR_REVIEW_PROMPT
 from home_ops_agent.agent.tools.github import get_github_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
+from sqlalchemy import select
+
 from home_ops_agent.auth.oauth import get_claude_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
@@ -136,9 +138,21 @@ async def check_prs():
             logger.info("Reviewed PR #%s: %s", pr["number"], result.response[:100])
 
 
+async def _get_check_interval() -> int:
+    """Get PR check interval from DB settings, falling back to env config."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Setting).where(Setting.key == "pr_check_interval_seconds")
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            return int(setting.value)
+    return settings.pr_check_interval_seconds
+
+
 async def run_pr_monitor():
     """Background task: periodically check PRs."""
-    logger.info("PR monitor started (interval: %ds)", settings.pr_check_interval_seconds)
+    logger.info("PR monitor started (default interval: %ds)", settings.pr_check_interval_seconds)
 
     while True:
         try:
@@ -146,4 +160,5 @@ async def run_pr_monitor():
         except Exception:
             logger.exception("PR monitor cycle failed")
 
-        await asyncio.sleep(settings.pr_check_interval_seconds)
+        interval = await _get_check_interval()
+        await asyncio.sleep(interval)
