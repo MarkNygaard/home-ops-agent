@@ -100,44 +100,67 @@
         </div>
 
         <div class="setting-group">
-          <h3>Models per Task</h3>
-          <p class="desc" style="margin-bottom: 12px;">Use cheaper models for simple tasks, more capable models for complex ones.</p>
-          <div class="setting-row">
-            <label>PR Review:
+          <h3>Agents</h3>
+          <p class="desc" style="margin-bottom: 16px;">Each agent handles a specific task. Assign cheaper models to simple tasks and more capable models to complex ones.</p>
+
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">PR Review</span>
               <select id="model-pr-review" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5 (cheapest)</option>
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                 <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+                <option value="claude-opus-4-20250514">Opus 4</option>
               </select>
-            </label>
-            <label>Alert Triage:
+            </div>
+            <p class="agent-desc">Reviews open Renovate PRs. Reads diffs, checks CI status and labels, posts a review comment with risk assessment. Can push fix commits when auto-merge is enabled.</p>
+          </div>
+
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">Alert Triage</span>
               <select id="model-alert-triage" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5 (cheapest)</option>
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                 <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+                <option value="claude-opus-4-20250514">Opus 4</option>
               </select>
-            </label>
-            <label>Alert Fix:
+            </div>
+            <p class="agent-desc">First responder for alerts from Alertmanager and Gatus. Checks pod status, reads logs, queries Prometheus metrics, and identifies the root cause.</p>
+          </div>
+
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">Alert Fix</span>
               <select id="model-alert-fix" class="model-select">
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                 <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+                <option value="claude-opus-4-20250514">Opus 4</option>
               </select>
-            </label>
-            <label>Code Fix:
+            </div>
+            <p class="agent-desc">Takes corrective action when an issue is found. Can restart pods, reconcile Flux resources, and send enriched diagnostics via ntfy. Every action is logged and reported.</p>
+          </div>
+
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">Code Fix</span>
               <select id="model-code-fix" class="model-select">
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                 <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+                <option value="claude-opus-4-20250514">Opus 4</option>
               </select>
-            </label>
-            <label>Chat:
+            </div>
+            <p class="agent-desc">Writes code fixes for failing PRs. Understands Kubernetes manifests, HelmRelease schemas, and can push fix commits to PR branches. Only modifies files under kubernetes/apps/.</p>
+          </div>
+
+          <div class="agent-card">
+            <div class="agent-header">
+              <span class="agent-name">Chat</span>
               <select id="model-chat" class="model-select">
                 <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
                 <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+                <option value="claude-opus-4-20250514">Opus 4</option>
               </select>
-            </label>
+            </div>
+            <p class="agent-desc">Powers the interactive chat. Answers questions about cluster state, runs diagnostics on demand, and executes commands you ask for. Has access to all tools.</p>
           </div>
         </div>
 
