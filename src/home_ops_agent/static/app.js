@@ -280,6 +280,22 @@ document.getElementById("save-api-key-btn").addEventListener("click", async () =
 });
 
 
+// Enable save button when any setting changes
+function markSettingsDirty() {
+  document.getElementById("save-settings-btn").disabled = false;
+}
+
+document.querySelectorAll('input[name="pr_mode"]').forEach((r) => r.addEventListener("change", markSettingsDirty));
+document.querySelectorAll('input[name="auth_method"]').forEach((r) => r.addEventListener("change", markSettingsDirty));
+document.getElementById("alert-cooldown").addEventListener("input", markSettingsDirty);
+document.getElementById("ntfy-topics").addEventListener("input", markSettingsDirty);
+document.getElementById("pr-interval").addEventListener("input", markSettingsDirty);
+
+// Model dropdowns are dynamic, so we use event delegation
+document.addEventListener("change", (e) => {
+  if (e.target.classList.contains("model-select")) markSettingsDirty();
+});
+
 document.getElementById("save-settings-btn").addEventListener("click", async () => {
   const prMode = document.querySelector('input[name="pr_mode"]:checked').value;
   const authMethod = document.querySelector('input[name="auth_method"]:checked').value;
@@ -302,6 +318,7 @@ document.getElementById("save-settings-btn").addEventListener("click", async () 
     saveSetting("pr_check_interval_seconds", interval),
     ...modelSaves,
   ]);
+  document.getElementById("save-settings-btn").disabled = true;
   showSettingsStatus("Settings saved");
 });
 

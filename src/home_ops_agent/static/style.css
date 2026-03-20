@@ -361,6 +361,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 .btn.primary:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); }
 
 /* Agent cards */
 .agent-card {
