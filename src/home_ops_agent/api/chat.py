@@ -1,0 +1,153 @@
+"""WebSocket chat endpoint for interactive conversation with the agent."""
+
+import json
+import logging
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from sqlalchemy import select
+
+from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.prompts import CHAT_PROMPT
+from home_ops_agent.agent.tools.github import get_github_tools
+from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
+from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
+from home_ops_agent.auth.oauth import get_claude_credentials
+from home_ops_agent.database import Conversation, Message, async_session
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+# Store MCP tools reference (set during app startup)
+_mcp_tools: list = []
+
+
+def set_mcp_tools(tools: list):
+    """Set the MCP tools available for chat."""
+    global _mcp_tools
+    _mcp_tools = tools
+
+
+@router.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket):
+    """WebSocket endpoint for real-time chat with the agent."""
+    await websocket.accept()
+
+    conversation_id = None
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+
+            user_text = msg.get("message", "")
+            conversation_id = msg.get("conversation_id")
+
+            if not user_text:
+                continue
+
+            # Get or create conversation
+            async with async_session() as session:
+                if conversation_id:
+                    result = await session.execute(
+                        select(Conversation).where(Conversation.id == conversation_id)
+                    )
+                    conversation = result.scalar_one_or_none()
+                else:
+                    conversation = None
+
+                if conversation is None:
+                    conversation = Conversation(
+                        title=user_text[:100],
+                        source="chat",
+                        status="active",
+                    )
+                    session.add(conversation)
+                    await session.flush()
+                    conversation_id = conversation.id
+
+                # Save user message
+                user_msg = Message(
+                    conversation_id=conversation_id,
+                    role="user",
+                    content={"text": user_text},
+                )
+                session.add(user_msg)
+                await session.commit()
+
+            # Send typing indicator
+            await websocket.send_text(json.dumps({
+                "type": "typing",
+                "conversation_id": conversation_id,
+            }))
+
+            # Build message history from DB
+            async with async_session() as session:
+                result = await session.execute(
+                    select(Message)
+                    .where(Message.conversation_id == conversation_id)
+                    .order_by(Message.created_at)
+                )
+                db_messages = result.scalars().all()
+
+            messages = []
+            for m in db_messages:
+                if m.role == "user":
+                    messages.append({"role": "user", "content": m.content.get("text", "")})
+                elif m.role == "assistant":
+                    messages.append({"role": "assistant", "content": m.content.get("text", "")})
+
+            # Run agent
+            api_key, oauth_token = await get_claude_credentials()
+            if not api_key and not oauth_token:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": "No Claude credentials configured. Please set up OAuth or an API key in Settings.",
+                }))
+                continue
+
+            agent = Agent(api_key=api_key, oauth_token=oauth_token)
+            agent.register_tools(get_kubernetes_tools())
+            agent.register_tools(get_github_tools())
+            agent.register_tools(get_ntfy_tools())
+            agent.register_tools(_mcp_tools)
+
+            try:
+                result = await agent.run(
+                    system_prompt=CHAT_PROMPT,
+                    messages=messages,
+                    max_turns=15,
+                )
+
+                # Save assistant response
+                async with async_session() as session:
+                    assistant_msg = Message(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content={
+                            "text": result.response,
+                            "tool_calls": result.tool_calls,
+                            "tokens": result.total_tokens,
+                        },
+                    )
+                    session.add(assistant_msg)
+                    await session.commit()
+
+                await websocket.send_text(json.dumps({
+                    "type": "message",
+                    "conversation_id": conversation_id,
+                    "content": result.response,
+                    "tool_calls": result.tool_calls,
+                    "tokens": result.total_tokens,
+                }))
+            except Exception as e:
+                logger.exception("Chat agent failed")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": f"Agent error: {e}",
+                }))
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected for conversation %s", conversation_id)
+    except Exception:
+        logger.exception("WebSocket error")

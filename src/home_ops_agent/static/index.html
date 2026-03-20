@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Home-Ops Agent</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <nav id="sidebar">
+      <h1>Home-Ops Agent</h1>
+      <div class="nav-links">
+        <button class="nav-btn active" data-view="chat">Chat</button>
+        <button class="nav-btn" data-view="history">History</button>
+        <button class="nav-btn" data-view="settings">Settings</button>
+      </div>
+      <div id="status-indicator">
+        <span class="dot"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </nav>
+
+    <!-- Main content -->
+    <main id="content">
+      <!-- Chat view -->
+      <section id="view-chat" class="view active">
+        <div id="chat-header">
+          <h2>Chat</h2>
+          <button id="new-chat-btn">New Chat</button>
+        </div>
+        <div id="chat-messages"></div>
+        <div id="chat-input-area">
+          <textarea id="chat-input" placeholder="Ask about your cluster..." rows="2"></textarea>
+          <button id="send-btn">Send</button>
+        </div>
+      </section>
+
+      <!-- History view -->
+      <section id="view-history" class="view">
+        <div id="history-header">
+          <h2>Activity History</h2>
+          <div class="filter-bar">
+            <button class="filter-btn active" data-filter="">All</button>
+            <button class="filter-btn" data-filter="pr_review">PRs</button>
+            <button class="filter-btn" data-filter="alert_response">Alerts</button>
+            <button class="filter-btn" data-filter="user_chat">Chats</button>
+            <button class="filter-btn" data-filter="cluster_fix">Fixes</button>
+          </div>
+        </div>
+        <div id="history-list"></div>
+        <div id="task-detail" class="hidden"></div>
+      </section>
+
+      <!-- Settings view -->
+      <section id="view-settings" class="view">
+        <h2>Settings</h2>
+
+        <div class="setting-group">
+          <h3>PR Review Mode</h3>
+          <div class="setting-row">
+            <label>
+              <input type="radio" name="pr_mode" value="comment_only" checked> Comment Only
+              <span class="desc">Agent reviews PRs and posts comments. You merge manually.</span>
+            </label>
+            <label>
+              <input type="radio" name="pr_mode" value="auto_merge"> Auto-Merge
+              <span class="desc">Agent merges safe Renovate patch/digest PRs with passing CI.</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h3>Claude Authentication</h3>
+          <div class="setting-row">
+            <label>
+              <input type="radio" name="auth_method" value="api_key" checked> API Key
+            </label>
+            <label>
+              <input type="radio" name="auth_method" value="oauth"> OAuth (Max/Pro)
+            </label>
+          </div>
+
+          <div id="auth-api-key-section">
+            <input type="password" id="api-key-input" placeholder="sk-ant-...">
+            <button id="save-api-key-btn">Save API Key</button>
+          </div>
+
+          <div id="auth-oauth-section" class="hidden">
+            <div id="oauth-status-display">
+              <span id="oauth-status-badge">Not configured</span>
+              <span id="oauth-expires"></span>
+            </div>
+            <a href="/auth/login" id="oauth-login-btn" class="btn">Authorize with Anthropic</a>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h3>Alert Settings</h3>
+          <div class="setting-row">
+            <label>Cooldown (seconds):
+              <input type="number" id="alert-cooldown" value="900" min="60" max="3600">
+            </label>
+          </div>
+          <div class="setting-row">
+            <label>ntfy Topics (comma-separated):
+              <input type="text" id="ntfy-topics" value="alertmanager,gatus">
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <h3>PR Monitor</h3>
+          <div class="setting-row">
+            <label>Check interval (seconds):
+              <input type="number" id="pr-interval" value="300" min="60" max="3600">
+            </label>
+          </div>
+        </div>
+
+        <button id="save-settings-btn" class="btn primary">Save All Settings</button>
+        <div id="settings-status"></div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
