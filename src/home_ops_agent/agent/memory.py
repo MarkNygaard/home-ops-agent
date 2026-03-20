@@ -16,17 +16,23 @@ You are a memory extraction system. Given a conversation between a user and an a
 about a Kubernetes home lab cluster, extract key facts worth remembering for future \
 conversations.
 
-Extract ONLY facts that would be useful in future conversations, such as:
-- Recurring issues (e.g., "Sonarr pod frequently OOMs")
+Extract ONLY structural, long-lived facts, such as:
+- Recurring issues (e.g., "Sonarr pod frequently OOMs under heavy load")
 - User preferences (e.g., "User prefers to be notified about all restarts")
-- Cluster knowledge (e.g., "Jellyfin uses GPU transcoding on k8s-1")
+- Architectural knowledge (e.g., "Apps with local-path PVCs are pinned to the node \
+where the PVC was created — if scheduled elsewhere, mount fails")
 - Fixes applied (e.g., "Fixed radarr by increasing memory limit to 512Mi")
 - Configuration details (e.g., "AdGuard upstream DNS changed to 1.1.1.1")
+- Resource constraints (e.g., "Nodes have 16GB RAM, GPU only on k8s-1")
 
 Do NOT extract:
-- Transient status checks ("pods are running" — this changes constantly)
-- Greetings or small talk
-- Information already in the system prompt
+- Current pod/node placement ("Jellyfin is on k8s-1") — pods move between nodes
+- Transient status ("pods are running", "no open PRs") — this changes constantly
+- Pod counts, IP addresses, or resource usage numbers — stale within minutes
+- Greetings, small talk, or simple questions
+- Information already in the cluster context prompt
+
+Focus on WHY things happen, not WHERE things currently are.
 
 Return a JSON array of objects with "content" and "category" fields.
 Categories: "issue", "preference", "knowledge", "fix", "config"
@@ -35,7 +41,7 @@ If there is nothing worth remembering, return an empty array: []
 
 Example output:
 [
-  {"content": "Sonarr pod OOMs when scanning large libraries", "category": "fix"},
+  {"content": "Sonarr PVC uses local-path on k8s-0, pod must run there", "category": "knowledge"},
   {"content": "User wants ntfy notifications for all restarts", "category": "preference"}
 ]
 """
