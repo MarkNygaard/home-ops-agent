@@ -10,7 +10,7 @@
   --green: #3fb950;
   --yellow: #d29922;
   --red: #f85149;
-  --radius: 8px;
+  --radius: 4px;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -356,7 +356,6 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   cursor: pointer;
   font-size: 14px;
   text-decoration: none;
-  margin-top: 8px;
 }
 
 .btn:hover { border-color: var(--accent); }
