@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent
 from home_ops_agent.agent.models import get_model_for_task
-from home_ops_agent.agent.prompts import CHAT_PROMPT
+from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.tools.github import get_github_tools
 from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
@@ -125,8 +125,9 @@ async def websocket_chat(websocket: WebSocket):
 
             try:
                 chat_model = await get_model_for_task("chat")
+                chat_prompt = await get_prompt("chat")
                 result = await agent.run(
-                    system_prompt=CHAT_PROMPT,
+                    system_prompt=chat_prompt,
                     messages=messages,
                     model=chat_model,
                     max_turns=15,

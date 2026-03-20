@@ -396,6 +396,57 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   min-width: 140px;
 }
 
+/* Prompt editor */
+.prompt-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+
+.prompt-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.prompt-card-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.prompt-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.prompt-textarea {
+  width: 100%;
+  min-height: 150px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.prompt-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.prompt-customized {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .hidden { display: none !important; }
 
 #oauth-status-badge {

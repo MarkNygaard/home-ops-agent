@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
 from home_ops_agent.auth.oauth import (
     exchange_code,
     generate_pkce_pair,
@@ -102,6 +103,10 @@ async def update_setting(key: str, body: UpdateSetting):
         "ntfy_topics",
         "pr_check_interval_seconds",
         "model_pr_review",
+        "prompt_cluster_context",
+        "prompt_pr_review",
+        "prompt_alert_response",
+        "prompt_chat",
         "model_alert_triage",
         "model_alert_fix",
         "model_code_fix",
@@ -123,6 +128,39 @@ async def update_setting(key: str, body: UpdateSetting):
         await session.commit()
 
     return {"status": "ok", "key": key}
+
+
+@router.get("/api/prompts")
+async def get_prompts():
+    """Get all agent prompts (custom or defaults)."""
+    async with async_session() as session:
+        result = await session.execute(select(Setting).where(Setting.key.like("prompt_%")))
+        db_prompts = {s.key: s.value for s in result.scalars().all()}
+
+    return {
+        name: {
+            "default": default_text,
+            "custom": db_prompts.get(f"prompt_{name}", ""),
+            "is_customized": f"prompt_{name}" in db_prompts,
+        }
+        for name, default_text in PROMPT_DEFAULTS.items()
+    }
+
+
+@router.delete("/api/prompts/{name}")
+async def reset_prompt(name: str):
+    """Reset a prompt to its default by removing the custom version."""
+    key = f"prompt_{name}"
+    if name not in PROMPT_DEFAULTS:
+        return {"error": f"Unknown prompt: {name}"}
+
+    async with async_session() as session:
+        from sqlalchemy import delete
+
+        await session.execute(delete(Setting).where(Setting.key == key))
+        await session.commit()
+
+    return {"status": "ok", "reset": name}
 
 
 # --- OAuth flow endpoints ---

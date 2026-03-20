@@ -14,7 +14,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     document.getElementById(`view-${btn.dataset.view}`).classList.add("active");
 
     if (btn.dataset.view === "history") loadHistory();
-    if (btn.dataset.view === "settings") loadSettings();
+    if (btn.dataset.view === "settings") { loadSettings(); loadPrompts(); }
   });
 });
 
@@ -313,6 +313,61 @@ function showSettingsStatus(msg) {
   el.textContent = msg;
   el.style.color = "var(--green)";
   setTimeout(() => (el.textContent = ""), 3000);
+}
+
+// --- Prompts ---
+
+const PROMPT_LABELS = {
+  cluster_context: "Cluster Context (shared by all agents)",
+  pr_review: "PR Review Agent",
+  alert_response: "Alert Response Agent",
+  chat: "Chat Agent",
+};
+
+async function loadPrompts() {
+  try {
+    const resp = await fetch("/api/prompts");
+    const prompts = await resp.json();
+    const container = document.getElementById("prompt-editors");
+    container.innerHTML = "";
+
+    for (const [name, info] of Object.entries(prompts)) {
+      const card = document.createElement("div");
+      card.className = "prompt-card";
+      card.innerHTML = `
+        <div class="prompt-card-header">
+          <span class="prompt-card-name">${PROMPT_LABELS[name] || name}</span>
+          <div class="prompt-card-actions">
+            ${info.is_customized ? '<span class="prompt-customized">Customized</span>' : ""}
+            <button class="btn" onclick="savePrompt('${name}')">Save</button>
+            ${info.is_customized ? `<button class="btn" onclick="resetPrompt('${name}')">Reset</button>` : ""}
+          </div>
+        </div>
+        <textarea class="prompt-textarea" id="prompt-${name}">${info.custom || info.default}</textarea>
+      `;
+      container.appendChild(card);
+    }
+  } catch (e) {
+    console.error("Failed to load prompts:", e);
+  }
+}
+
+async function savePrompt(name) {
+  const textarea = document.getElementById(`prompt-${name}`);
+  if (!textarea) return;
+  await saveSetting(`prompt_${name}`, textarea.value);
+  showSettingsStatus(`Prompt "${PROMPT_LABELS[name] || name}" saved`);
+  loadPrompts();
+}
+
+async function resetPrompt(name) {
+  try {
+    await fetch(`/api/prompts/${name}`, { method: "DELETE" });
+    showSettingsStatus(`Prompt "${PROMPT_LABELS[name] || name}" reset to default`);
+    loadPrompts();
+  } catch (e) {
+    console.error("Failed to reset prompt:", e);
+  }
 }
 
 // --- Init ---
