@@ -372,8 +372,8 @@ async function loadAgentCards() {
     const modelSelect = agent.modelKey
       ? `<select id="model-${agent.modelKey.replace("_", "-")}" class="model-select">
           <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-          <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-          <option value="claude-opus-4-20250514">Opus 4</option>
+          <option value="claude-sonnet-4-6-20250514">Sonnet 4.6</option>
+          <option value="claude-opus-4-6-20250514">Opus 4.6</option>
         </select>`
       : "";
 
