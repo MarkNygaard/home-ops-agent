@@ -57,6 +57,7 @@ async def get_settings():
         "oauth_status": oauth_status,
         "oauth_token_expires": token_expires,
         "has_api_key": bool(db_settings.get("anthropic_api_key") or settings.anthropic_api_key),
+        "has_oauth_credentials": bool(settings.anthropic_client_id and settings.anthropic_client_secret),
         "alert_cooldown_seconds": int(db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)),
         "ntfy_topics": db_settings.get(
             "ntfy_topics",

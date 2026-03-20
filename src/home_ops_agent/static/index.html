@@ -84,7 +84,7 @@
 
           <div id="auth-api-key-section">
             <input type="password" id="api-key-input" placeholder="sk-ant-...">
-            <button id="save-api-key-btn">Save API Key</button>
+            <button id="save-api-key-btn" class="btn">Save API Key</button>
           </div>
 
           <div id="auth-oauth-section" class="hidden">
@@ -93,6 +93,9 @@
               <span id="oauth-expires"></span>
             </div>
             <a href="/auth/login" id="oauth-login-btn" class="btn">Authorize with Anthropic</a>
+            <p class="desc" style="margin-top: 8px;">
+              OAuth client credentials are configured via the SOPS secret at deploy time.
+            </p>
           </div>
         </div>
 

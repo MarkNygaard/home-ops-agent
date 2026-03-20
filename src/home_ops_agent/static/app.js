@@ -245,6 +245,7 @@ document.getElementById("save-api-key-btn").addEventListener("click", async () =
   showSettingsStatus("API key saved");
 });
 
+
 document.getElementById("save-settings-btn").addEventListener("click", async () => {
   const prMode = document.querySelector('input[name="pr_mode"]:checked').value;
   const authMethod = document.querySelector('input[name="auth_method"]:checked').value;
