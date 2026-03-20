@@ -362,6 +362,12 @@ async function loadAgentCards() {
     promptData = {};
   }
 
+  // Update cluster context indicator
+  const ccIndicator = document.getElementById("cluster-context-indicator");
+  if (ccIndicator && promptData.cluster_context) {
+    ccIndicator.textContent = promptData.cluster_context.is_customized ? "Customized" : "";
+  }
+
   const container = document.getElementById("agent-cards");
   container.innerHTML = "";
 

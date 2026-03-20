@@ -104,11 +104,14 @@
         </div>
 
         <div class="setting-group">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Agents</h3>
-            <button class="btn prompt-btn" onclick="openPromptModal('cluster_context')">Cluster Context</button>
-          </div>
+          <h3>Cluster Context</h3>
+          <p class="desc">Shared system prompt prepended to all agents. Describe your cluster setup, IPs, domain, and infrastructure.</p>
+          <button class="btn" style="margin-top: 8px;" onclick="openPromptModal('cluster_context')">Edit Cluster Context</button>
+          <span id="cluster-context-indicator" class="prompt-customized" style="margin-left: 8px;"></span>
+        </div>
 
+        <div class="setting-group">
+          <h3>Agents</h3>
           <div id="agent-cards"></div>
         </div>
 
