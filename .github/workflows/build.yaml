@@ -17,9 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv pip install --system ruff
-      - run: ruff check src/
-      - run: ruff format --check src/
+      - run: uvx ruff check src/
+      - run: uvx ruff format --check src/
 
   build:
     runs-on: ubuntu-latest
