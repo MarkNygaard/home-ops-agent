@@ -22,6 +22,15 @@ from home_ops_agent.database import OAuthToken, Setting, async_session
 router = APIRouter()
 
 
+def _mask_key(key: str) -> str:
+    """Return a masked version of an API key for display."""
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "****"
+    return f"{key[:7]}...{key[-4:]}"
+
+
 class UpdateSetting(BaseModel):
     value: str
 
@@ -56,6 +65,9 @@ async def get_settings():
         "oauth_status": oauth_status,
         "oauth_token_expires": token_expires,
         "has_api_key": bool(db_settings.get("anthropic_api_key") or settings.anthropic_api_key),
+        "api_key_hint": _mask_key(
+            db_settings.get("anthropic_api_key") or settings.anthropic_api_key
+        ),
         "has_oauth_credentials": bool(
             settings.anthropic_client_id and settings.anthropic_client_secret
         ),

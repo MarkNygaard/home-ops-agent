@@ -205,6 +205,22 @@ async function loadSettings() {
     document.querySelector(`input[name="auth_method"][value="${s.auth_method}"]`).checked = true;
     toggleAuthSections(s.auth_method);
 
+    // API key status
+    const apiKeyStatus = document.getElementById("api-key-status");
+    const apiKeyBadge = document.getElementById("api-key-badge");
+    const apiKeyHint = document.getElementById("api-key-hint");
+    if (s.has_api_key && s.api_key_hint) {
+      apiKeyStatus.classList.remove("hidden");
+      apiKeyBadge.textContent = "Active";
+      apiKeyBadge.className = "status-badge active";
+      apiKeyHint.textContent = s.api_key_hint;
+    } else {
+      apiKeyStatus.classList.remove("hidden");
+      apiKeyBadge.textContent = "Not set";
+      apiKeyBadge.className = "status-badge inactive";
+      apiKeyHint.textContent = "";
+    }
+
     // OAuth status
     const badge = document.getElementById("oauth-status-badge");
     badge.textContent = s.oauth_status;
@@ -251,6 +267,7 @@ document.getElementById("save-api-key-btn").addEventListener("click", async () =
   await saveSetting("anthropic_api_key", key);
   document.getElementById("api-key-input").value = "";
   showSettingsStatus("API key saved");
+  loadSettings(); // Refresh to show masked key
 });
 
 

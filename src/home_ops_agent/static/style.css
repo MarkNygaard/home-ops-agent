@@ -406,6 +406,25 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   font-weight: 600;
 }
 
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.status-badge.active {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--green);
+}
+
+.status-badge.inactive {
+  background: rgba(139, 148, 158, 0.15);
+  color: var(--text-secondary);
+}
+
 #settings-status {
   margin-top: 12px;
   font-size: 13px;
