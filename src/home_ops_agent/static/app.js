@@ -14,7 +14,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     document.getElementById(`view-${btn.dataset.view}`).classList.add("active");
 
     if (btn.dataset.view === "history") loadHistory();
-    if (btn.dataset.view === "settings") { loadSettings(); loadPrompts(); }
+    if (btn.dataset.view === "settings") { loadSettings(); loadAgentCards(); }
   });
 });
 
@@ -235,7 +235,8 @@ async function loadSettings() {
       document.getElementById("oauth-expires").textContent = `Expires: ${new Date(s.oauth_token_expires).toLocaleString()}`;
     }
 
-    // Model settings
+    // Model settings (applied after agent cards render)
+    await loadAgentCards();
     if (s.models) {
       for (const [task, model] of Object.entries(s.models)) {
         const el = document.getElementById(`model-${task.replace("_", "-")}`);
@@ -315,56 +316,137 @@ function showSettingsStatus(msg) {
   setTimeout(() => (el.textContent = ""), 3000);
 }
 
-// --- Prompts ---
+// --- Agents (cards with model selector + inline prompt editor) ---
 
-const PROMPT_LABELS = {
-  cluster_context: "Cluster Context (shared by all agents)",
-  pr_review: "PR Review Agent",
-  alert_response: "Alert Response Agent",
-  chat: "Chat Agent",
-};
+const AGENTS = [
+  {
+    name: "PR Review",
+    promptKey: "pr_review",
+    modelKey: "pr_review",
+    desc: "Reviews open Renovate PRs. Reads diffs, checks CI status and labels, posts a review comment with risk assessment.",
+  },
+  {
+    name: "Alert Triage",
+    promptKey: null,
+    modelKey: "alert_triage",
+    desc: "First responder for alerts from Alertmanager and Gatus. Checks pod status, reads logs, queries Prometheus metrics.",
+  },
+  {
+    name: "Alert Fix",
+    promptKey: "alert_response",
+    modelKey: "alert_fix",
+    desc: "Takes corrective action when an issue is found. Can restart pods, reconcile Flux resources, and send enriched diagnostics via ntfy.",
+  },
+  {
+    name: "Code Fix",
+    promptKey: null,
+    modelKey: "code_fix",
+    desc: "Writes code fixes for failing PRs. Understands Kubernetes manifests and HelmRelease schemas. Only modifies files under kubernetes/apps/.",
+  },
+  {
+    name: "Chat",
+    promptKey: "chat",
+    modelKey: "chat",
+    desc: "Powers the interactive chat. Answers questions about cluster state, runs diagnostics on demand, and executes commands.",
+  },
+];
 
-async function loadPrompts() {
+let promptData = {};
+
+async function loadAgentCards() {
   try {
     const resp = await fetch("/api/prompts");
-    const prompts = await resp.json();
-    const container = document.getElementById("prompt-editors");
-    container.innerHTML = "";
-
-    for (const [name, info] of Object.entries(prompts)) {
-      const card = document.createElement("div");
-      card.className = "prompt-card";
-      card.innerHTML = `
-        <div class="prompt-card-header">
-          <span class="prompt-card-name">${PROMPT_LABELS[name] || name}</span>
-          <div class="prompt-card-actions">
-            ${info.is_customized ? '<span class="prompt-customized">Customized</span>' : ""}
-            <button class="btn" onclick="savePrompt('${name}')">Save</button>
-            ${info.is_customized ? `<button class="btn" onclick="resetPrompt('${name}')">Reset</button>` : ""}
-          </div>
-        </div>
-        <textarea class="prompt-textarea" id="prompt-${name}">${info.custom || info.default}</textarea>
-      `;
-      container.appendChild(card);
-    }
+    promptData = await resp.json();
   } catch (e) {
     console.error("Failed to load prompts:", e);
+    promptData = {};
   }
+
+  // Populate cluster context editor
+  const cc = promptData.cluster_context;
+  if (cc) {
+    const ccTextarea = document.getElementById("prompt-cluster_context");
+    if (ccTextarea) ccTextarea.value = cc.custom || cc.default || "";
+    const ccBadge = document.getElementById("cluster-context-badge");
+    if (ccBadge) {
+      ccBadge.textContent = cc.is_customized ? "Customized" : "";
+      ccBadge.className = cc.is_customized ? "prompt-customized" : "";
+    }
+    const ccReset = document.getElementById("cluster-context-reset");
+    if (ccReset) ccReset.classList.toggle("hidden", !cc.is_customized);
+  }
+
+  const container = document.getElementById("agent-cards");
+  container.innerHTML = "";
+
+  for (const agent of AGENTS) {
+    const prompt = agent.promptKey ? promptData[agent.promptKey] : null;
+    const isCustomized = prompt?.is_customized || false;
+
+    const modelSelect = agent.modelKey
+      ? `<select id="model-${agent.modelKey.replace("_", "-")}" class="model-select">
+          <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+          <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+          <option value="claude-opus-4-20250514">Opus 4</option>
+        </select>`
+      : "";
+
+    const promptBtn = agent.promptKey
+      ? `<button class="btn btn-small" onclick="togglePromptEditor('${agent.promptKey}')">Prompt${isCustomized ? " *" : ""}</button>`
+      : "";
+
+    const promptEditor = agent.promptKey
+      ? `<div class="prompt-editor hidden" id="prompt-editor-${agent.promptKey}">
+          <textarea class="prompt-textarea" id="prompt-${agent.promptKey}">${escapeHtml(prompt?.custom || prompt?.default || "")}</textarea>
+          <div class="prompt-card-actions" style="margin-top: 8px;">
+            ${isCustomized ? '<span class="prompt-customized">Customized</span>' : ""}
+            <button class="btn" onclick="savePrompt('${agent.promptKey}')">Save Prompt</button>
+            ${isCustomized ? `<button class="btn" onclick="resetPrompt('${agent.promptKey}')">Reset to Default</button>` : ""}
+          </div>
+        </div>`
+      : "";
+
+    const card = document.createElement("div");
+    card.className = "agent-card";
+    card.innerHTML = `
+      <div class="agent-header">
+        <span class="agent-name">${agent.name}</span>
+        <div class="agent-header-actions">
+          ${promptBtn}
+          ${modelSelect}
+        </div>
+      </div>
+      <p class="agent-desc">${agent.desc}</p>
+      ${promptEditor}
+    `;
+    container.appendChild(card);
+  }
+}
+
+function togglePromptEditor(key) {
+  const editor = document.getElementById(`prompt-editor-${key}`);
+  if (editor) editor.classList.toggle("hidden");
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 async function savePrompt(name) {
   const textarea = document.getElementById(`prompt-${name}`);
   if (!textarea) return;
   await saveSetting(`prompt_${name}`, textarea.value);
-  showSettingsStatus(`Prompt "${PROMPT_LABELS[name] || name}" saved`);
-  loadPrompts();
+  showSettingsStatus(`Prompt saved`);
+  loadAgentCards();
 }
 
 async function resetPrompt(name) {
   try {
     await fetch(`/api/prompts/${name}`, { method: "DELETE" });
-    showSettingsStatus(`Prompt "${PROMPT_LABELS[name] || name}" reset to default`);
-    loadPrompts();
+    showSettingsStatus(`Prompt reset to default`);
+    loadAgentCards();
   } catch (e) {
     console.error("Failed to reset prompt:", e);
   }

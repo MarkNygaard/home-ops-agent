@@ -379,6 +379,23 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   margin-bottom: 6px;
 }
 
+.agent-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.prompt-editor {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 .agent-name {
   font-size: 14px;
   font-weight: 600;

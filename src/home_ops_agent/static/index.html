@@ -104,68 +104,21 @@
         </div>
 
         <div class="setting-group">
-          <h3>Agents</h3>
-          <p class="desc" style="margin-bottom: 16px;">Each agent handles a specific task. Assign cheaper models to simple tasks and more capable models to complex ones.</p>
-
-          <div class="agent-card">
-            <div class="agent-header">
-              <span class="agent-name">PR Review</span>
-              <select id="model-pr-review" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4</option>
-              </select>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">Agents</h3>
+            <button class="btn btn-small" onclick="togglePromptEditor('cluster_context')">Cluster Context</button>
+          </div>
+          <div class="prompt-editor hidden" id="prompt-editor-cluster_context" style="margin-bottom: 16px;">
+            <p class="desc" style="margin-bottom: 8px;">Shared context prepended to all agent prompts. Describe your cluster setup, IPs, domain, and infrastructure here.</p>
+            <textarea class="prompt-textarea" id="prompt-cluster_context"></textarea>
+            <div class="prompt-card-actions" style="margin-top: 8px;">
+              <span id="cluster-context-badge"></span>
+              <button class="btn" onclick="savePrompt('cluster_context')">Save</button>
+              <button class="btn hidden" id="cluster-context-reset" onclick="resetPrompt('cluster_context')">Reset to Default</button>
             </div>
-            <p class="agent-desc">Reviews open Renovate PRs. Reads diffs, checks CI status and labels, posts a review comment with risk assessment. Can push fix commits when auto-merge is enabled.</p>
           </div>
 
-          <div class="agent-card">
-            <div class="agent-header">
-              <span class="agent-name">Alert Triage</span>
-              <select id="model-alert-triage" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4</option>
-              </select>
-            </div>
-            <p class="agent-desc">First responder for alerts from Alertmanager and Gatus. Checks pod status, reads logs, queries Prometheus metrics, and identifies the root cause.</p>
-          </div>
-
-          <div class="agent-card">
-            <div class="agent-header">
-              <span class="agent-name">Alert Fix</span>
-              <select id="model-alert-fix" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4</option>
-              </select>
-            </div>
-            <p class="agent-desc">Takes corrective action when an issue is found. Can restart pods, reconcile Flux resources, and send enriched diagnostics via ntfy. Every action is logged and reported.</p>
-          </div>
-
-          <div class="agent-card">
-            <div class="agent-header">
-              <span class="agent-name">Code Fix</span>
-              <select id="model-code-fix" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4</option>
-              </select>
-            </div>
-            <p class="agent-desc">Writes code fixes for failing PRs. Understands Kubernetes manifests, HelmRelease schemas, and can push fix commits to PR branches. Only modifies files under kubernetes/apps/.</p>
-          </div>
-
-          <div class="agent-card">
-            <div class="agent-header">
-              <span class="agent-name">Chat</span>
-              <select id="model-chat" class="model-select">
-                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
-                <option value="claude-opus-4-20250514">Opus 4</option>
-              </select>
-            </div>
-            <p class="agent-desc">Powers the interactive chat. Answers questions about cluster state, runs diagnostics on demand, and executes commands you ask for. Has access to all tools.</p>
-          </div>
+          <div id="agent-cards"></div>
         </div>
 
         <div class="setting-group">
@@ -194,12 +147,6 @@
         <button id="save-settings-btn" class="btn primary">Save All Settings</button>
         <div id="settings-status"></div>
 
-        <div class="setting-group" style="margin-top: 24px;">
-          <h3>System Prompts</h3>
-          <p class="desc" style="margin-bottom: 16px;">Customize what each agent knows about your cluster. The cluster context is shared across all agents.</p>
-
-          <div id="prompt-editors"></div>
-        </div>
       </section>
     </main>
   </div>
