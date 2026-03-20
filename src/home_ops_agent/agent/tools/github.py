@@ -246,6 +246,66 @@ async def create_commit(params: dict) -> str:
             return json.dumps({"status": "failed", "message": resp.text})
 
 
+async def create_branch(params: dict) -> str:
+    """Create a new branch from a base ref (default: main)."""
+    branch_name = params["branch_name"]
+    base = params.get("base", "main")
+
+    # Safety: branch name must start with a safe prefix
+    safe_prefixes = ("fix/", "feat/", "agent/")
+    if not any(branch_name.startswith(p) for p in safe_prefixes):
+        return json.dumps(
+            {"error": f"BLOCKED: Branch name must start with one of: {', '.join(safe_prefixes)}"}
+        )
+
+    async with httpx.AsyncClient() as client:
+        # Get the SHA of the base branch
+        url = f"{GITHUB_API}/repos/{settings.github_repo}/git/ref/heads/{base}"
+        resp = await client.get(url, headers=_headers())
+        if resp.status_code != 200:
+            return json.dumps({"error": f"Base branch '{base}' not found"})
+        base_sha = resp.json()["object"]["sha"]
+
+        # Create the new branch
+        url = f"{GITHUB_API}/repos/{settings.github_repo}/git/refs"
+        resp = await client.post(
+            url,
+            headers=_headers(),
+            json={"ref": f"refs/heads/{branch_name}", "sha": base_sha},
+        )
+        if resp.status_code == 201:
+            return json.dumps({"status": "ok", "branch": branch_name, "sha": base_sha})
+        else:
+            return json.dumps({"status": "failed", "message": resp.text})
+
+
+async def create_pr(params: dict) -> str:
+    """Create a pull request."""
+    title = params["title"]
+    body = params.get("body", "")
+    head = params["head"]  # Branch with changes
+    base = params.get("base", "main")
+
+    async with httpx.AsyncClient() as client:
+        url = f"{GITHUB_API}/repos/{settings.github_repo}/pulls"
+        resp = await client.post(
+            url,
+            headers=_headers(),
+            json={"title": title, "body": body, "head": head, "base": base},
+        )
+        if resp.status_code == 201:
+            pr = resp.json()
+            return json.dumps(
+                {
+                    "status": "ok",
+                    "pr_number": pr["number"],
+                    "html_url": pr["html_url"],
+                }
+            )
+        else:
+            return json.dumps({"status": "failed", "message": resp.text})
+
+
 def get_github_tools() -> list[ToolDefinition]:
     """Return all GitHub tool definitions."""
     return [
@@ -378,5 +438,49 @@ def get_github_tools() -> list[ToolDefinition]:
                 "required": ["path", "content", "message", "branch"],
             },
             handler=create_commit,
+        ),
+        ToolDefinition(
+            name="github_create_branch",
+            description=(
+                "Create a new git branch from main."
+                " Branch name must start with fix/, feat/, or agent/."
+                " Use this before committing fixes to a PR branch."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "branch_name": {
+                        "type": "string",
+                        "description": "Branch name (must start with fix/, feat/, or agent/)",
+                    },
+                    "base": {
+                        "type": "string",
+                        "description": "Base branch (default: main)",
+                    },
+                },
+                "required": ["branch_name"],
+            },
+            handler=create_branch,
+        ),
+        ToolDefinition(
+            name="github_create_pr",
+            description=(
+                "Create a pull request from a branch."
+                " Use after creating a branch and committing changes."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "PR title"},
+                    "body": {"type": "string", "description": "PR description (markdown)"},
+                    "head": {"type": "string", "description": "Branch with changes"},
+                    "base": {
+                        "type": "string",
+                        "description": "Target branch (default: main)",
+                    },
+                },
+                "required": ["title", "head"],
+            },
+            handler=create_pr,
         ),
     ]
