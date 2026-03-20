@@ -237,10 +237,18 @@ async function loadSettings() {
 
     // Model settings (applied after agent cards render)
     await loadAgentCards();
+    // Map old model IDs to current ones
+    const MODEL_MIGRATION = {
+      "claude-sonnet-4-20250514": "claude-sonnet-4-6-20250514",
+      "claude-opus-4-20250514": "claude-opus-4-6-20250514",
+    };
     if (s.models) {
       for (const [task, model] of Object.entries(s.models)) {
         const el = document.getElementById(`model-${task.replace("_", "-")}`);
-        if (el) el.value = model;
+        if (el) {
+          const mapped = MODEL_MIGRATION[model] || model;
+          el.value = mapped;
+        }
       }
     }
 
