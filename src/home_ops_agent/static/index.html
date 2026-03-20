@@ -100,6 +100,48 @@
         </div>
 
         <div class="setting-group">
+          <h3>Models per Task</h3>
+          <p class="desc" style="margin-bottom: 12px;">Use cheaper models for simple tasks, more capable models for complex ones.</p>
+          <div class="setting-row">
+            <label>PR Review:
+              <select id="model-pr-review" class="model-select">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5 (cheapest)</option>
+                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+              </select>
+            </label>
+            <label>Alert Triage:
+              <select id="model-alert-triage" class="model-select">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5 (cheapest)</option>
+                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+              </select>
+            </label>
+            <label>Alert Fix:
+              <select id="model-alert-fix" class="model-select">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+              </select>
+            </label>
+            <label>Code Fix:
+              <select id="model-code-fix" class="model-select">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+              </select>
+            </label>
+            <label>Chat:
+              <select id="model-chat" class="model-select">
+                <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+                <option value="claude-sonnet-4-20250514">Sonnet 4</option>
+                <option value="claude-opus-4-20250514">Opus 4 (most capable)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group">
           <h3>Alert Settings</h3>
           <div class="setting-row">
             <label>Cooldown (seconds):

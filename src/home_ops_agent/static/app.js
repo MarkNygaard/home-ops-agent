@@ -219,6 +219,14 @@ async function loadSettings() {
       document.getElementById("oauth-expires").textContent = `Expires: ${new Date(s.oauth_token_expires).toLocaleString()}`;
     }
 
+    // Model settings
+    if (s.models) {
+      for (const [task, model] of Object.entries(s.models)) {
+        const el = document.getElementById(`model-${task.replace("_", "-")}`);
+        if (el) el.value = model;
+      }
+    }
+
     // Other settings
     document.getElementById("alert-cooldown").value = s.alert_cooldown_seconds;
     document.getElementById("ntfy-topics").value = s.ntfy_topics;
@@ -253,12 +261,20 @@ document.getElementById("save-settings-btn").addEventListener("click", async () 
   const topics = document.getElementById("ntfy-topics").value;
   const interval = document.getElementById("pr-interval").value;
 
+  // Collect model settings
+  const modelTasks = ["pr_review", "alert_triage", "alert_fix", "code_fix", "chat"];
+  const modelSaves = modelTasks.map((task) => {
+    const el = document.getElementById(`model-${task.replace("_", "-")}`);
+    return el ? saveSetting(`model_${task}`, el.value) : Promise.resolve();
+  });
+
   await Promise.all([
     saveSetting("pr_mode", prMode),
     saveSetting("auth_method", authMethod),
     saveSetting("alert_cooldown_seconds", cooldown),
     saveSetting("ntfy_topics", topics),
     saveSetting("pr_check_interval_seconds", interval),
+    ...modelSaves,
   ]);
   showSettingsStatus("Settings saved");
 });

@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import CHAT_PROMPT
 from home_ops_agent.agent.tools.github import get_github_tools
 from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
@@ -113,9 +114,11 @@ async def websocket_chat(websocket: WebSocket):
             agent.register_tools(_mcp_tools)
 
             try:
+                chat_model = await get_model_for_task("chat")
                 result = await agent.run(
                     system_prompt=CHAT_PROMPT,
                     messages=messages,
+                    model=chat_model,
                     max_turns=15,
                 )
 

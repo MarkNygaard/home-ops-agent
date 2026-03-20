@@ -334,7 +334,17 @@ input[type="number"] {
   max-width: 400px;
 }
 
-input:focus { outline: none; border-color: var(--accent); }
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  max-width: 400px;
+}
+
+input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 .btn {
   display: inline-block;

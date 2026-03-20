@@ -66,6 +66,13 @@ async def get_settings():
         "pr_check_interval_seconds": int(
             db_settings.get("pr_check_interval_seconds", settings.pr_check_interval_seconds)
         ),
+        "models": {
+            "pr_review": db_settings.get("model_pr_review", settings.model_pr_review),
+            "alert_triage": db_settings.get("model_alert_triage", settings.model_alert_triage),
+            "alert_fix": db_settings.get("model_alert_fix", settings.model_alert_fix),
+            "code_fix": db_settings.get("model_code_fix", settings.model_code_fix),
+            "chat": db_settings.get("model_chat", settings.model_chat),
+        },
     }
 
 
@@ -75,6 +82,8 @@ async def update_setting(key: str, body: UpdateSetting):
     allowed_keys = {
         "pr_mode", "auth_method", "anthropic_api_key",
         "alert_cooldown_seconds", "ntfy_topics", "pr_check_interval_seconds",
+        "model_pr_review", "model_alert_triage", "model_alert_fix",
+        "model_code_fix", "model_chat",
     }
     if key not in allowed_keys:
         return {"error": f"Unknown setting: {key}"}

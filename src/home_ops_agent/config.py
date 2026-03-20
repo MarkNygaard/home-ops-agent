@@ -30,7 +30,13 @@ class Settings(BaseSettings):
     # Agent behavior
     pr_check_interval_seconds: int = 300  # 5 minutes
     alert_cooldown_seconds: int = 900  # 15 minutes
-    claude_model: str = "claude-sonnet-4-20250514"
+
+    # Per-task model configuration (override via UI settings)
+    model_pr_review: str = "claude-haiku-4-5-20251001"
+    model_alert_triage: str = "claude-haiku-4-5-20251001"
+    model_alert_fix: str = "claude-sonnet-4-20250514"
+    model_code_fix: str = "claude-sonnet-4-20250514"
+    model_chat: str = "claude-sonnet-4-20250514"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

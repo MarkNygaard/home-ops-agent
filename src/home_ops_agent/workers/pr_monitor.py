@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent, AgentResult
+from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import PR_REVIEW_PROMPT
 from home_ops_agent.agent.tools.github import get_github_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
@@ -60,9 +61,11 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
     ]
 
     try:
+        model = await get_model_for_task("pr_review")
         result = await agent.run(
             system_prompt=PR_REVIEW_PROMPT,
             messages=messages,
+            model=model,
             max_turns=10,
         )
         _reviewed.add(pr_key)

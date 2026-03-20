@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import httpx
 
 from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import ALERT_RESPONSE_PROMPT
 from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
@@ -73,9 +74,12 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
     ]
 
     try:
+        # Use alert_fix model since the agent may take corrective actions
+        model = await get_model_for_task("alert_fix")
         result = await agent.run(
             system_prompt=ALERT_RESPONSE_PROMPT,
             messages=messages,
+            model=model,
             max_turns=15,
         )
 

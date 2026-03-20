@@ -44,7 +44,6 @@ class Agent:
             raise ValueError("Either api_key or oauth_token must be provided")
 
         self.tools: dict[str, ToolDefinition] = {}
-        self.model = settings.claude_model
 
     def register_tool(self, tool: ToolDefinition):
         """Register a tool for the agent to use."""
@@ -70,6 +69,7 @@ class Agent:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
+        model: str = "claude-sonnet-4-20250514",
         max_turns: int = 20,
     ) -> AgentResult:
         """Run the agent with a conversation and tools.
@@ -83,7 +83,7 @@ class Agent:
 
         for _turn in range(max_turns):
             response = self.client.messages.create(
-                model=self.model,
+                model=model,
                 max_tokens=8192,
                 system=system_prompt,
                 messages=messages,
