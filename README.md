@@ -19,26 +19,7 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────┐
-│                  Kubernetes Pod                       │
-│                                                      │
-│  ┌────────────────────────────────────────────────┐  │
-│  │          home-ops-agent (FastAPI)              │  │
-│  │                                                │  │
-│  │  PR Monitor    Alert Subscriber    Web UI      │  │
-│  │  (periodic)    (ntfy SSE)          (chat +     │  │
-│  │                                    settings)   │  │
-│  │                    │                           │  │
-│  │            Agent Core (Claude API)             │  │
-│  │                    │                           │  │
-│  │  K8s API  ·  GitHub  ·  Prometheus  ·  ntfy    │  │
-│  └────────────────────────────────────────────────┘  │
-│                                                      │
-│                  PostgreSQL (CNPG)                    │
-│         conversations · memories · settings          │
-└──────────────────────────────────────────────────────┘
-```
+![Architecture](architecture.png)
 
 Single Python container. Single async process. Background workers as asyncio tasks.
 
