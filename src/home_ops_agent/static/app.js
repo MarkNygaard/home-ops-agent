@@ -206,18 +206,37 @@ async function loadHistory(filter) {
     for (const item of filtered) {
       const el = document.createElement("div");
       el.className = "history-item";
+
+      const deleteBtn = item.is_conversation
+        ? `<button class="btn btn-small history-delete-btn" data-conv-id="${item.id}">Delete</button>`
+        : "";
+
       el.innerHTML = `
         <div class="history-item-header">
           <span class="history-item-type type-${item.type}">${item.type.replace("_", " ")}</span>
-          <span class="history-item-time">${new Date(item.created_at).toLocaleString()}</span>
+          <div class="history-item-actions">
+            ${deleteBtn}
+            <span class="history-item-time">${new Date(item.created_at).toLocaleString()}</span>
+          </div>
         </div>
         <div class="history-item-trigger">${item.trigger}</div>
         ${item.summary ? `<div class="history-item-summary">${item.summary.substring(0, 200)}</div>` : ""}
       `;
-      if (item.is_conversation) {
-        el.addEventListener("click", () => openConversation(item.id));
-      } else {
-        el.addEventListener("click", () => loadTaskDetail(item.id));
+
+      // Click to open (but not on delete button)
+      el.addEventListener("click", (e) => {
+        if (e.target.classList.contains("history-delete-btn")) return;
+        if (item.is_conversation) openConversation(item.id);
+        else loadTaskDetail(item.id);
+      });
+
+      // Delete button handler
+      const delBtn = el.querySelector(".history-delete-btn");
+      if (delBtn) {
+        delBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await deleteConversation(item.id);
+        });
       }
       list.appendChild(el);
     }
@@ -265,6 +284,20 @@ document.querySelectorAll(".filter-btn").forEach((btn) => {
     loadHistory(btn.dataset.filter);
   });
 });
+
+async function deleteConversation(id) {
+  try {
+    await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+    // If we're deleting the active conversation, clear it
+    if (conversationId === id) {
+      conversationId = null;
+      localStorage.removeItem("conversationId");
+    }
+    loadHistory();
+  } catch (e) {
+    console.error("Failed to delete conversation:", e);
+  }
+}
 
 function openConversation(id) {
   conversationId = id;

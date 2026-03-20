@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 
 from home_ops_agent.auth.oauth import get_auth_method, get_valid_token
 from home_ops_agent.config import settings
@@ -176,6 +176,16 @@ async def get_conversation_messages(conversation_id: int):
             }
             for m in result.scalars().all()
         ]
+
+
+@router.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: int):
+    """Delete a conversation and its messages."""
+    async with async_session() as session:
+        await session.execute(delete(Message).where(Message.conversation_id == conversation_id))
+        await session.execute(delete(Conversation).where(Conversation.id == conversation_id))
+        await session.commit()
+    return {"status": "ok"}
 
 
 @router.get("/api/memories")

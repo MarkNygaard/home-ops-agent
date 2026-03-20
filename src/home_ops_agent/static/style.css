@@ -264,6 +264,7 @@ body {
 .type-user_chat { background: rgba(63, 185, 80, 0.15); color: var(--green); }
 .type-cluster_fix { background: rgba(248, 81, 73, 0.15); color: var(--red); }
 
+.history-item-actions { display: flex; align-items: center; gap: 8px; }
 .history-item-time { font-size: 12px; color: var(--text-secondary); }
 .history-item-trigger { font-size: 14px; font-weight: 500; }
 .history-item-summary { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
