@@ -16,6 +16,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     document.getElementById(`view-${btn.dataset.view}`).classList.add("active");
 
     if (btn.dataset.view === "history") loadHistory();
+    if (btn.dataset.view === "memories") loadMemories();
     if (btn.dataset.view === "settings") { loadSettings(); loadAgentCards(); }
   });
 });
@@ -232,6 +233,58 @@ document.querySelectorAll(".filter-btn").forEach((btn) => {
     loadHistory(btn.dataset.filter);
   });
 });
+
+// --- Memories ---
+
+const CATEGORY_COLORS = {
+  issue: "var(--red)",
+  preference: "var(--accent)",
+  knowledge: "var(--green)",
+  fix: "var(--yellow)",
+  config: "var(--text-secondary)",
+  general: "var(--text-secondary)",
+};
+
+async function loadMemories() {
+  try {
+    const resp = await fetch("/api/memories");
+    const memories = await resp.json();
+    const list = document.getElementById("memories-list");
+    list.innerHTML = "";
+
+    if (memories.length === 0) {
+      list.innerHTML = '<p style="color: var(--text-secondary); padding: 20px;">No memories yet. The agent will extract key facts from conversations automatically.</p>';
+      return;
+    }
+
+    for (const mem of memories) {
+      const el = document.createElement("div");
+      el.className = "memory-item";
+      el.innerHTML = `
+        <div class="memory-header">
+          <span class="memory-category" style="color: ${CATEGORY_COLORS[mem.category] || CATEGORY_COLORS.general}">${mem.category}</span>
+          <div class="memory-actions">
+            <span class="memory-time">${new Date(mem.created_at).toLocaleString()}</span>
+            <button class="btn btn-small" onclick="deleteMemory(${mem.id})">Delete</button>
+          </div>
+        </div>
+        <p class="memory-content">${mem.content}</p>
+      `;
+      list.appendChild(el);
+    }
+  } catch (e) {
+    console.error("Failed to load memories:", e);
+  }
+}
+
+async function deleteMemory(id) {
+  try {
+    await fetch(`/api/memories/${id}`, { method: "DELETE" });
+    loadMemories();
+  } catch (e) {
+    console.error("Failed to delete memory:", e);
+  }
+}
 
 // --- Settings ---
 

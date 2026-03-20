@@ -14,6 +14,7 @@
       <div class="nav-links">
         <button class="nav-btn active" data-view="chat">Chat</button>
         <button class="nav-btn" data-view="history">History</button>
+        <button class="nav-btn" data-view="memories">Memories</button>
         <button class="nav-btn" data-view="settings">Settings</button>
       </div>
       <div id="status-indicator">
@@ -51,6 +52,15 @@
         </div>
         <div id="history-list"></div>
         <div id="task-detail" class="hidden"></div>
+      </section>
+
+      <!-- Memories view -->
+      <section id="view-memories" class="view">
+        <div id="memories-header">
+          <h2>Memories</h2>
+          <p class="desc">Facts the agent remembers from previous conversations. These are included in the system prompt for all future interactions.</p>
+        </div>
+        <div id="memories-list"></div>
       </section>
 
       <!-- Settings view -->

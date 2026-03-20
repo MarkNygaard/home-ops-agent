@@ -99,6 +99,24 @@ class AgentTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Memory(Base):
+    """A persistent memory extracted from agent conversations."""
+
+    __tablename__ = "memories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="general",
+    )
+    source_conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 async def init_db():
     """Create all tables."""
     async with engine.begin() as conn:

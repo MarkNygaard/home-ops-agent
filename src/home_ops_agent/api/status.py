@@ -7,7 +7,7 @@ from sqlalchemy import desc, func, select
 
 from home_ops_agent.auth.oauth import get_auth_method, get_valid_token
 from home_ops_agent.config import settings
-from home_ops_agent.database import AgentTask, Conversation, Message, async_session
+from home_ops_agent.database import AgentTask, Conversation, Memory, Message, async_session
 
 router = APIRouter()
 
@@ -176,3 +176,41 @@ async def get_conversation_messages(conversation_id: int):
             }
             for m in result.scalars().all()
         ]
+
+
+@router.get("/api/memories")
+async def list_memories(
+    category: str | None = Query(None),
+    limit: int = Query(50, le=200),
+):
+    """List agent memories."""
+    async with async_session() as session:
+        query = select(Memory).order_by(desc(Memory.created_at))
+        if category:
+            query = query.where(Memory.category == category)
+        query = query.limit(limit)
+
+        result = await session.execute(query)
+        return [
+            {
+                "id": m.id,
+                "content": m.content,
+                "category": m.category,
+                "source_conversation_id": m.source_conversation_id,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in result.scalars().all()
+        ]
+
+
+@router.delete("/api/memories/{memory_id}")
+async def delete_memory(memory_id: int):
+    """Delete a specific memory."""
+    async with async_session() as session:
+        result = await session.execute(select(Memory).where(Memory.id == memory_id))
+        memory = result.scalar_one_or_none()
+        if not memory:
+            return {"error": "Memory not found"}
+        await session.delete(memory)
+        await session.commit()
+    return {"status": "ok"}

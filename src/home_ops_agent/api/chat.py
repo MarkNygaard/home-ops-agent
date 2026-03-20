@@ -1,5 +1,6 @@
 """WebSocket chat endpoint for interactive conversation with the agent."""
 
+import asyncio
 import json
 import logging
 
@@ -7,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.memory import extract_memories
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.tools.github import get_github_tools
@@ -156,6 +158,20 @@ async def websocket_chat(websocket: WebSocket):
                             "tool_calls": result.tool_calls,
                             "tokens": result.total_tokens,
                         }
+                    )
+                )
+
+                # Extract memories in the background (don't block the chat)
+                asyncio.create_task(
+                    extract_memories(
+                        conversation_id,
+                        [
+                            {"role": "user", "content": {"text": user_text}},
+                            {
+                                "role": "assistant",
+                                "content": {"text": result.response},
+                            },
+                        ],
                     )
                 )
             except Exception as e:

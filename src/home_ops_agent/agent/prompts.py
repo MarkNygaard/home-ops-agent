@@ -112,12 +112,14 @@ DEFAULTS = {
 }
 
 
-async def get_prompt(agent_name: str) -> str:
-    """Get the full prompt for an agent, including cluster context.
+async def get_prompt(agent_name: str, include_memory: bool = True) -> str:
+    """Get the full prompt for an agent, including cluster context and memories.
 
     Checks the database for custom prompts first, falls back to defaults.
-    The cluster context is always prepended.
+    The cluster context is always prepended. Memories are appended if available.
     """
+    from home_ops_agent.agent.memory import load_memories
+
     async with async_session() as session:
         # Load custom cluster context and agent prompt from DB
         keys = ["prompt_cluster_context", f"prompt_{agent_name}"]
@@ -127,4 +129,11 @@ async def get_prompt(agent_name: str) -> str:
     cluster_context = db_prompts.get("prompt_cluster_context", DEFAULT_CLUSTER_CONTEXT)
     agent_prompt = db_prompts.get(f"prompt_{agent_name}", DEFAULTS.get(agent_name, ""))
 
-    return f"{cluster_context}\n{agent_prompt}"
+    parts = [cluster_context, agent_prompt]
+
+    if include_memory:
+        memory_text = await load_memories()
+        if memory_text:
+            parts.append(memory_text)
+
+    return "\n".join(parts)

@@ -525,6 +525,56 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   gap: 8px;
 }
 
+/* Memories */
+#memories-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+#memories-header h2 { margin-bottom: 8px; font-size: 18px; }
+
+#memories-list {
+  padding: 16px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.memory-item {
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+
+.memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.memory-category {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.memory-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.memory-content {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 /* Kill switch */
 .kill-switch-bar {
   display: flex;
