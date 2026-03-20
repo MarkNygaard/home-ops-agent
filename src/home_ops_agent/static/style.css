@@ -413,39 +413,20 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   min-width: 140px;
 }
 
-/* Prompt editor */
-.prompt-card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 10px;
-}
-
-.prompt-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.prompt-card-name {
+/* Prompt button (matches model dropdown size) */
+.prompt-btn {
+  padding: 8px 12px;
   font-size: 14px;
-  font-weight: 600;
 }
 
-.prompt-card-actions {
-  display: flex;
-  gap: 6px;
-}
-
+/* Prompt textarea */
 .prompt-textarea {
   width: 100%;
-  min-height: 150px;
-  background: var(--bg-secondary);
+  min-height: 300px;
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius);
   font-family: monospace;
   font-size: 13px;
@@ -462,6 +443,84 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   font-size: 11px;
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-backdrop {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.modal-content {
+  position: relative;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--text);
+}
+
+.modal-content .prompt-textarea {
+  flex: 1;
+  min-height: 250px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .hidden { display: none !important; }

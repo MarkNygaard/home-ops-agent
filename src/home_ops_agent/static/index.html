@@ -106,19 +106,30 @@
         <div class="setting-group">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <h3 style="margin: 0;">Agents</h3>
-            <button class="btn btn-small" onclick="togglePromptEditor('cluster_context')">Cluster Context</button>
-          </div>
-          <div class="prompt-editor hidden" id="prompt-editor-cluster_context" style="margin-bottom: 16px;">
-            <p class="desc" style="margin-bottom: 8px;">Shared context prepended to all agent prompts. Describe your cluster setup, IPs, domain, and infrastructure here.</p>
-            <textarea class="prompt-textarea" id="prompt-cluster_context"></textarea>
-            <div class="prompt-card-actions" style="margin-top: 8px;">
-              <span id="cluster-context-badge"></span>
-              <button class="btn" onclick="savePrompt('cluster_context')">Save</button>
-              <button class="btn hidden" id="cluster-context-reset" onclick="resetPrompt('cluster_context')">Reset to Default</button>
-            </div>
+            <button class="btn prompt-btn" onclick="openPromptModal('cluster_context')">Cluster Context</button>
           </div>
 
           <div id="agent-cards"></div>
+        </div>
+
+        <!-- Prompt editor modal -->
+        <div id="prompt-modal" class="modal hidden">
+          <div class="modal-backdrop" onclick="closePromptModal()"></div>
+          <div class="modal-content">
+            <div class="modal-header">
+              <h3 id="prompt-modal-title"></h3>
+              <button class="modal-close" onclick="closePromptModal()">&times;</button>
+            </div>
+            <p id="prompt-modal-desc" class="desc" style="margin-bottom: 12px;"></p>
+            <textarea class="prompt-textarea" id="prompt-modal-textarea"></textarea>
+            <div class="modal-footer">
+              <span id="prompt-modal-badge"></span>
+              <div class="modal-actions">
+                <button class="btn" id="prompt-modal-reset" onclick="resetPromptFromModal()">Reset to Default</button>
+                <button class="btn primary" onclick="savePromptFromModal()">Save</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="setting-group">

@@ -362,20 +362,6 @@ async function loadAgentCards() {
     promptData = {};
   }
 
-  // Populate cluster context editor
-  const cc = promptData.cluster_context;
-  if (cc) {
-    const ccTextarea = document.getElementById("prompt-cluster_context");
-    if (ccTextarea) ccTextarea.value = cc.custom || cc.default || "";
-    const ccBadge = document.getElementById("cluster-context-badge");
-    if (ccBadge) {
-      ccBadge.textContent = cc.is_customized ? "Customized" : "";
-      ccBadge.className = cc.is_customized ? "prompt-customized" : "";
-    }
-    const ccReset = document.getElementById("cluster-context-reset");
-    if (ccReset) ccReset.classList.toggle("hidden", !cc.is_customized);
-  }
-
   const container = document.getElementById("agent-cards");
   container.innerHTML = "";
 
@@ -392,18 +378,7 @@ async function loadAgentCards() {
       : "";
 
     const promptBtn = agent.promptKey
-      ? `<button class="btn btn-small" onclick="togglePromptEditor('${agent.promptKey}')">Prompt${isCustomized ? " *" : ""}</button>`
-      : "";
-
-    const promptEditor = agent.promptKey
-      ? `<div class="prompt-editor hidden" id="prompt-editor-${agent.promptKey}">
-          <textarea class="prompt-textarea" id="prompt-${agent.promptKey}">${escapeHtml(prompt?.custom || prompt?.default || "")}</textarea>
-          <div class="prompt-card-actions" style="margin-top: 8px;">
-            ${isCustomized ? '<span class="prompt-customized">Customized</span>' : ""}
-            <button class="btn" onclick="savePrompt('${agent.promptKey}')">Save Prompt</button>
-            ${isCustomized ? `<button class="btn" onclick="resetPrompt('${agent.promptKey}')">Reset to Default</button>` : ""}
-          </div>
-        </div>`
+      ? `<button class="btn prompt-btn" onclick="openPromptModal('${agent.promptKey}')">Prompt${isCustomized ? " *" : ""}</button>`
       : "";
 
     const card = document.createElement("div");
@@ -417,40 +392,72 @@ async function loadAgentCards() {
         </div>
       </div>
       <p class="agent-desc">${agent.desc}</p>
-      ${promptEditor}
     `;
     container.appendChild(card);
   }
 }
 
-function togglePromptEditor(key) {
-  const editor = document.getElementById(`prompt-editor-${key}`);
-  if (editor) editor.classList.toggle("hidden");
+const PROMPT_DESCRIPTIONS = {
+  cluster_context: "Shared context prepended to all agent prompts. Describe your cluster setup, IPs, domain, and infrastructure here.",
+  pr_review: "Instructions for how the PR Review agent analyzes pull requests.",
+  alert_response: "Instructions for how the Alert Fix agent investigates and resolves alerts.",
+  chat: "Instructions for how the Chat agent responds to interactive questions.",
+};
+
+let currentPromptKey = null;
+
+function openPromptModal(key) {
+  currentPromptKey = key;
+  const prompt = promptData[key];
+  if (!prompt) return;
+
+  const agentInfo = AGENTS.find((a) => a.promptKey === key);
+  const label = agentInfo ? agentInfo.name : key === "cluster_context" ? "Cluster Context" : key;
+
+  document.getElementById("prompt-modal-title").textContent = label;
+  document.getElementById("prompt-modal-desc").textContent = PROMPT_DESCRIPTIONS[key] || "";
+  document.getElementById("prompt-modal-textarea").value = prompt.custom || prompt.default || "";
+
+  const badge = document.getElementById("prompt-modal-badge");
+  badge.textContent = prompt.is_customized ? "Customized" : "";
+  badge.className = prompt.is_customized ? "prompt-customized" : "";
+
+  const resetBtn = document.getElementById("prompt-modal-reset");
+  resetBtn.classList.toggle("hidden", !prompt.is_customized);
+
+  document.getElementById("prompt-modal").classList.remove("hidden");
 }
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+function closePromptModal() {
+  document.getElementById("prompt-modal").classList.add("hidden");
+  currentPromptKey = null;
 }
 
-async function savePrompt(name) {
-  const textarea = document.getElementById(`prompt-${name}`);
-  if (!textarea) return;
-  await saveSetting(`prompt_${name}`, textarea.value);
-  showSettingsStatus(`Prompt saved`);
+async function savePromptFromModal() {
+  if (!currentPromptKey) return;
+  const textarea = document.getElementById("prompt-modal-textarea");
+  await saveSetting(`prompt_${currentPromptKey}`, textarea.value);
+  showSettingsStatus("Prompt saved");
+  closePromptModal();
   loadAgentCards();
 }
 
-async function resetPrompt(name) {
+async function resetPromptFromModal() {
+  if (!currentPromptKey) return;
   try {
-    await fetch(`/api/prompts/${name}`, { method: "DELETE" });
-    showSettingsStatus(`Prompt reset to default`);
+    await fetch(`/api/prompts/${currentPromptKey}`, { method: "DELETE" });
+    showSettingsStatus("Prompt reset to default");
+    closePromptModal();
     loadAgentCards();
   } catch (e) {
     console.error("Failed to reset prompt:", e);
   }
 }
+
+// Close modal on Escape key
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closePromptModal();
+});
 
 // --- Init ---
 
