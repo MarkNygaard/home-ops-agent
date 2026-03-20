@@ -6,6 +6,7 @@ import logging
 from datetime import UTC, datetime
 
 import httpx
+from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent
 from home_ops_agent.agent.models import get_model_for_task
@@ -14,7 +15,7 @@ from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
 from home_ops_agent.auth.oauth import get_claude_credentials
 from home_ops_agent.config import settings
-from home_ops_agent.database import AgentTask, Conversation, Message, async_session
+from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,6 @@ _cooldowns: dict[str, datetime] = {}
 
 async def _get_cooldown_seconds() -> int:
     """Get alert cooldown from DB settings, falling back to env config."""
-    from sqlalchemy import select
-
-    from home_ops_agent.database import Setting
-
     async with async_session() as session:
         result = await session.execute(
             select(Setting).where(Setting.key == "alert_cooldown_seconds")
@@ -48,8 +45,22 @@ async def _is_on_cooldown(alert_key: str) -> bool:
     return elapsed < cooldown
 
 
+async def _is_enabled() -> bool:
+    """Check if the agent is enabled via settings."""
+    async with async_session() as session:
+        result = await session.execute(select(Setting).where(Setting.key == "agent_enabled"))
+        setting = result.scalar_one_or_none()
+        if setting is None:
+            return True
+        return setting.value.lower() in ("true", "1", "yes")
+
+
 async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
     """Run the agent to investigate an alert."""
+    if not await _is_enabled():
+        logger.debug("Agent is disabled, skipping alert investigation")
+        return
+
     alert_key = f"{alert.get('topic', '')}:{alert.get('title', '')}:{alert.get('message', '')[:50]}"
 
     if await _is_on_cooldown(alert_key):

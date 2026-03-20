@@ -525,6 +525,41 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
   gap: 8px;
 }
 
+/* Kill switch */
+.kill-switch-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+
+.kill-switch-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kill-switch-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.kill-switch-enabled {
+  background: var(--red) !important;
+  color: #fff !important;
+  border-color: var(--red) !important;
+}
+
+.kill-switch-disabled {
+  background: var(--green) !important;
+  color: #fff !important;
+  border-color: var(--green) !important;
+}
+
 .hidden { display: none !important; }
 
 #oauth-status-badge {

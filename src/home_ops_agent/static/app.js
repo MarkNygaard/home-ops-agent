@@ -198,6 +198,9 @@ async function loadSettings() {
     const resp = await fetch("/api/settings");
     const s = await resp.json();
 
+    // Kill switch
+    updateKillSwitch(s.agent_enabled);
+
     // PR mode
     document.querySelector(`input[name="pr_mode"][value="${s.pr_mode}"]`).checked = true;
 
@@ -279,6 +282,31 @@ document.getElementById("save-api-key-btn").addEventListener("click", async () =
   loadSettings(); // Refresh to show masked key
 });
 
+
+// Kill switch
+async function toggleAgent() {
+  const resp = await fetch("/api/settings");
+  const s = await resp.json();
+  const newState = s.agent_enabled ? "false" : "true";
+  await saveSetting("agent_enabled", newState);
+  updateKillSwitch(newState === "true");
+}
+
+function updateKillSwitch(enabled) {
+  const badge = document.getElementById("agent-status-badge");
+  const btn = document.getElementById("kill-switch-btn");
+  if (enabled) {
+    badge.textContent = "Enabled";
+    badge.className = "status-badge active";
+    btn.textContent = "Disable Agent";
+    btn.className = "btn kill-switch-enabled";
+  } else {
+    badge.textContent = "Disabled";
+    badge.className = "status-badge inactive";
+    btn.textContent = "Enable Agent";
+    btn.className = "btn kill-switch-disabled";
+  }
+}
 
 // Enable save button when any setting changes
 function markSettingsDirty() {

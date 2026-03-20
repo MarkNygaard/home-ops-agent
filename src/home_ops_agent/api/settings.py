@@ -61,6 +61,7 @@ async def get_settings():
             oauth_status = "expired"
 
     return {
+        "agent_enabled": db_settings.get("agent_enabled", "true").lower() in ("true", "1", "yes"),
         "pr_mode": db_settings.get("pr_mode", "comment_only"),
         "auth_method": db_settings.get("auth_method", "api_key"),
         "oauth_status": oauth_status,
@@ -96,6 +97,7 @@ async def get_settings():
 async def update_setting(key: str, body: UpdateSetting):
     """Update a single setting."""
     allowed_keys = {
+        "agent_enabled",
         "pr_mode",
         "auth_method",
         "anthropic_api_key",

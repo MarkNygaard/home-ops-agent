@@ -18,8 +18,19 @@ from home_ops_agent.database import AgentTask, Conversation, Message, Setting, a
 
 logger = logging.getLogger(__name__)
 
-# Track which PRs we've already reviewed (by number + head SHA)
-_reviewed: set[str] = set()
+# Maximum number of PRs to review per cycle (rate limit)
+MAX_REVIEWS_PER_CYCLE = 3
+
+
+async def _is_enabled() -> bool:
+    """Check if the agent is enabled via settings."""
+    async with async_session() as session:
+        result = await session.execute(select(Setting).where(Setting.key == "agent_enabled"))
+        setting = result.scalar_one_or_none()
+        # Enabled by default
+        if setting is None:
+            return True
+        return setting.value.lower() in ("true", "1", "yes")
 
 
 async def _get_pr_mode() -> str:
@@ -30,10 +41,30 @@ async def _get_pr_mode() -> str:
         return setting.value if setting else "comment_only"
 
 
+async def _already_reviewed(pr_number: int, head_sha: str) -> bool:
+    """Check if we already reviewed this PR at this SHA (DB-backed, survives restarts)."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentTask).where(
+                AgentTask.task_type == "pr_review",
+                AgentTask.trigger == f"PR #{pr_number}",
+                AgentTask.status == "completed",
+            )
+        )
+        tasks = result.scalars().all()
+        for task in tasks:
+            if task.actions_taken and task.actions_taken.get("head_sha") == head_sha:
+                return True
+        return False
+
+
 async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
     """Run the agent to review a single PR."""
-    pr_key = f"{pr['number']}:{pr.get('head_sha', '')}"
-    if pr_key in _reviewed:
+    pr_number = pr["number"]
+    head_sha = pr.get("head_sha", "")
+
+    if await _already_reviewed(pr_number, head_sha):
+        logger.debug("PR #%s already reviewed at SHA %s, skipping", pr_number, head_sha[:8])
         return None
 
     pr_mode = await _get_pr_mode()
@@ -67,7 +98,6 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
             model=model,
             max_turns=10,
         )
-        _reviewed.add(pr_key)
         return result
     except Exception:
         logger.exception("Failed to review PR #%s", pr["number"])
@@ -99,7 +129,11 @@ async def _save_task(pr: dict, result: AgentResult):
             status="completed",
             conversation_id=conversation.id,
             summary=result.response[:500],
-            actions_taken={"tool_calls": result.tool_calls, "tokens": result.total_tokens},
+            actions_taken={
+                "tool_calls": result.tool_calls,
+                "tokens": result.total_tokens,
+                "head_sha": pr.get("head_sha", ""),
+            },
             completed_at=datetime.now(UTC),
         )
         session.add(task)
@@ -108,6 +142,10 @@ async def _save_task(pr: dict, result: AgentResult):
 
 async def check_prs():
     """Check all open PRs and review any new/updated ones."""
+    if not await _is_enabled():
+        logger.debug("Agent is disabled, skipping PR review")
+        return
+
     api_key, oauth_token = await get_claude_credentials()
     if not api_key and not oauth_token:
         logger.warning("No Claude credentials configured, skipping PR review")
@@ -129,10 +167,19 @@ async def check_prs():
 
     logger.info("Found %d open PRs to check", len(prs))
 
+    reviewed_count = 0
     for pr in prs:
+        if reviewed_count >= MAX_REVIEWS_PER_CYCLE:
+            logger.info(
+                "Rate limit reached (%d reviews), remaining PRs next cycle",
+                MAX_REVIEWS_PER_CYCLE,
+            )
+            break
+
         result = await _review_pr(pr, agent)
         if result:
             await _save_task(pr, result)
+            reviewed_count += 1
             logger.info("Reviewed PR #%s: %s", pr["number"], result.response[:100])
 
 
@@ -150,7 +197,10 @@ async def _get_check_interval() -> int:
 
 async def run_pr_monitor():
     """Background task: periodically check PRs."""
-    logger.info("PR monitor started (default interval: %ds)", settings.pr_check_interval_seconds)
+    logger.info(
+        "PR monitor started (default interval: %ds)",
+        settings.pr_check_interval_seconds,
+    )
 
     while True:
         try:

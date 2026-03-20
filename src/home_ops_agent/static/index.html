@@ -57,6 +57,14 @@
       <section id="view-settings" class="view">
         <h2>Settings</h2>
 
+        <div class="kill-switch-bar">
+          <div class="kill-switch-left">
+            <span class="kill-switch-label">Agent</span>
+            <span id="agent-status-badge" class="status-badge active">Enabled</span>
+          </div>
+          <button id="kill-switch-btn" class="btn kill-switch-enabled" onclick="toggleAgent()">Disable Agent</button>
+        </div>
+
         <div class="setting-group">
           <h3>PR Review Mode</h3>
           <div class="setting-row">
