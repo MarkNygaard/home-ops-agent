@@ -34,10 +34,9 @@ class Agent:
 
     def __init__(self, api_key: str | None = None, oauth_token: str | None = None):
         if oauth_token:
-            # OAuth token from Max/Pro subscription
-            self.client = anthropic.Anthropic(auth_token=oauth_token)
+            self.client = anthropic.AsyncAnthropic(auth_token=oauth_token)
         elif api_key:
-            self.client = anthropic.Anthropic(api_key=api_key)
+            self.client = anthropic.AsyncAnthropic(api_key=api_key)
         else:
             raise ValueError("Either api_key or oauth_token must be provided")
 
@@ -80,7 +79,7 @@ class Agent:
         total_tokens = 0
 
         for _turn in range(max_turns):
-            response = self.client.messages.create(
+            response = await self.client.messages.create(
                 model=model,
                 max_tokens=8192,
                 system=system_prompt,

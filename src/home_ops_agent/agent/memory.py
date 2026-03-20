@@ -60,9 +60,9 @@ async def extract_memories(
         return []
 
     if oauth_token:
-        client = anthropic.Anthropic(auth_token=oauth_token)
+        client = anthropic.AsyncAnthropic(auth_token=oauth_token)
     else:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.AsyncAnthropic(api_key=api_key)
 
     # Build a summary of the conversation for extraction
     conv_text = ""
@@ -77,7 +77,7 @@ async def extract_memories(
         return []
 
     try:
-        response = client.messages.create(
+        response = await client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=1024,
             system=EXTRACTION_PROMPT,
