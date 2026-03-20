@@ -162,31 +162,63 @@ async function loadConversation() {
 
 async function loadHistory(filter) {
   if (filter !== undefined) currentFilter = filter;
-  const url = currentFilter ? `/api/history?task_type=${currentFilter}` : "/api/history";
 
   try {
-    const resp = await fetch(url);
-    const tasks = await resp.json();
+    // Load both conversations and agent tasks
+    const [convResp, taskResp] = await Promise.all([
+      fetch(currentFilter && currentFilter !== "chat" ? "/api/conversations?limit=0" : "/api/conversations"),
+      fetch(currentFilter ? `/api/history?task_type=${currentFilter}` : "/api/history"),
+    ]);
+    const conversations = currentFilter && currentFilter !== "chat" ? [] : await convResp.json();
+    const tasks = await taskResp.json();
+
+    // Merge and sort by date
+    const items = [
+      ...conversations.map((c) => ({
+        type: "chat",
+        id: c.id,
+        trigger: c.title,
+        created_at: c.created_at,
+        summary: null,
+        is_conversation: true,
+      })),
+      ...tasks.map((t) => ({
+        type: t.type,
+        id: t.id,
+        trigger: t.trigger,
+        created_at: t.created_at,
+        summary: t.summary,
+        is_conversation: false,
+      })),
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Apply filter
+    const filtered = currentFilter ? items.filter((i) => i.type === currentFilter) : items;
+
     const list = document.getElementById("history-list");
     list.innerHTML = "";
 
-    if (tasks.length === 0) {
+    if (filtered.length === 0) {
       list.innerHTML = '<p style="color: var(--text-secondary); padding: 20px;">No activity yet.</p>';
       return;
     }
 
-    for (const task of tasks) {
+    for (const item of filtered) {
       const el = document.createElement("div");
       el.className = "history-item";
       el.innerHTML = `
         <div class="history-item-header">
-          <span class="history-item-type type-${task.type}">${task.type.replace("_", " ")}</span>
-          <span class="history-item-time">${new Date(task.created_at).toLocaleString()}</span>
+          <span class="history-item-type type-${item.type}">${item.type.replace("_", " ")}</span>
+          <span class="history-item-time">${new Date(item.created_at).toLocaleString()}</span>
         </div>
-        <div class="history-item-trigger">${task.trigger}</div>
-        ${task.summary ? `<div class="history-item-summary">${task.summary.substring(0, 200)}</div>` : ""}
+        <div class="history-item-trigger">${item.trigger}</div>
+        ${item.summary ? `<div class="history-item-summary">${item.summary.substring(0, 200)}</div>` : ""}
       `;
-      el.addEventListener("click", () => loadTaskDetail(task.id));
+      if (item.is_conversation) {
+        el.addEventListener("click", () => openConversation(item.id));
+      } else {
+        el.addEventListener("click", () => loadTaskDetail(item.id));
+      }
       list.appendChild(el);
     }
   } catch (e) {
@@ -233,6 +265,17 @@ document.querySelectorAll(".filter-btn").forEach((btn) => {
     loadHistory(btn.dataset.filter);
   });
 });
+
+function openConversation(id) {
+  conversationId = id;
+  localStorage.setItem("conversationId", id);
+  // Switch to chat view
+  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+  document.querySelector('[data-view="chat"]').classList.add("active");
+  document.getElementById("view-chat").classList.add("active");
+  loadConversation();
+}
 
 // --- Memories ---
 
