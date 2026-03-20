@@ -8,11 +8,13 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 
 - **PR Review** — Monitors your GitHub repo for open PRs (primarily Renovate dependency updates). Posts review comments with risk assessment. Optional auto-merge for safe patches.
 - **Alert Investigation** — Subscribes to ntfy topics (Alertmanager, Gatus) and automatically investigates when alerts fire. Checks pods, logs, metrics, events, and Flux status.
-- **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, and send enriched diagnostics via ntfy. Every action is logged and reported.
-- **Interactive Chat** — Web UI at your configured domain where you can ask questions about cluster state, run diagnostics, or issue commands.
-- **Per-Task Models** — Assign different Claude models to each agent (e.g., Haiku for cheap PR reviews, Sonnet for complex fixes).
-- **Customizable Prompts** — Edit system prompts per agent through the UI to describe your specific cluster setup.
-- **Activity History** — View all agent actions with full reasoning and tool call details.
+- **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, create fix branches, commit changes, and open PRs. Every action is logged and reported via ntfy.
+- **Interactive Chat** — Web UI where you can ask questions about cluster state, run diagnostics, or issue commands. Conversations persist across page refreshes.
+- **Persistent Memory** — Extracts key facts from conversations (issues, fixes, preferences, architectural knowledge) and remembers them across future interactions. Memories are viewable and deletable in the UI.
+- **Per-Task Models** — Assign different Claude models to each agent (e.g., Haiku for cheap PR reviews, Sonnet for complex fixes). Configurable via the Settings UI.
+- **Customizable Prompts** — Edit system prompts per agent through modal editors to describe your specific cluster setup.
+- **Activity History** — View all agent actions and chat conversations with full reasoning and tool call details. Click a conversation to reopen it.
+- **Kill Switch** — Instantly disable all agent activity from the Settings UI. One click to stop, one click to resume.
 - **Safety Guardrails** — Code-level protections prevent commits to main, modifications outside `kubernetes/apps/`, and destructive actions in system namespaces.
 
 ## Architecture
@@ -34,6 +36,7 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 │  └────────────────────────────────────────────────┘  │
 │                                                      │
 │                  PostgreSQL (CNPG)                    │
+│         conversations · memories · settings          │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +45,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 ## Prerequisites
 
 - Kubernetes cluster with Flux Operator (or any GitOps tool)
-- [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversation history, settings, and task logs
+- [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversations, memories, settings, and task logs
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
 - Prometheus + Loki — for metrics and log queries (optional, via Grafana MCP sidecar)
 - [Anthropic API key](https://console.anthropic.com/settings/keys) — for Claude access
@@ -125,9 +128,10 @@ Key environment variables:
 Open the agent's web UI and go to **Settings**:
 
 1. **API Key** — Paste your Anthropic API key
-2. **Cluster Context** — Click the "Cluster Context" button and describe your cluster (nodes, IPs, domain, infrastructure). This is prepended to all agent prompts.
-3. **Models** — Choose which Claude model each agent uses (Haiku for cheap tasks, Sonnet/Opus for complex ones)
+2. **Cluster Context** — Describe your cluster (nodes, IPs, domain, infrastructure). This is prepended to all agent prompts.
+3. **Agents** — Choose which Claude model each agent uses and customize their prompts
 4. **PR Mode** — Start with "Comment Only", switch to "Auto-Merge" once you trust the reviews
+5. **Kill Switch** — Disable/enable all agent activity instantly
 
 ### 7. Subscribe to notifications
 
@@ -139,20 +143,58 @@ In the ntfy mobile app, subscribe to the `home-ops-agent` topic on your ntfy ser
 |-------|--------------|-------------|
 | **PR Review** | Haiku 4.5 | Reviews open PRs, posts comments with risk assessment |
 | **Alert Triage** | Haiku 4.5 | First responder — checks pods, logs, metrics |
-| **Alert Fix** | Sonnet 4 | Takes corrective action — restarts pods, reconciles Flux |
-| **Code Fix** | Sonnet 4 | Pushes fix commits to PR branches for failing CI |
-| **Chat** | Sonnet 4 | Interactive conversation about cluster state |
+| **Alert Fix** | Sonnet 4.6 | Takes corrective action — restarts pods, reconciles Flux |
+| **Code Fix** | Sonnet 4.6 | Creates branches, commits fixes, opens PRs |
+| **Chat** | Sonnet 4.6 | Interactive conversation about cluster state |
 
 All models and prompts are configurable via the Settings UI.
+
+## Memory
+
+The agent automatically extracts key facts from conversations and stores them in PostgreSQL. Memories are loaded into the system prompt for all future interactions.
+
+**What it remembers:**
+- Recurring issues and their fixes
+- Architectural knowledge (e.g., PVC node pinning behavior)
+- User preferences
+- Configuration details
+
+**What it ignores:**
+- Transient state (current pod placement, running status)
+- Greetings and small talk
+- Information already in the cluster context prompt
+
+Memories are viewable and deletable from the **Memories** page in the sidebar.
+
+## GitHub Tools
+
+The agent has full PR workflow capabilities:
+
+| Tool | What it does |
+|------|-------------|
+| `github_list_prs` | List open pull requests |
+| `github_get_pr` | Get PR details (diff stats, labels, merge status) |
+| `github_get_pr_files` | Get changed files with diffs |
+| `github_get_check_runs` | Check CI status |
+| `github_create_pr_comment` | Post review comments |
+| `github_merge_pr` | Squash merge (when auto-merge enabled) |
+| `github_get_file_content` | Read files from the repo |
+| `github_create_branch` | Create a branch (fix/, feat/, agent/ prefixes) |
+| `github_create_commit` | Push file changes to a branch |
+| `github_create_pr` | Open a pull request |
 
 ## Safety
 
 Code-level guardrails that cannot be bypassed by the LLM:
 
 - **Protected branches**: Cannot commit directly to `main` or `master`
+- **Branch naming**: Can only create branches starting with `fix/`, `feat/`, or `agent/`
 - **Path restrictions**: Can only modify files under `kubernetes/apps/`
 - **Protected namespaces**: Cannot restart or delete pods in `kube-system`, `flux-system`, `cert-manager`
 - **RBAC**: ClusterRole has no `create` or `delete` on deployments/namespaces — only `get`, `list`, `watch`, `patch`
+- **Rate limiting**: Max 3 PR reviews per cycle
+- **Duplicate protection**: Won't re-review a PR unless the head SHA changes
+- **Kill switch**: Instantly disable all agent activity from the UI
 - **Merge logging**: Every merge attempt is logged at WARNING level
 
 ## Development
@@ -174,11 +216,11 @@ pytest
 Images are built on version tags only:
 
 ```bash
-git tag v0.4.0
-git push origin v0.4.0
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
-This triggers GitHub Actions to build and push to `ghcr.io/<your-username>/home-ops-agent:0.4.0`.
+This triggers GitHub Actions to build and push to `ghcr.io/<your-username>/home-ops-agent:0.6.0`.
 
 Update the image tag in your HelmRelease to deploy.
 
