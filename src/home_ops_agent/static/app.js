@@ -1,7 +1,9 @@
 // Home-Ops Agent — Web UI
 
 let ws = null;
-let conversationId = null;
+let conversationId = localStorage.getItem("conversationId")
+  ? parseInt(localStorage.getItem("conversationId"))
+  : null;
 let currentFilter = "";
 
 // --- Navigation ---
@@ -49,6 +51,7 @@ function connectWs() {
 
     if (data.type === "typing") {
       conversationId = data.conversation_id;
+      localStorage.setItem("conversationId", conversationId);
       const el = document.createElement("div");
       el.className = "message typing";
       el.textContent = "Thinking...";
@@ -56,6 +59,7 @@ function connectWs() {
       messages.scrollTop = messages.scrollHeight;
     } else if (data.type === "message") {
       conversationId = data.conversation_id;
+      localStorage.setItem("conversationId", conversationId);
       const el = document.createElement("div");
       el.className = "message assistant";
       el.textContent = data.content;
@@ -112,8 +116,46 @@ document.getElementById("chat-input").addEventListener("keydown", (e) => {
 
 document.getElementById("new-chat-btn").addEventListener("click", () => {
   conversationId = null;
+  localStorage.removeItem("conversationId");
   document.getElementById("chat-messages").innerHTML = "";
 });
+
+async function loadConversation() {
+  if (!conversationId) return;
+  try {
+    const resp = await fetch(`/api/conversations/${conversationId}/messages`);
+    const messages = await resp.json();
+    const container = document.getElementById("chat-messages");
+    container.innerHTML = "";
+
+    for (const msg of messages) {
+      const el = document.createElement("div");
+      const text = msg.content?.text || "";
+      if (msg.role === "user") {
+        el.className = "message user";
+        el.textContent = text;
+      } else if (msg.role === "assistant") {
+        el.className = "message assistant";
+        el.textContent = text;
+        if (msg.content?.tool_calls?.length > 0) {
+          const toolsDiv = document.createElement("div");
+          toolsDiv.className = "tool-calls";
+          toolsDiv.innerHTML =
+            `<strong>Tools used:</strong> ` +
+            msg.content.tool_calls.map((tc) => `<span class="tool-call">${tc.tool}</span>`).join(", ");
+          el.appendChild(toolsDiv);
+        }
+      }
+      if (text) container.appendChild(el);
+    }
+    container.scrollTop = container.scrollHeight;
+  } catch (e) {
+    console.error("Failed to load conversation:", e);
+    // Conversation may have been deleted, clear the reference
+    conversationId = null;
+    localStorage.removeItem("conversationId");
+  }
+}
 
 // --- History ---
 
@@ -524,6 +566,7 @@ document.addEventListener("keydown", (e) => {
 // --- Init ---
 
 connectWs();
+loadConversation();
 
 // Check for OAuth callback
 if (location.search.includes("auth=success")) {

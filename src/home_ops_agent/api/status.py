@@ -157,3 +157,22 @@ async def list_conversations(
             }
             for c in conversations
         ]
+
+
+@router.get("/api/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: int):
+    """Get all messages in a conversation."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+        )
+        return [
+            {
+                "role": m.role,
+                "content": m.content,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in result.scalars().all()
+        ]
