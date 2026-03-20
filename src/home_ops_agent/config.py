@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ntfy_alertmanager_topic: str = "alertmanager"
     ntfy_gatus_topic: str = "gatus"
     ntfy_agent_topic: str = "home-ops-agent"
+    ntfy_token: str = ""
 
     # Web UI
     session_secret: str = "change-me-in-production"

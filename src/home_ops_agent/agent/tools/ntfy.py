@@ -25,6 +25,8 @@ async def publish(params: dict) -> str:
         "Title": title,
         "Priority": str(priority),
     }
+    if settings.ntfy_token:
+        headers["Authorization"] = f"Bearer {settings.ntfy_token}"
     if tags:
         headers["Tags"] = ",".join(tags)
 

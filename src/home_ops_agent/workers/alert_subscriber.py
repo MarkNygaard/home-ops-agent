@@ -139,10 +139,14 @@ async def _subscribe_topic(topic: str, mcp_tools: list | None = None):
     url = f"{settings.ntfy_url}/{topic}/json"
     logger.info("Subscribing to ntfy topic: %s", url)
 
+    headers = {}
+    if settings.ntfy_token:
+        headers["Authorization"] = f"Bearer {settings.ntfy_token}"
+
     while True:
         try:
             async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("GET", url) as response:
+                async with client.stream("GET", url, headers=headers) as response:
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
