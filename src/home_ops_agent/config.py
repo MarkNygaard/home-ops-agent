@@ -33,11 +33,11 @@ class Settings(BaseSettings):
     alert_cooldown_seconds: int = 900  # 15 minutes
 
     # Per-task model configuration (override via UI settings)
-    model_pr_review: str = "claude-haiku-4-5-20251001"
-    model_alert_triage: str = "claude-haiku-4-5-20251001"
-    model_alert_fix: str = "claude-sonnet-4-6-20250514"
-    model_code_fix: str = "claude-sonnet-4-6-20250514"
-    model_chat: str = "claude-sonnet-4-6-20250514"
+    model_pr_review: str = "claude-haiku-4-5"
+    model_alert_triage: str = "claude-haiku-4-5"
+    model_alert_fix: str = "claude-sonnet-4-6"
+    model_code_fix: str = "claude-sonnet-4-6"
+    model_chat: str = "claude-sonnet-4-6"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

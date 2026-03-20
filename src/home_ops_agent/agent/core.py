@@ -67,7 +67,7 @@ class Agent:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-6",
         max_turns: int = 20,
     ) -> AgentResult:
         """Run the agent with a conversation and tools.

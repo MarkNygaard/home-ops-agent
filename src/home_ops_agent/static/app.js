@@ -242,8 +242,11 @@ async function loadSettings() {
     await loadAgentCards();
     // Map old model IDs to current ones
     const MODEL_MIGRATION = {
-      "claude-sonnet-4-20250514": "claude-sonnet-4-6-20250514",
-      "claude-opus-4-20250514": "claude-opus-4-6-20250514",
+      "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+      "claude-opus-4-20250514": "claude-opus-4-6",
+      "claude-sonnet-4-6-20250514": "claude-sonnet-4-6",
+      "claude-opus-4-6-20250514": "claude-opus-4-6",
+      "claude-haiku-4-5-20251001": "claude-haiku-4-5",
     };
     if (s.models) {
       for (const [task, model] of Object.entries(s.models)) {
@@ -430,9 +433,9 @@ async function loadAgentCards() {
 
     const modelSelect = agent.modelKey
       ? `<select id="model-${agent.modelKey.replace("_", "-")}" class="model-select">
-          <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
-          <option value="claude-sonnet-4-6-20250514">Sonnet 4.6</option>
-          <option value="claude-opus-4-6-20250514">Opus 4.6</option>
+          <option value="claude-haiku-4-5">Haiku 4.5</option>
+          <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+          <option value="claude-opus-4-6">Opus 4.6</option>
         </select>`
       : "";
 
