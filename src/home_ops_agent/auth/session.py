@@ -1,7 +1,7 @@
 """Simple session management for the web UI."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # In-memory session store (simple for single-pod deployment)
 _sessions: dict[str, dict] = {}
@@ -12,7 +12,7 @@ def create_session(data: dict | None = None) -> str:
     session_id = secrets.token_urlsafe(32)
     _sessions[session_id] = {
         "data": data or {},
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
     }
     return session_id
 
@@ -24,7 +24,7 @@ def get_session(session_id: str) -> dict | None:
         return None
 
     # Expire sessions after 24 hours
-    if datetime.now(timezone.utc) - session["created_at"] > timedelta(hours=24):
+    if datetime.now(UTC) - session["created_at"] > timedelta(hours=24):
         _sessions.pop(session_id, None)
         return None
 

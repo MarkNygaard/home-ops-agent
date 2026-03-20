@@ -2,7 +2,6 @@
 
 import json
 import logging
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -77,10 +76,14 @@ async def websocket_chat(websocket: WebSocket):
                 await session.commit()
 
             # Send typing indicator
-            await websocket.send_text(json.dumps({
-                "type": "typing",
-                "conversation_id": conversation_id,
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "typing",
+                        "conversation_id": conversation_id,
+                    }
+                )
+            )
 
             # Build message history from DB
             async with async_session() as session:
@@ -101,10 +104,17 @@ async def websocket_chat(websocket: WebSocket):
             # Run agent
             api_key, oauth_token = await get_claude_credentials()
             if not api_key and not oauth_token:
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "message": "No Claude credentials configured. Please set up OAuth or an API key in Settings.",
-                }))
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": (
+                                "No Claude credentials configured."
+                                " Please set up OAuth or an API key in Settings."
+                            ),
+                        }
+                    )
+                )
                 continue
 
             agent = Agent(api_key=api_key, oauth_token=oauth_token)
@@ -136,19 +146,27 @@ async def websocket_chat(websocket: WebSocket):
                     session.add(assistant_msg)
                     await session.commit()
 
-                await websocket.send_text(json.dumps({
-                    "type": "message",
-                    "conversation_id": conversation_id,
-                    "content": result.response,
-                    "tool_calls": result.tool_calls,
-                    "tokens": result.total_tokens,
-                }))
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "message",
+                            "conversation_id": conversation_id,
+                            "content": result.response,
+                            "tool_calls": result.tool_calls,
+                            "tokens": result.total_tokens,
+                        }
+                    )
+                )
             except Exception as e:
                 logger.exception("Chat agent failed")
-                await websocket.send_text(json.dumps({
-                    "type": "error",
-                    "message": f"Agent error: {e}",
-                }))
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": f"Agent error: {e}",
+                        }
+                    )
+                )
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for conversation %s", conversation_id)

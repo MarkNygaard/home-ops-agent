@@ -1,7 +1,7 @@
 """Settings API — manage agent configuration via web UI."""
 
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
@@ -11,7 +11,6 @@ from sqlalchemy import select
 from home_ops_agent.auth.oauth import (
     exchange_code,
     generate_pkce_pair,
-    get_auth_method,
     get_authorization_url,
     get_valid_token,
     store_tokens,
@@ -57,8 +56,12 @@ async def get_settings():
         "oauth_status": oauth_status,
         "oauth_token_expires": token_expires,
         "has_api_key": bool(db_settings.get("anthropic_api_key") or settings.anthropic_api_key),
-        "has_oauth_credentials": bool(settings.anthropic_client_id and settings.anthropic_client_secret),
-        "alert_cooldown_seconds": int(db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)),
+        "has_oauth_credentials": bool(
+            settings.anthropic_client_id and settings.anthropic_client_secret
+        ),
+        "alert_cooldown_seconds": int(
+            db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)
+        ),
         "ntfy_topics": db_settings.get(
             "ntfy_topics",
             f"{settings.ntfy_alertmanager_topic},{settings.ntfy_gatus_topic}",
@@ -80,10 +83,17 @@ async def get_settings():
 async def update_setting(key: str, body: UpdateSetting):
     """Update a single setting."""
     allowed_keys = {
-        "pr_mode", "auth_method", "anthropic_api_key",
-        "alert_cooldown_seconds", "ntfy_topics", "pr_check_interval_seconds",
-        "model_pr_review", "model_alert_triage", "model_alert_fix",
-        "model_code_fix", "model_chat",
+        "pr_mode",
+        "auth_method",
+        "anthropic_api_key",
+        "alert_cooldown_seconds",
+        "ntfy_topics",
+        "pr_check_interval_seconds",
+        "model_pr_review",
+        "model_alert_triage",
+        "model_alert_fix",
+        "model_code_fix",
+        "model_chat",
     }
     if key not in allowed_keys:
         return {"error": f"Unknown setting: {key}"}
@@ -94,7 +104,7 @@ async def update_setting(key: str, body: UpdateSetting):
 
         if existing:
             existing.value = body.value
-            existing.updated_at = datetime.now(timezone.utc)
+            existing.updated_at = datetime.now(UTC)
         else:
             session.add(Setting(key=key, value=body.value))
 
@@ -148,9 +158,7 @@ async def oauth_callback(code: str, state: str, request: Request):
 
         # Update auth method to oauth
         async with async_session() as session:
-            result = await session.execute(
-                select(Setting).where(Setting.key == "auth_method")
-            )
+            result = await session.execute(select(Setting).where(Setting.key == "auth_method"))
             existing = result.scalar_one_or_none()
             if existing:
                 existing.value = "oauth"

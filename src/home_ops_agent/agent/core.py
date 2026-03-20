@@ -7,8 +7,6 @@ from typing import Any
 
 import anthropic
 
-from home_ops_agent.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -106,10 +104,12 @@ class Agent:
                 )
 
             # Append assistant message with all content blocks
-            messages.append({
-                "role": "assistant",
-                "content": [_block_to_dict(b) for b in response.content],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [_block_to_dict(b) for b in response.content],
+                }
+            )
 
             # Execute each tool call and collect results
             tool_results = []
@@ -118,10 +118,12 @@ class Agent:
                 tool_input = tool_block.input
 
                 logger.info("Executing tool: %s", tool_name)
-                all_tool_calls.append({
-                    "tool": tool_name,
-                    "input": tool_input,
-                })
+                all_tool_calls.append(
+                    {
+                        "tool": tool_name,
+                        "input": tool_input,
+                    }
+                )
 
                 tool_def = self.tools.get(tool_name)
                 if tool_def is None:
@@ -135,11 +137,13 @@ class Agent:
                         logger.exception("Tool %s failed", tool_name)
                         result = json.dumps({"error": str(e)})
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_block.id,
-                    "content": result,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_block.id,
+                        "content": result,
+                    }
+                )
 
             # Add tool results to the conversation
             messages.append({"role": "user", "content": tool_results})

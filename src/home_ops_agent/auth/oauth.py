@@ -3,7 +3,7 @@
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -23,6 +23,7 @@ def generate_pkce_pair() -> tuple[str, str]:
     verifier = secrets.token_urlsafe(64)
     challenge = hashlib.sha256(verifier.encode()).digest()
     import base64
+
     challenge_b64 = base64.urlsafe_b64encode(challenge).rstrip(b"=").decode()
     return verifier, challenge_b64
 
@@ -77,15 +78,15 @@ async def refresh_access_token(refresh_token: str) -> dict:
 
 async def store_tokens(access_token: str, refresh_token: str, expires_in: int):
     """Store OAuth tokens in the database."""
-    expires_at = datetime.now(timezone.utc).replace(
-        second=datetime.now(timezone.utc).second + expires_in
-    )
+    expires_at = datetime.now(UTC).replace(second=datetime.now(UTC).second + expires_in)
     from datetime import timedelta
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
     async with async_session() as session:
         # Upsert: delete old tokens, insert new
         from sqlalchemy import delete
+
         await session.execute(delete(OAuthToken))
         token = OAuthToken(
             access_token=access_token,
@@ -109,7 +110,8 @@ async def get_valid_token() -> str | None:
 
         # Check if token is expired (with 5 min buffer)
         from datetime import timedelta
-        if token.expires_at < datetime.now(timezone.utc) + timedelta(minutes=5):
+
+        if token.expires_at < datetime.now(UTC) + timedelta(minutes=5):
             try:
                 new_tokens = await refresh_access_token(token.refresh_token)
                 await store_tokens(
@@ -128,9 +130,7 @@ async def get_valid_token() -> str | None:
 async def get_auth_method() -> str:
     """Get the configured auth method (oauth or api_key)."""
     async with async_session() as session:
-        result = await session.execute(
-            select(Setting).where(Setting.key == "auth_method")
-        )
+        result = await session.execute(select(Setting).where(Setting.key == "auth_method"))
         setting = result.scalar_one_or_none()
         return setting.value if setting else "api_key"
 

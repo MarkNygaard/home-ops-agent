@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -12,8 +12,6 @@ from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import PR_REVIEW_PROMPT
 from home_ops_agent.agent.tools.github import get_github_tools
 from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
-from sqlalchemy import select
-
 from home_ops_agent.auth.oauth import get_claude_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
@@ -27,9 +25,7 @@ _reviewed: set[str] = set()
 async def _get_pr_mode() -> str:
     """Get current PR review mode from settings."""
     async with async_session() as session:
-        result = await session.execute(
-            select(Setting).where(Setting.key == "pr_mode")
-        )
+        result = await session.execute(select(Setting).where(Setting.key == "pr_mode"))
         setting = result.scalar_one_or_none()
         return setting.value if setting else "comment_only"
 
@@ -73,7 +69,7 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
         _reviewed.add(pr_key)
         return result
     except Exception:
-        logger.exception("Failed to review PR #%s", pr['number'])
+        logger.exception("Failed to review PR #%s", pr["number"])
         return None
 
 
@@ -103,7 +99,7 @@ async def _save_task(pr: dict, result: AgentResult):
             conversation_id=conversation.id,
             summary=result.response[:500],
             actions_taken={"tool_calls": result.tool_calls, "tokens": result.total_tokens},
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(UTC),
         )
         session.add(task)
         await session.commit()
@@ -122,6 +118,7 @@ async def check_prs():
 
     # List open PRs via direct API call (not through agent)
     from home_ops_agent.agent.tools.github import list_prs
+
     prs_json = await list_prs({"state": "open"})
     prs = json.loads(prs_json)
 

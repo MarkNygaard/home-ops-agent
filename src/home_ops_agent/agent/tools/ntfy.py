@@ -42,13 +42,20 @@ def get_ntfy_tools() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name="ntfy_publish",
-            description="Send a notification to the user via ntfy. Use this to report actions taken, alert investigations, or anything the user should know about.",
+            description=(
+                "Send a notification to the user via ntfy."
+                " Use this to report actions taken, alert investigations,"
+                " or anything the user should know about."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "topic": {
                         "type": "string",
-                        "description": f"ntfy topic (default: '{settings.ntfy_agent_topic}'). Use 'home-ops-agent' for agent reports.",
+                        "description": (
+                            f"ntfy topic (default: '{settings.ntfy_agent_topic}')."
+                            " Use 'home-ops-agent' for agent reports."
+                        ),
                     },
                     "title": {"type": "string", "description": "Notification title"},
                     "message": {"type": "string", "description": "Notification body text"},

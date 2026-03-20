@@ -8,7 +8,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from home_ops_agent.api.chat import router as chat_router, set_mcp_tools
+from home_ops_agent.api.chat import router as chat_router
+from home_ops_agent.api.chat import set_mcp_tools
 from home_ops_agent.api.settings import router as settings_router
 from home_ops_agent.api.status import router as status_router
 from home_ops_agent.database import init_db

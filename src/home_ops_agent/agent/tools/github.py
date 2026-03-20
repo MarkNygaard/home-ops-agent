@@ -39,17 +39,19 @@ async def list_prs(params: dict) -> str:
 
         result = []
         for pr in prs:
-            result.append({
-                "number": pr["number"],
-                "title": pr["title"],
-                "author": pr["user"]["login"],
-                "labels": [l["name"] for l in pr["labels"]],
-                "created_at": pr["created_at"],
-                "updated_at": pr["updated_at"],
-                "mergeable_state": pr.get("mergeable_state"),
-                "draft": pr["draft"],
-                "html_url": pr["html_url"],
-            })
+            result.append(
+                {
+                    "number": pr["number"],
+                    "title": pr["title"],
+                    "author": pr["user"]["login"],
+                    "labels": [lbl["name"] for lbl in pr["labels"]],
+                    "created_at": pr["created_at"],
+                    "updated_at": pr["updated_at"],
+                    "mergeable_state": pr.get("mergeable_state"),
+                    "draft": pr["draft"],
+                    "html_url": pr["html_url"],
+                }
+            )
         return json.dumps(result)
 
 
@@ -63,23 +65,25 @@ async def get_pr(params: dict) -> str:
         resp.raise_for_status()
         pr = resp.json()
 
-        return json.dumps({
-            "number": pr["number"],
-            "title": pr["title"],
-            "body": pr["body"] or "",
-            "author": pr["user"]["login"],
-            "labels": [l["name"] for l in pr["labels"]],
-            "state": pr["state"],
-            "mergeable": pr.get("mergeable"),
-            "mergeable_state": pr.get("mergeable_state"),
-            "additions": pr["additions"],
-            "deletions": pr["deletions"],
-            "changed_files": pr["changed_files"],
-            "head_ref": pr["head"]["ref"],
-            "head_sha": pr["head"]["sha"],
-            "base_ref": pr["base"]["ref"],
-            "html_url": pr["html_url"],
-        })
+        return json.dumps(
+            {
+                "number": pr["number"],
+                "title": pr["title"],
+                "body": pr["body"] or "",
+                "author": pr["user"]["login"],
+                "labels": [lbl["name"] for lbl in pr["labels"]],
+                "state": pr["state"],
+                "mergeable": pr.get("mergeable"),
+                "mergeable_state": pr.get("mergeable_state"),
+                "additions": pr["additions"],
+                "deletions": pr["deletions"],
+                "changed_files": pr["changed_files"],
+                "head_ref": pr["head"]["ref"],
+                "head_sha": pr["head"]["sha"],
+                "base_ref": pr["base"]["ref"],
+                "html_url": pr["html_url"],
+            }
+        )
 
 
 async def get_pr_files(params: dict) -> str:
@@ -93,13 +97,15 @@ async def get_pr_files(params: dict) -> str:
 
         files = []
         for f in resp.json():
-            files.append({
-                "filename": f["filename"],
-                "status": f["status"],
-                "additions": f["additions"],
-                "deletions": f["deletions"],
-                "patch": f.get("patch", "")[:2000],  # Truncate large diffs
-            })
+            files.append(
+                {
+                    "filename": f["filename"],
+                    "status": f["status"],
+                    "additions": f["additions"],
+                    "deletions": f["deletions"],
+                    "patch": f.get("patch", "")[:2000],  # Truncate large diffs
+                }
+            )
         return json.dumps(files)
 
 
@@ -114,13 +120,15 @@ async def get_check_runs(params: dict) -> str:
 
         checks = []
         for check in resp.json().get("check_runs", []):
-            checks.append({
-                "name": check["name"],
-                "status": check["status"],
-                "conclusion": check["conclusion"],
-                "started_at": check.get("started_at"),
-                "completed_at": check.get("completed_at"),
-            })
+            checks.append(
+                {
+                    "name": check["name"],
+                    "status": check["status"],
+                    "conclusion": check["conclusion"],
+                    "started_at": check.get("started_at"),
+                    "completed_at": check.get("completed_at"),
+                }
+            )
         return json.dumps(checks)
 
 
@@ -152,7 +160,8 @@ async def merge_pr(params: dict) -> str:
         if resp.status_code == 200:
             return json.dumps({"status": "merged", "sha": resp.json().get("sha")})
         else:
-            return json.dumps({"status": "failed", "message": resp.json().get("message", resp.text)})
+            msg = resp.json().get("message", resp.text)
+            return json.dumps({"status": "failed", "message": msg})
 
 
 async def get_file_content(params: dict) -> str:
@@ -168,16 +177,19 @@ async def get_file_content(params: dict) -> str:
         data = resp.json()
         if data.get("encoding") == "base64":
             import base64
+
             content = base64.b64decode(data["content"]).decode("utf-8")
         else:
             content = data.get("content", "")
 
-        return json.dumps({
-            "path": data["path"],
-            "size": data["size"],
-            "sha": data["sha"],
-            "content": content[:10000],  # Truncate very large files
-        })
+        return json.dumps(
+            {
+                "path": data["path"],
+                "size": data["size"],
+                "sha": data["sha"],
+                "content": content[:10000],  # Truncate very large files
+            }
+        )
 
 
 async def create_commit(params: dict) -> str:
@@ -189,6 +201,7 @@ async def create_commit(params: dict) -> str:
     sha = params.get("sha")  # Current file SHA (required for updates)
 
     import base64
+
     encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
     async with httpx.AsyncClient() as client:
@@ -217,15 +230,24 @@ def get_github_tools() -> list[ToolDefinition]:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "state": {"type": "string", "description": "PR state: open, closed, all (default: open)"},
-                    "author": {"type": "string", "description": "Filter by author login (e.g., 'renovate[bot]')"},
+                    "state": {
+                        "type": "string",
+                        "description": "PR state: open, closed, all (default: open)",
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Filter by author login (e.g., 'renovate[bot]')",
+                    },
                 },
             },
             handler=list_prs,
         ),
         ToolDefinition(
             name="github_get_pr",
-            description="Get detailed information about a specific PR including merge status, additions/deletions, labels.",
+            description=(
+                "Get detailed information about a specific PR"
+                " including merge status, additions/deletions, labels."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -274,12 +296,18 @@ def get_github_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="github_merge_pr",
-            description="Merge a pull request using squash merge. Only use when auto-merge mode is enabled and all criteria are met.",
+            description=(
+                "Merge a pull request using squash merge."
+                " Only use when auto-merge mode is enabled and all criteria are met."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "pr_number": {"type": "integer", "description": "PR number"},
-                    "commit_title": {"type": "string", "description": "Custom commit title (optional)"},
+                    "commit_title": {
+                        "type": "string",
+                        "description": "Custom commit title (optional)",
+                    },
                 },
                 "required": ["pr_number"],
             },
@@ -292,7 +320,10 @@ def get_github_tools() -> list[ToolDefinition]:
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "File path in the repo"},
-                    "ref": {"type": "string", "description": "Branch or commit SHA (default: main)"},
+                    "ref": {
+                        "type": "string",
+                        "description": "Branch or commit SHA (default: main)",
+                    },
                 },
                 "required": ["path"],
             },
@@ -300,7 +331,10 @@ def get_github_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="github_create_commit",
-            description="Create a commit on a branch by creating or updating a file. Use for fix commits on PR branches.",
+            description=(
+                "Create a commit on a branch by creating or updating a file."
+                " Use for fix commits on PR branches."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -308,7 +342,13 @@ def get_github_tools() -> list[ToolDefinition]:
                     "content": {"type": "string", "description": "New file content"},
                     "message": {"type": "string", "description": "Commit message"},
                     "branch": {"type": "string", "description": "Target branch"},
-                    "sha": {"type": "string", "description": "Current file SHA (required for updates, get from github_get_file_content)"},
+                    "sha": {
+                        "type": "string",
+                        "description": (
+                            "Current file SHA (required for updates,"
+                            " get from github_get_file_content)"
+                        ),
+                    },
                 },
                 "required": ["path", "content", "message", "branch"],
             },

@@ -1,6 +1,7 @@
 """System prompts for different agent contexts."""
 
-CLUSTER_CONTEXT = """You are the home-ops-agent, an autonomous operator for a home Kubernetes cluster.
+CLUSTER_CONTEXT = """\
+You are the home-ops-agent, an autonomous operator for a home Kubernetes cluster.
 
 ## Cluster Overview
 - 3-node Talos Linux Kubernetes cluster (Minisforum MS-01 nodes)
@@ -30,7 +31,9 @@ Flux operations (via MCP), and ntfy for notifications. Use them to investigate a
 - If you cannot fix something, provide a clear diagnosis with evidence
 """
 
-PR_REVIEW_PROMPT = CLUSTER_CONTEXT + """
+PR_REVIEW_PROMPT = (
+    CLUSTER_CONTEXT
+    + """
 ## Task: PR Review
 
 You are reviewing a pull request on the home-ops GitHub repository. Analyze the changes and provide
@@ -61,8 +64,11 @@ Only auto-merge when ALL conditions are met:
 - Label is type/patch or type/digest
 - Component is NOT in the critical list
 """
+)
 
-ALERT_RESPONSE_PROMPT = CLUSTER_CONTEXT + """
+ALERT_RESPONSE_PROMPT = (
+    CLUSTER_CONTEXT
+    + """
 ## Task: Alert Investigation
 
 An alert has fired. Your job is to diagnose the issue, attempt a fix if possible, and report
@@ -93,8 +99,11 @@ After investigation, send an ntfy notification:
 - If NOT FIXABLE: what you found, what you tried, what the user should look at
 - Use priority 3 (default) for informational, 4 for warnings, 5 for critical issues you can't fix
 """
+)
 
-CHAT_PROMPT = CLUSTER_CONTEXT + """
+CHAT_PROMPT = (
+    CLUSTER_CONTEXT
+    + """
 ## Task: Interactive Chat
 
 The user is asking you about the cluster or requesting an action. Be helpful, concise, and
@@ -107,3 +116,4 @@ use your tools to provide accurate, real-time information.
 - For destructive actions (restart, delete), explain what will happen first
 - If you're unsure, say so and suggest what the user could check
 """
+)

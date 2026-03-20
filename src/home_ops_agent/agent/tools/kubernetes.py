@@ -46,20 +46,24 @@ async def get_pods(params: dict) -> str:
         for pod in pods.items:
             container_statuses = []
             for cs in pod.status.container_statuses or []:
-                container_statuses.append({
-                    "name": cs.name,
-                    "ready": cs.ready,
-                    "restart_count": cs.restart_count,
-                    "state": str(cs.state),
-                })
-            result.append({
-                "name": pod.metadata.name,
-                "namespace": pod.metadata.namespace,
-                "phase": pod.status.phase,
-                "node": pod.spec.node_name,
-                "containers": container_statuses,
-                "created": pod.metadata.creation_timestamp,
-            })
+                container_statuses.append(
+                    {
+                        "name": cs.name,
+                        "ready": cs.ready,
+                        "restart_count": cs.restart_count,
+                        "state": str(cs.state),
+                    }
+                )
+            result.append(
+                {
+                    "name": pod.metadata.name,
+                    "namespace": pod.metadata.namespace,
+                    "phase": pod.status.phase,
+                    "node": pod.spec.node_name,
+                    "containers": container_statuses,
+                    "created": pod.metadata.creation_timestamp,
+                }
+            )
         return json.dumps(result, default=_serialize)
     except ApiException as e:
         return json.dumps({"error": f"Failed to list pods: {e.reason}"})
@@ -100,15 +104,22 @@ async def get_events(params: dict) -> str:
             field_selector=field_selector,
         )
         result = []
-        for event in sorted(events.items, key=lambda e: e.last_timestamp or e.metadata.creation_timestamp or datetime.min, reverse=True)[:20]:
-            result.append({
-                "type": event.type,
-                "reason": event.reason,
-                "message": event.message,
-                "object": f"{event.involved_object.kind}/{event.involved_object.name}",
-                "count": event.count,
-                "last_seen": event.last_timestamp,
-            })
+        sorted_events = sorted(
+            events.items,
+            key=lambda e: e.last_timestamp or e.metadata.creation_timestamp or datetime.min,
+            reverse=True,
+        )[:20]
+        for event in sorted_events:
+            result.append(
+                {
+                    "type": event.type,
+                    "reason": event.reason,
+                    "message": event.message,
+                    "object": f"{event.involved_object.kind}/{event.involved_object.name}",
+                    "count": event.count,
+                    "last_seen": event.last_timestamp,
+                }
+            )
         return json.dumps(result, default=_serialize)
     except ApiException as e:
         return json.dumps({"error": f"Failed to get events: {e.reason}"})
@@ -151,23 +162,23 @@ async def get_nodes(params: dict) -> str:
         nodes = core_v1.list_node()
         result = []
         for node in nodes.items:
-            conditions = {
-                c.type: c.status for c in node.status.conditions or []
-            }
-            result.append({
-                "name": node.metadata.name,
-                "conditions": conditions,
-                "capacity": {
-                    "cpu": node.status.capacity.get("cpu"),
-                    "memory": node.status.capacity.get("memory"),
-                    "pods": node.status.capacity.get("pods"),
-                },
-                "allocatable": {
-                    "cpu": node.status.allocatable.get("cpu"),
-                    "memory": node.status.allocatable.get("memory"),
-                    "pods": node.status.allocatable.get("pods"),
-                },
-            })
+            conditions = {c.type: c.status for c in node.status.conditions or []}
+            result.append(
+                {
+                    "name": node.metadata.name,
+                    "conditions": conditions,
+                    "capacity": {
+                        "cpu": node.status.capacity.get("cpu"),
+                        "memory": node.status.capacity.get("memory"),
+                        "pods": node.status.capacity.get("pods"),
+                    },
+                    "allocatable": {
+                        "cpu": node.status.allocatable.get("cpu"),
+                        "memory": node.status.allocatable.get("memory"),
+                        "pods": node.status.allocatable.get("pods"),
+                    },
+                }
+            )
         return json.dumps(result, default=_serialize)
     except ApiException as e:
         return json.dumps({"error": f"Failed to list nodes: {e.reason}"})
@@ -183,9 +194,7 @@ async def restart_deployment(params: dict) -> str:
         "spec": {
             "template": {
                 "metadata": {
-                    "annotations": {
-                        "home-ops-agent/restartedAt": datetime.utcnow().isoformat()
-                    }
+                    "annotations": {"home-ops-agent/restartedAt": datetime.utcnow().isoformat()}
                 }
             }
         }
@@ -221,26 +230,43 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name="k8s_get_pods",
-            description="List pods in a Kubernetes namespace with their status, restarts, and node placement.",
+            description=(
+                "List pods in a Kubernetes namespace with their status,"
+                " restarts, and node placement."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "namespace": {"type": "string", "description": "Kubernetes namespace (default: 'default')"},
-                    "label_selector": {"type": "string", "description": "Label selector (e.g., 'app=nginx')"},
+                    "namespace": {
+                        "type": "string",
+                        "description": "Kubernetes namespace (default: 'default')",
+                    },
+                    "label_selector": {
+                        "type": "string",
+                        "description": "Label selector (e.g., 'app=nginx')",
+                    },
                 },
             },
             handler=get_pods,
         ),
         ToolDefinition(
             name="k8s_get_pod_logs",
-            description="Get recent logs from a specific pod. Useful for diagnosing crashes or errors.",
+            description=(
+                "Get recent logs from a specific pod. Useful for diagnosing crashes or errors."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "namespace": {"type": "string", "description": "Kubernetes namespace"},
                     "pod_name": {"type": "string", "description": "Pod name"},
-                    "container": {"type": "string", "description": "Container name (optional, for multi-container pods)"},
-                    "tail_lines": {"type": "integer", "description": "Number of log lines to return (default: 100)"},
+                    "container": {
+                        "type": "string",
+                        "description": "Container name (optional, for multi-container pods)",
+                    },
+                    "tail_lines": {
+                        "type": "integer",
+                        "description": "Number of log lines to return (default: 100)",
+                    },
                 },
                 "required": ["namespace", "pod_name"],
             },
@@ -248,25 +274,43 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="k8s_get_events",
-            description="Get Kubernetes events for a namespace or specific resource. Shows warnings, errors, and scheduling info.",
+            description=(
+                "Get Kubernetes events for a namespace or specific resource."
+                " Shows warnings, errors, and scheduling info."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "namespace": {"type": "string", "description": "Kubernetes namespace"},
-                    "resource_name": {"type": "string", "description": "Filter events for a specific resource name"},
+                    "resource_name": {
+                        "type": "string",
+                        "description": "Filter events for a specific resource name",
+                    },
                 },
             },
             handler=get_events,
         ),
         ToolDefinition(
             name="k8s_describe_resource",
-            description="Get full details of a Kubernetes resource (pod, deployment, statefulset, service, node, configmap, pvc).",
+            description=(
+                "Get full details of a Kubernetes resource"
+                " (pod, deployment, statefulset, service, node, configmap, pvc)."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "kind": {"type": "string", "description": "Resource kind: pod, deployment, statefulset, daemonset, service, node, configmap, pvc"},
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Resource kind: pod, deployment, statefulset,"
+                            " daemonset, service, node, configmap, pvc"
+                        ),
+                    },
                     "name": {"type": "string", "description": "Resource name"},
-                    "namespace": {"type": "string", "description": "Kubernetes namespace (not needed for nodes)"},
+                    "namespace": {
+                        "type": "string",
+                        "description": "Kubernetes namespace (not needed for nodes)",
+                    },
                 },
                 "required": ["kind", "name"],
             },
@@ -274,19 +318,30 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="k8s_get_nodes",
-            description="Get node status, conditions, and resource capacity/allocatable for all cluster nodes.",
+            description=(
+                "Get node status, conditions, and resource"
+                " capacity/allocatable for all cluster nodes."
+            ),
             input_schema={"type": "object", "properties": {}},
             handler=get_nodes,
         ),
         ToolDefinition(
             name="k8s_restart_workload",
-            description="Trigger a rollout restart on a deployment or statefulset by patching its annotation. The pods will be recreated.",
+            description=(
+                "Trigger a rollout restart on a deployment or statefulset"
+                " by patching its annotation. The pods will be recreated."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Workload name"},
                     "namespace": {"type": "string", "description": "Kubernetes namespace"},
-                    "kind": {"type": "string", "description": "Workload kind: deployment or statefulset (default: deployment)"},
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Workload kind: deployment or statefulset (default: deployment)"
+                        ),
+                    },
                 },
                 "required": ["name", "namespace"],
             },
@@ -294,7 +349,10 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="k8s_delete_pod",
-            description="Delete a specific pod to force its recreation by the controller. Use for stuck pods.",
+            description=(
+                "Delete a specific pod to force its recreation by the controller."
+                " Use for stuck pods."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {

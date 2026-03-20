@@ -1,7 +1,6 @@
 """REST endpoints for health, task history, and agent status."""
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
 from sqlalchemy import desc, func, select
@@ -16,7 +15,7 @@ router = APIRouter()
 @router.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(UTC).isoformat()}
 
 
 @router.get("/api/status")
@@ -34,8 +33,7 @@ async def agent_status():
     async with async_session() as session:
         # Count tasks by type
         result = await session.execute(
-            select(AgentTask.task_type, func.count(AgentTask.id))
-            .group_by(AgentTask.task_type)
+            select(AgentTask.task_type, func.count(AgentTask.id)).group_by(AgentTask.task_type)
         )
         task_counts = {row[0]: row[1] for row in result.all()}
 
@@ -57,7 +55,9 @@ async def agent_status():
             "status": latest_task.status,
             "created_at": latest_task.created_at.isoformat() if latest_task.created_at else None,
             "summary": latest_task.summary,
-        } if latest_task else None,
+        }
+        if latest_task
+        else None,
     }
 
 
@@ -98,9 +98,7 @@ async def task_history(
 async def task_detail(task_id: int):
     """Get detailed view of a specific task including conversation messages."""
     async with async_session() as session:
-        result = await session.execute(
-            select(AgentTask).where(AgentTask.id == task_id)
-        )
+        result = await session.execute(select(AgentTask).where(AgentTask.id == task_id))
         task = result.scalar_one_or_none()
         if not task:
             return {"error": "Task not found"}

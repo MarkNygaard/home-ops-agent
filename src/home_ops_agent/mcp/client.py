@@ -17,7 +17,13 @@ class MCPClient:
         self._sessions: dict[str, ClientSession] = {}
         self._tools: dict[str, dict[str, Any]] = {}  # tool_name -> {session_name, schema}
 
-    async def connect(self, name: str, command: str, args: list[str] | None = None, env: dict[str, str] | None = None):
+    async def connect(
+        self,
+        name: str,
+        command: str,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ):
         """Connect to an MCP server via stdio."""
         server_params = StdioServerParameters(
             command=command,

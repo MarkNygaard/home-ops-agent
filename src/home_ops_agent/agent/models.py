@@ -24,9 +24,7 @@ async def get_model_for_task(task: str) -> str:
     setting_key = f"model_{task}"
 
     async with async_session() as session:
-        result = await session.execute(
-            select(Setting).where(Setting.key == setting_key)
-        )
+        result = await session.execute(select(Setting).where(Setting.key == setting_key))
         setting = result.scalar_one_or_none()
         if setting and setting.value:
             return setting.value
