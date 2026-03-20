@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 
+# Hard safety guardrails — these cannot be overridden by the agent
+PROTECTED_BRANCHES = {"main", "master"}
+ALLOWED_COMMIT_PATHS = {"kubernetes/apps/"}  # Agent can only modify files under these paths
+
 
 def _headers() -> dict[str, str]:
     return {
@@ -150,6 +154,9 @@ async def merge_pr(params: dict) -> str:
     pr_number = params["pr_number"]
     commit_title = params.get("commit_title", "")
 
+    # Safety: log every merge attempt
+    logger.warning("Merge requested for PR #%s", pr_number)
+
     async with httpx.AsyncClient() as client:
         url = f"{GITHUB_API}/repos/{settings.github_repo}/pulls/{pr_number}/merge"
         payload: dict[str, Any] = {"merge_method": "squash"}
@@ -199,6 +206,24 @@ async def create_commit(params: dict) -> str:
     message = params["message"]
     branch = params["branch"]
     sha = params.get("sha")  # Current file SHA (required for updates)
+
+    # Safety: never commit directly to protected branches
+    if branch in PROTECTED_BRANCHES:
+        return json.dumps(
+            {
+                "error": f"BLOCKED: Cannot commit directly to protected branch '{branch}'. "
+                "Create a PR branch instead."
+            }
+        )
+
+    # Safety: only allow modifications under approved paths
+    if not any(path.startswith(prefix) for prefix in ALLOWED_COMMIT_PATHS):
+        return json.dumps(
+            {
+                "error": f"BLOCKED: Cannot modify '{path}'. "
+                f"Agent can only modify files under: {', '.join(ALLOWED_COMMIT_PATHS)}"
+            }
+        )
 
     import base64
 

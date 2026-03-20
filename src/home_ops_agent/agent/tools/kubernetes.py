@@ -184,11 +184,20 @@ async def get_nodes(params: dict) -> str:
         return json.dumps({"error": f"Failed to list nodes: {e.reason}"})
 
 
+# Namespaces where the agent must NOT take destructive actions
+PROTECTED_NAMESPACES = {"kube-system", "flux-system", "cert-manager"}
+
+
 async def restart_deployment(params: dict) -> str:
     """Trigger a rollout restart by patching the deployment annotation."""
     name = params["name"]
     namespace = params["namespace"]
     kind = params.get("kind", "deployment").lower()
+
+    if namespace in PROTECTED_NAMESPACES:
+        return json.dumps(
+            {"error": f"BLOCKED: Cannot restart workloads in protected namespace '{namespace}'"}
+        )
 
     patch = {
         "spec": {
@@ -217,6 +226,11 @@ async def delete_pod(params: dict) -> str:
     """Delete a pod to force recreation."""
     name = params["name"]
     namespace = params["namespace"]
+
+    if namespace in PROTECTED_NAMESPACES:
+        return json.dumps(
+            {"error": f"BLOCKED: Cannot delete pods in protected namespace '{namespace}'"}
+        )
 
     try:
         core_v1.delete_namespaced_pod(name, namespace)
