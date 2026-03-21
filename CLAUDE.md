@@ -14,15 +14,19 @@ src/home_ops_agent/
 ├── agent/
 │   ├── core.py             # Agent class — AsyncAnthropic client, tool-use loop
 │   ├── prompts.py          # System prompts with DB overrides, memory loading
-│   ├── models.py           # Per-task model resolution (DB → env fallback)
-│   └── memory.py           # Memory extraction (Haiku) and loading
+│   ├── models.py           # Per-task model resolution (DB → env fallback, includes deep_review)
+│   ├── memory.py           # Memory extraction (Haiku) and loading
+│   ├── skills.py           # Skills registry — groups tools into enable/disable-able bundles
 │   └── tools/
-│       ├── kubernetes.py   # K8s API tools (pods, logs, events, restart, delete)
-│       ├── github.py       # GitHub API tools (PRs, commits, branches, files)
-│       └── ntfy.py         # ntfy publish with auth
+│       ├── kubernetes.py   # K8s API tools (pods, logs, events, restart, delete) — built-in
+│       ├── github.py       # GitHub API tools (PRs, commits, branches, files, releases) — built-in
+│       ├── ntfy.py         # ntfy publish with auth — built-in
+│       ├── prometheus.py   # PromQL queries, metrics, alerts — optional skill
+│       ├── loki.py         # LogQL queries, label listing — optional skill
+│       └── flux.py         # Flux Kustomization/HelmRelease management — optional skill
 ├── workers/
-│   ├── pr_monitor.py       # Periodic PR review (checks enabled, rate limited, deduped)
-│   └── alert_subscriber.py # ntfy SSE stream for alertmanager/gatus topics
+│   ├── pr_monitor.py       # Periodic PR review (4-tier mode, deep review, code fix auto-merge)
+│   └── alert_subscriber.py # ntfy JSON stream — two-stage alert pipeline (triage → fix)
 ├── auth/
 │   ├── oauth.py            # Anthropic OAuth flow (not currently usable, see below)
 │   └── session.py          # Simple in-memory session store
@@ -32,11 +36,10 @@ src/home_ops_agent/
 ├── api/
 │   ├── chat.py             # WebSocket chat endpoint with memory extraction
 │   ├── status.py           # REST: health, history, conversations, memories
-│   └── settings.py         # REST: settings CRUD, prompts CRUD, OAuth flow
-└── static/
-    ├── index.html          # Single-page app (chat, history, memories, settings)
-    ├── style.css           # Dark theme, agent cards, modal, kill switch
-    └── app.js              # WebSocket client, settings, history, memories, prompts
+│   ├── settings.py         # REST: settings CRUD, prompts CRUD, OAuth flow
+│   └── skills.py           # REST: skill listing, enable/disable, config updates
+└── static/                 # Next.js static export (built from web/, served by FastAPI)
+web/                        # Next.js frontend (shadcn/ui) — builds to static/ via Dockerfile
 ```
 
 ## Key commands
@@ -63,6 +66,10 @@ git tag v0.x.y && git push origin v0.x.y
 - **Tool-use loop** — `agent/core.py` implements: send message → get tool_use → execute → send tool_result → repeat until text response.
 - **DB settings override env** — Settings stored in PostgreSQL take priority over environment variables. The UI writes to DB.
 - **Memory extraction** — Runs in background after each chat using Haiku. Extracts structural facts, not transient state.
+- **Skills system** — Tools are grouped into skills (`agent/skills.py`). Built-in skills (kubernetes, github, ntfy) are always enabled. Optional skills (prometheus, loki, flux) can be toggled and configured via the Settings UI. Each skill defines its own tools and config fields.
+- **4-tier PR mode** — `comment_only` → `auto_merge` (patch) → `auto_merge_minor` → `auto_merge_all` (fully autonomous). In `auto_merge_all`, PRs flagged `NEEDS_REVIEW` are escalated to the `deep_review` model (Opus) for a second opinion.
+- **Two-stage alert pipeline** — Alerts go through triage (Haiku, cheap/fast) first. Triage returns `fix`, `notify`, or `ignore`. Only `fix` escalates to the Alert Fix agent (Sonnet).
+- **Code fix auto-merge** — When a PR review flags `NEEDS_FIX`, the Code Fix agent pushes a commit to the PR branch, then polls CI for up to 5 minutes. If CI passes, it auto-merges.
 
 ## Safety guardrails (code-level, not prompt-level)
 
@@ -82,12 +89,16 @@ Anthropic does not allow third-party apps to use OAuth tokens from Max/Pro subsc
 PostgreSQL via CloudNativePG. Tables auto-created by SQLAlchemy on startup (`init_db`).
 
 Key tables:
-- `settings` — key/value store for all config (models, prompts, PR mode, etc.)
+- `settings` — key/value store for all config (models, prompts, PR mode, skill configs, etc.)
 - `conversations` — chat threads, PR reviews, alert investigations
 - `messages` — individual messages within conversations (user, assistant, tool_use, tool_result)
 - `memories` — extracted facts from conversations (content, category, source_conversation_id)
-- `agent_tasks` — tracked background tasks (PR reviews, alert responses)
+- `agent_tasks` — tracked background tasks (PR reviews, alert responses, code fixes)
 - `oauth_tokens` — stored OAuth tokens (unused currently)
+
+Task types used in `agent_tasks.task_type`: `pr_review`, `pr_merge`, `pr_deep_review`, `alert_triage`, `alert_fix`, `code_fix`, `chat`. Note: the database uses a PostgreSQL enum for `task_type` — adding new types requires an ALTER TYPE migration on the enum.
+
+Model keys (used in `models.py` defaults and DB `model_*` settings): `pr_review`, `alert_triage`, `alert_fix`, `code_fix`, `deep_review`, `chat`.
 
 ## Deployment
 

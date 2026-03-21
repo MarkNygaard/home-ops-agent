@@ -6,10 +6,10 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 
 ## Features
 
-- **PR Review** — Monitors your GitHub repo for open PRs (primarily Renovate dependency updates). Posts review comments with risk assessment. Optional auto-merge for safe patches.
-- **Alert Investigation** — Subscribes to ntfy topics (Alertmanager, Gatus) and automatically investigates when alerts fire. Checks pods, logs, metrics, events, and Flux status.
-- **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, create fix branches, commit changes, and open PRs. Every action is logged and reported via ntfy.
-- **Interactive Chat** — Web UI where you can ask questions about cluster state, run diagnostics, or issue commands. Conversations persist across page refreshes.
+- **PR Review** — Monitors your GitHub repo for open PRs (primarily Renovate dependency updates). Posts review comments with risk assessment. 4-tier auto-merge modes from comment-only to fully autonomous.
+- **Alert Investigation** — Two-stage pipeline: fast triage with Haiku determines severity, then escalates fixable issues to Sonnet for corrective action. Subscribes to ntfy topics (Alertmanager, Gatus).
+- **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, create fix branches, commit changes, and open PRs. Code Fix agent auto-merges after CI passes. Every action is logged and reported via ntfy.
+- **Interactive Chat** — Next.js web UI (shadcn/ui) where you can ask questions about cluster state, run diagnostics, or issue commands. Conversations persist across page refreshes.
 - **Persistent Memory** — Extracts key facts from conversations (issues, fixes, preferences, architectural knowledge) and remembers them across future interactions. Memories are viewable and deletable in the UI.
 - **Per-Task Models** — Assign different Claude models to each agent (e.g., Haiku for cheap PR reviews, Sonnet for complex fixes). Configurable via the Settings UI.
 - **Customizable Prompts** — Edit system prompts per agent through modal editors to describe your specific cluster setup.
@@ -28,7 +28,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 - Kubernetes cluster with Flux Operator (or any GitOps tool)
 - [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversations, memories, settings, and task logs
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
-- Prometheus + Loki — for metrics and log queries (optional, via Grafana MCP sidecar)
+- Prometheus + Loki — for metrics and log queries (optional, via skills system)
 - [Anthropic API key](https://console.anthropic.com/settings/keys) — for Claude access
 - GitHub fine-grained personal access token — with `Contents: Read/Write` and `Pull requests: Read/Write` on your repo
 
@@ -111,8 +111,9 @@ Open the agent's web UI and go to **Settings**:
 1. **API Key** — Paste your Anthropic API key
 2. **Cluster Context** — Describe your cluster (nodes, IPs, domain, infrastructure). This is prepended to all agent prompts.
 3. **Agents** — Choose which Claude model each agent uses and customize their prompts
-4. **PR Mode** — Start with "Comment Only", switch to "Auto-Merge" once you trust the reviews
-5. **Kill Switch** — Disable/enable all agent activity instantly
+4. **Skills** — Enable optional skills (Prometheus, Loki, Flux CD) and configure their endpoints
+5. **PR Mode** — Start with "Comment Only", escalate through 4 tiers as you gain trust (see below)
+6. **Kill Switch** — Disable/enable all agent activity instantly
 
 ### 7. Subscribe to notifications
 
@@ -123,12 +124,41 @@ In the ntfy mobile app, subscribe to the `home-ops-agent` topic on your ntfy ser
 | Agent | Default Model | What it does |
 |-------|--------------|-------------|
 | **PR Review** | Haiku 4.5 | Reviews open PRs, posts comments with risk assessment |
-| **Alert Triage** | Haiku 4.5 | First responder — checks pods, logs, metrics |
+| **Alert Triage** | Haiku 4.5 | First responder — checks pods, logs, metrics, determines severity |
 | **Alert Fix** | Sonnet 4.6 | Takes corrective action — restarts pods, reconciles Flux |
-| **Code Fix** | Sonnet 4.6 | Creates branches, commits fixes, opens PRs |
+| **Code Fix** | Sonnet 4.6 | Creates branches, commits fixes, opens PRs. Auto-merges after CI passes. |
+| **Deep Review** | Opus 4.6 | Escalation agent for critical PRs in Fully Autonomous mode |
 | **Chat** | Sonnet 4.6 | Interactive conversation about cluster state |
 
 All models and prompts are configurable via the Settings UI.
+
+## PR Modes
+
+4-tier escalation for PR handling:
+
+| Mode | What it does |
+|------|-------------|
+| **Comment Only** | Reviews and posts comments. No merging. |
+| **Auto-Merge Patch** | Auto-merges `type/patch` and `type/digest` PRs rated safe. |
+| **Auto-Merge Minor** | Also auto-merges `type/minor` PRs rated safe. |
+| **Fully Autonomous** | Auto-merges all tiers. Escalates `NEEDS_REVIEW` PRs to Deep Review (Opus) for a second opinion. |
+
+When a review flags `NEEDS_FIX`, the Code Fix agent pushes a fix commit to the PR branch, waits for CI, and auto-merges on success.
+
+## Skills
+
+Tools are organized into skills that can be enabled/disabled from the Settings UI.
+
+| Skill | Type | What it provides |
+|-------|------|-----------------|
+| **Kubernetes** | Built-in | Pod listing, logs, events, restart, delete |
+| **GitHub** | Built-in | PR workflow, file content, branches, commits, releases |
+| **ntfy** | Built-in | Publish notifications with auth |
+| **Prometheus** | Optional | PromQL instant/range queries, metric/label listing, firing alerts |
+| **Loki** | Optional | LogQL instant/range queries, label listing |
+| **Flux CD** | Optional | List Kustomizations/HelmReleases, reconcile, suspend, resume |
+
+Optional skills require endpoint configuration (done in the Skills settings panel).
 
 ## Memory
 
@@ -162,6 +192,7 @@ The agent has full PR workflow capabilities:
 | `github_get_file_content` | Read files from the repo |
 | `github_create_branch` | Create a branch (fix/, feat/, agent/ prefixes) |
 | `github_create_commit` | Push file changes to a branch |
+| `github_get_release` | Get release notes for a version |
 | `github_create_pr` | Open a pull request |
 
 ## Safety
@@ -197,11 +228,11 @@ pytest
 Images are built on version tags only:
 
 ```bash
-git tag v0.6.0
-git push origin v0.6.0
+git tag v0.10.1
+git push origin v0.10.1
 ```
 
-This triggers GitHub Actions to build and push to `ghcr.io/<your-username>/home-ops-agent:0.6.0`.
+This triggers GitHub Actions to build and push to `ghcr.io/<your-username>/home-ops-agent:0.10.1`.
 
 Update the image tag in your HelmRelease to deploy.
 
