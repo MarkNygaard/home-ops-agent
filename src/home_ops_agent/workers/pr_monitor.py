@@ -273,6 +273,20 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             continue
 
         if not await _is_safe_to_auto_merge(pr, summary):
+            # In auto_merge_all mode, escalate NEEDS_REVIEW to deep review
+            pr_mode = await _get_pr_mode()
+            summary_lower = summary.lower()
+            if (
+                pr_mode == "auto_merge_all"
+                and ("needs_review" in summary_lower or "needs review" in summary_lower)
+                and "deep_review" not in summary_lower
+            ):
+                logger.info(
+                    "Escalating PR #%s to deep review (auto_merge_all mode)",
+                    pr_number,
+                )
+                await _deep_review_pr(pr, summary, agent)
+                merged_count += 1  # Count towards cycle limit
             continue
 
         # Merge it
