@@ -8,9 +8,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from home_ops_agent.agent.skills import init_registry
 from home_ops_agent.api.chat import router as chat_router
 from home_ops_agent.api.chat import set_mcp_tools
 from home_ops_agent.api.settings import router as settings_router
+from home_ops_agent.api.skills import router as skills_router
 from home_ops_agent.api.status import router as status_router
 from home_ops_agent.database import init_db
 from home_ops_agent.mcp.bridge import mcp_tools_to_agent_tools
@@ -34,6 +36,10 @@ async def lifespan(app: FastAPI):
     # Initialize database tables
     await init_db()
     logger.info("Database initialized")
+
+    # Initialize skills registry
+    init_registry()
+    logger.info("Skills registry initialized")
 
     # Connect to MCP sidecar servers (if available)
     mcp_tools = []
@@ -87,6 +93,7 @@ app = FastAPI(
 app.include_router(status_router)
 app.include_router(chat_router)
 app.include_router(settings_router)
+app.include_router(skills_router)
 
 # Static files (web UI)
 static_dir = Path(__file__).parent / "static"

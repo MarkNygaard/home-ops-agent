@@ -1,14 +1,19 @@
 """Kubernetes API tools for the agent."""
 
+from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
 from home_ops_agent.agent.core import ToolDefinition
+
+if TYPE_CHECKING:
+    from home_ops_agent.agent.skills import SkillDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +244,11 @@ async def delete_pod(params: dict) -> str:
         return json.dumps({"error": f"Failed to delete pod: {e.reason}"})
 
 
+def _get_tools(config: dict) -> list[ToolDefinition]:
+    """Return all Kubernetes tool definitions."""
+    return get_kubernetes_tools()
+
+
 def get_kubernetes_tools() -> list[ToolDefinition]:
     """Return all Kubernetes tool definitions."""
     return [
@@ -378,3 +388,21 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
             handler=delete_pod,
         ),
     ]
+
+
+def _make_skill() -> SkillDefinition:
+    from home_ops_agent.agent.skills import SkillDefinition
+
+    return SkillDefinition(
+        id="kubernetes",
+        name="Kubernetes",
+        description=(
+            "Core Kubernetes API tools: list pods, read logs, describe resources,"
+            " get events, restart workloads, and delete pods."
+        ),
+        builtin=True,
+        get_tools=_get_tools,
+    )
+
+
+SKILL: SkillDefinition = _make_skill()

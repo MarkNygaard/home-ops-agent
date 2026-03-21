@@ -17,7 +17,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 
     if (btn.dataset.view === "history") loadHistory();
     if (btn.dataset.view === "memories") loadMemories();
-    if (btn.dataset.view === "settings") { loadSettings(); loadAgentCards(); }
+    if (btn.dataset.view === "settings") { loadSettings(); loadAgentCards(); loadSkills(); }
   });
 });
 
@@ -541,6 +541,120 @@ function showSettingsStatus(msg) {
   el.textContent = msg;
   el.style.color = "var(--green)";
   setTimeout(() => (el.textContent = ""), 3000);
+}
+
+// --- Skills ---
+
+async function loadSkills() {
+  try {
+    const resp = await fetch("/api/skills");
+    const skills = await resp.json();
+    const container = document.getElementById("skills-list");
+    container.innerHTML = "";
+
+    for (const skill of skills) {
+      const card = document.createElement("div");
+      card.className = "skill-card";
+
+      const toggleHtml = skill.builtin
+        ? `<span class="status-badge active" style="font-size: 11px;">Always On</span>`
+        : `<label class="skill-toggle">
+            <input type="checkbox" ${skill.enabled ? "checked" : ""} data-skill-id="${skill.id}">
+            <span class="skill-toggle-label">${skill.enabled ? "Enabled" : "Disabled"}</span>
+          </label>`;
+
+      let configHtml = "";
+      if (skill.config_fields && skill.config_fields.length > 0) {
+        const configVisible = skill.builtin || skill.enabled;
+        configHtml = `<div class="skill-config ${configVisible ? "" : "hidden"}" data-skill-config="${skill.id}">`;
+        for (const field of skill.config_fields) {
+          const value = skill.config[field.key] || field.default || "";
+          configHtml += `
+            <div class="skill-config-field">
+              <label>${field.label}:
+                <input type="${field.type === "url" ? "text" : field.type}"
+                       class="skill-config-input"
+                       data-skill-id="${skill.id}"
+                       data-config-key="${field.key}"
+                       value="${value}"
+                       placeholder="${field.default || ""}">
+              </label>
+            </div>`;
+        }
+        configHtml += "</div>";
+      }
+
+      card.innerHTML = `
+        <div class="skill-header">
+          <div class="skill-info">
+            <span class="skill-name">${skill.name}</span>
+            <span class="skill-tool-count">${skill.tool_count} tool${skill.tool_count !== 1 ? "s" : ""}</span>
+          </div>
+          ${toggleHtml}
+        </div>
+        <p class="skill-desc">${skill.description}</p>
+        ${configHtml}
+      `;
+
+      // Toggle handler
+      const checkbox = card.querySelector('input[type="checkbox"]');
+      if (checkbox) {
+        checkbox.addEventListener("change", async (e) => {
+          const skillId = e.target.dataset.skillId;
+          const enabled = e.target.checked;
+          const label = e.target.nextElementSibling;
+          label.textContent = enabled ? "Enabled" : "Disabled";
+
+          // Show/hide config
+          const configEl = card.querySelector(`[data-skill-config="${skillId}"]`);
+          if (configEl) {
+            configEl.classList.toggle("hidden", !enabled);
+          }
+
+          await updateSkill(skillId, { enabled });
+        });
+      }
+
+      // Config input save on blur
+      card.querySelectorAll(".skill-config-input").forEach((input) => {
+        input.addEventListener("change", async (e) => {
+          const skillId = e.target.dataset.skillId;
+          const configKey = e.target.dataset.configKey;
+
+          // Gather all config values for this skill
+          const config = {};
+          card.querySelectorAll(`.skill-config-input[data-skill-id="${skillId}"]`).forEach((inp) => {
+            config[inp.dataset.configKey] = inp.value;
+          });
+
+          await updateSkill(skillId, { config });
+        });
+      });
+
+      container.appendChild(card);
+    }
+  } catch (e) {
+    console.error("Failed to load skills:", e);
+  }
+}
+
+async function updateSkill(skillId, data) {
+  try {
+    const resp = await fetch(`/api/skills/${skillId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    const result = await resp.json();
+    if (result.error) {
+      console.error("Failed to update skill:", result.error);
+      showSettingsStatus("Error: " + result.error);
+    } else {
+      showSettingsStatus("Skill updated");
+    }
+  } catch (e) {
+    console.error("Failed to update skill:", e);
+  }
 }
 
 // --- Agents (cards with model selector + inline prompt editor) ---

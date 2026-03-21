@@ -1,12 +1,18 @@
 """ntfy notification tools for the agent."""
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.config import settings
+
+if TYPE_CHECKING:
+    from home_ops_agent.agent.skills import SkillDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,11 @@ async def publish(params: dict) -> str:
             return json.dumps({"status": "ok", "topic": topic})
     except httpx.HTTPError as e:
         return json.dumps({"error": f"Failed to publish to ntfy: {e}"})
+
+
+def _get_tools(config: dict) -> list[ToolDefinition]:
+    """Return ntfy tool definitions."""
+    return get_ntfy_tools()
 
 
 def get_ntfy_tools() -> list[ToolDefinition]:
@@ -77,3 +88,21 @@ def get_ntfy_tools() -> list[ToolDefinition]:
             handler=publish,
         ),
     ]
+
+
+def _make_skill() -> SkillDefinition:
+    from home_ops_agent.agent.skills import SkillDefinition
+
+    return SkillDefinition(
+        id="ntfy",
+        name="ntfy",
+        description=(
+            "Send push notifications via ntfy. Used to report actions taken,"
+            " alert investigations, and diagnostics."
+        ),
+        builtin=True,
+        get_tools=_get_tools,
+    )
+
+
+SKILL: SkillDefinition = _make_skill()

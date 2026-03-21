@@ -1,13 +1,18 @@
 """GitHub API tools for the agent."""
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.config import settings
+
+if TYPE_CHECKING:
+    from home_ops_agent.agent.skills import SkillDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +311,11 @@ async def create_pr(params: dict) -> str:
             return json.dumps({"status": "failed", "message": resp.text})
 
 
+def _get_tools(config: dict) -> list[ToolDefinition]:
+    """Return all GitHub tool definitions."""
+    return get_github_tools()
+
+
 def get_github_tools() -> list[ToolDefinition]:
     """Return all GitHub tool definitions."""
     return [
@@ -484,3 +494,21 @@ def get_github_tools() -> list[ToolDefinition]:
             handler=create_pr,
         ),
     ]
+
+
+def _make_skill() -> SkillDefinition:
+    from home_ops_agent.agent.skills import SkillDefinition
+
+    return SkillDefinition(
+        id="github",
+        name="GitHub",
+        description=(
+            "GitHub API tools: list/review PRs, read files,"
+            " create branches, commit changes, and merge PRs."
+        ),
+        builtin=True,
+        get_tools=_get_tools,
+    )
+
+
+SKILL: SkillDefinition = _make_skill()

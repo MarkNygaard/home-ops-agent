@@ -11,8 +11,7 @@ from sqlalchemy import select
 from home_ops_agent.agent.core import Agent
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
-from home_ops_agent.agent.tools.kubernetes import get_kubernetes_tools
-from home_ops_agent.agent.tools.ntfy import get_ntfy_tools
+from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.oauth import get_claude_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
@@ -75,8 +74,8 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         return
 
     agent = Agent(api_key=api_key, oauth_token=oauth_token)
-    agent.register_tools(get_kubernetes_tools())
-    agent.register_tools(get_ntfy_tools())
+    skill_tools = await registry.get_all_enabled_tools()
+    agent.register_tools(skill_tools)
 
     # Register MCP tools if available (Grafana, Flux)
     if mcp_tools:
