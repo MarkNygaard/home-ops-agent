@@ -198,8 +198,8 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     """Check if a previously reviewed PR meets auto-merge criteria."""
     summary_lower = summary.lower()
 
-    # Must have been rated as safe to merge
-    if "safe_to_merge" not in summary_lower:
+    # Must have been rated as safe to merge (check both formats)
+    if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
         return False
 
     # Must be from renovate
