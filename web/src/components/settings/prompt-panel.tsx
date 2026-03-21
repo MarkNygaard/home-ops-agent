@@ -55,7 +55,7 @@ export function PromptPanel({
         if (!open) onClose()
       }}
     >
-      <DialogContent className="fixed top-6 right-6 left-auto bottom-auto translate-x-0 translate-y-0 sm:max-w-lg md:max-w-xl lg:max-w-2xl max-h-[calc(100vh-3rem)] overflow-y-auto">
+      <DialogContent className="fixed top-6 right-6 left-auto bottom-auto translate-x-0 translate-y-0 sm:max-w-xl md:max-w-2xl lg:max-w-3xl max-h-[calc(100vh-3rem)] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <DialogTitle>{label}</DialogTitle>
