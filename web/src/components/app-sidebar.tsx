@@ -8,10 +8,20 @@ import {
   IconBrain,
   IconSettings,
   IconCircuitGround,
+  IconChevronRight,
+  IconShieldCog,
+  IconPuzzle,
+  IconRobot,
+  IconKey,
 } from "@tabler/icons-react"
 
 import { useWs } from "@/providers/websocket-provider"
 import { cn } from "@/lib/utils"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Sidebar,
   SidebarContent,
@@ -20,6 +30,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarGroup,
   SidebarGroupContent,
 } from "@/components/ui/sidebar"
@@ -28,12 +41,19 @@ const NAV_ITEMS = [
   { href: "/", label: "Chat", icon: IconMessageChatbot },
   { href: "/history", label: "History", icon: IconHistory },
   { href: "/memories", label: "Memories", icon: IconBrain },
-  { href: "/settings", label: "Settings", icon: IconSettings },
+] as const
+
+const SETTINGS_ITEMS = [
+  { href: "/settings", label: "General", icon: IconShieldCog },
+  { href: "/settings/skills", label: "Skills", icon: IconPuzzle },
+  { href: "/settings/agents", label: "Agents", icon: IconRobot },
+  { href: "/settings/auth", label: "Authentication", icon: IconKey },
 ] as const
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { status } = useWs()
+  const isSettingsActive = pathname.startsWith("/settings")
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -71,6 +91,36 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   </SidebarMenuItem>
                 )
               })}
+
+              <Collapsible defaultOpen={isSettingsActive} className="group/collapsible">
+                <SidebarMenuItem>
+                  <CollapsibleTrigger render={<SidebarMenuButton />}>
+                    <IconSettings />
+                    <span>Settings</span>
+                    <IconChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <SidebarMenuSub>
+                      {SETTINGS_ITEMS.map((item) => {
+                        const isActive = item.href === "/settings"
+                          ? pathname === "/settings"
+                          : pathname === item.href
+                        return (
+                          <SidebarMenuSubItem key={item.href}>
+                            <SidebarMenuSubButton
+                              render={<Link href={item.href} />}
+                              isActive={isActive}
+                            >
+                              <item.icon />
+                              <span>{item.label}</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        )
+                      })}
+                    </SidebarMenuSub>
+                  </CollapsibleContent>
+                </SidebarMenuItem>
+              </Collapsible>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
