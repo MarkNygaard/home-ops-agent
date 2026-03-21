@@ -502,6 +502,123 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
         logger.exception("Deep review failed for PR #%s", pr_number)
 
 
+async def _wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
+    """Wait for CI to pass on a PR, then merge it. Notify on success or failure."""
+    from home_ops_agent.agent.tools.github import get_check_runs, get_pr, merge_pr
+    from home_ops_agent.agent.tools.ntfy import publish_notification
+
+    logger.info("Waiting for CI on PR #%s before merging", pr_number)
+
+    # Wait up to 5 minutes, checking every 30 seconds
+    for attempt in range(10):
+        await asyncio.sleep(30)
+
+        try:
+            # Get the latest PR info (head SHA may have changed after fix commit)
+            pr_json = await get_pr({"pr_number": pr_number})
+            pr_data = json.loads(pr_json)
+            head_sha = pr_data.get("head_sha", "")
+
+            if not head_sha:
+                continue
+
+            checks_json = await get_check_runs({"ref": head_sha})
+            checks = json.loads(checks_json)
+
+            if not checks:
+                continue
+
+            # Check if all checks completed
+            all_completed = all(c.get("status") == "completed" for c in checks)
+            if not all_completed:
+                continue
+
+            # Check if all passed
+            all_passed = all(
+                c.get("conclusion") in ("success", "neutral", "skipped") for c in checks
+            )
+
+            if all_passed:
+                # Merge it
+                merge_result_json = await merge_pr({"pr_number": pr_number})
+                merge_result = json.loads(merge_result_json)
+
+                if merge_result.get("status") == "merged":
+                    logger.info("CI passed, merged code fix PR #%s", pr_number)
+
+                    async with async_session() as session:
+                        task = AgentTask(
+                            task_type="pr_merge",
+                            trigger=f"PR #{pr_number}",
+                            status="completed",
+                            summary=f"Auto-merged after code fix: {title}",
+                            actions_taken={
+                                "action": "merge_after_fix",
+                                "merge_sha": merge_result.get("sha"),
+                            },
+                            completed_at=datetime.now(UTC),
+                        )
+                        session.add(task)
+                        await session.commit()
+
+                    try:
+                        await publish_notification(
+                            {
+                                "title": f"Code fix merged: PR #{pr_number}",
+                                "message": title,
+                                "priority": "default",
+                                "tags": "white_check_mark",
+                                "click_url": html_url,
+                            }
+                        )
+                    except Exception:
+                        logger.exception("Failed to send merge notification")
+                    return
+                else:
+                    logger.warning(
+                        "Failed to merge PR #%s: %s",
+                        pr_number,
+                        merge_result.get("message"),
+                    )
+                    return
+            else:
+                # CI failed
+                logger.warning("CI failed on code fix PR #%s", pr_number)
+                try:
+                    await publish_notification(
+                        {
+                            "title": f"Code fix CI failed: PR #{pr_number}",
+                            "message": (
+                                f"{title}\n\nCI checks failed after code fix. Manual review needed."
+                            ),
+                            "priority": "high",
+                            "tags": "x",
+                            "click_url": html_url,
+                        }
+                    )
+                except Exception:
+                    logger.exception("Failed to send CI failure notification")
+                return
+
+        except Exception:
+            logger.exception("Error checking CI for PR #%s, attempt %d", pr_number, attempt + 1)
+
+    # Timed out waiting for CI
+    logger.warning("Timed out waiting for CI on PR #%s", pr_number)
+    try:
+        await publish_notification(
+            {
+                "title": f"Code fix: CI timeout on PR #{pr_number}",
+                "message": f"{title}\n\nCI did not complete within 5 minutes.",
+                "priority": "default",
+                "tags": "clock",
+                "click_url": html_url,
+            }
+        )
+    except Exception:
+        logger.exception("Failed to send timeout notification")
+
+
 async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
     """Attempt to fix a PR that was flagged as NEEDS_FIX by the review agent."""
     pr_number = pr["number"]
@@ -509,7 +626,7 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
 
     try:
         model = await get_model_for_task("code_fix")
-        prompt = await get_prompt("chat")  # Use chat prompt + cluster context
+        prompt = await get_prompt("chat")
 
         messages = [
             {
@@ -525,7 +642,7 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
                     "1. Read the changed files using github_get_pr_files\n"
                     "2. Understand what breaking change occurred\n"
                     "3. Read the full file content that needs fixing\n"
-                    "4. Create a fix commit on the PR branch with the corrected file\n"
+                    "4. Create a fix commit on the PR branch\n"
                     "5. Post a comment on the PR explaining what you fixed\n\n"
                     "Only modify files under kubernetes/apps/. "
                     "Use the PR's head branch for the commit, not main."
@@ -554,7 +671,10 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
                 msg = Message(
                     conversation_id=conversation.id,
                     role="assistant",
-                    content={"text": result.response, "tool_calls": result.tool_calls},
+                    content={
+                        "text": result.response,
+                        "tool_calls": result.tool_calls,
+                    },
                 )
                 session.add(msg)
 
@@ -573,14 +693,14 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
                 session.add(task)
                 await session.commit()
 
-            # Notify
+            # Notify about the fix
             from home_ops_agent.agent.tools.ntfy import publish_notification
 
             try:
                 await publish_notification(
                     {
-                        "title": f"Code fix attempted for PR #{pr_number}",
-                        "message": f"{pr['title']}\n\n{result.response[:200]}",
+                        "title": f"Code fix pushed for PR #{pr_number}",
+                        "message": f"{pr['title']}\n\nWaiting for CI...",
                         "priority": "default",
                         "tags": "wrench",
                         "click_url": pr.get("html_url", ""),
@@ -589,7 +709,10 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
             except Exception:
                 logger.exception("Failed to send code fix notification")
 
-            logger.info("Code fix completed for PR #%s", pr_number)
+            logger.info("Code fix completed for PR #%s, waiting for CI", pr_number)
+
+            # Wait for CI and merge
+            await _wait_for_ci_and_merge(pr_number, pr.get("html_url", ""), pr["title"])
 
     except Exception:
         logger.exception("Code fix failed for PR #%s", pr_number)

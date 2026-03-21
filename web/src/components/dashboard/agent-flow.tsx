@@ -362,19 +362,19 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b2b',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Branch', icon: 'IconGitBranch', size: 'sm' },
+      data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' },
     },
     {
       id: 'b2c',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' },
+      data: { label: 'Open PR', icon: 'IconSend', size: 'sm' },
     },
     {
       id: 'b2d',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Open PR', icon: 'IconSend', size: 'sm' },
+      data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
     },
     {
       id: 'b3',
