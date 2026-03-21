@@ -497,7 +497,10 @@ def get_github_tools() -> list[ToolDefinition]:
                 "properties": {
                     "repo": {
                         "type": "string",
-                        "description": "GitHub repo in owner/name format (e.g., 'siderolabs/talos')",
+                        "description": (
+                            "GitHub repo in owner/name format"
+                            " (e.g., 'siderolabs/talos')"
+                        ),
                     },
                     "tag": {
                         "type": "string",
