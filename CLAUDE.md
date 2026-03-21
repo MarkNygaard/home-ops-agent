@@ -45,9 +45,12 @@ web/                        # Next.js frontend (shadcn/ui) — builds to static/
 ## Key commands
 
 ```bash
-# Lint
+# Lint (ALWAYS run both before committing — CI will fail otherwise)
 uvx ruff check src/
 uvx ruff format --check src/
+
+# Auto-fix formatting
+uvx ruff format src/
 
 # Run locally (needs DATABASE_URL and ANTHROPIC_API_KEY env vars)
 uvicorn home_ops_agent.main:app --host 0.0.0.0 --port 8000
@@ -58,6 +61,14 @@ docker build -t home-ops-agent .
 # Release (triggers CI build + push to GHCR)
 git tag v0.x.y && git push origin v0.x.y
 ```
+
+## Commit workflow
+
+1. Run `uvx ruff check src/` and `uvx ruff format --check src/` — fix any issues before committing
+2. Commit on a feature branch (never push directly to main)
+3. **Always tag** the commit with the next patch version (e.g. `v0.10.11`) — the tag triggers the CI build that pushes the Docker image to GHCR. Without a tag, no image is built. Check existing tags with `git tag --sort=-creatordate | head -5` and increment accordingly.
+4. Push both the branch and tag, then create a PR — CI runs lint then build (build is skipped if lint fails)
+5. After merge, Renovate detects the new GHCR image and opens a PR in home-ops to update the deployment
 
 ## Important patterns
 
