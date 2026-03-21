@@ -24,6 +24,22 @@ MAX_REVIEWS_PER_CYCLE = 3
 last_pr_check_at: datetime | None = None
 
 
+def _extract_verdict(response: str) -> str:
+    """Extract the PR review verdict from the agent's response.
+
+    Returns a prefix like '[SAFE_TO_MERGE]', '[NEEDS_REVIEW]', '[NEEDS_FIX]'
+    to prepend to the summary so it's never lost to truncation.
+    """
+    lower = response.lower()
+    if "safe_to_merge" in lower or "safe to merge" in lower:
+        return "[SAFE_TO_MERGE] "
+    if "needs_fix" in lower:
+        return "[NEEDS_FIX] "
+    if "needs_review" in lower or "needs review" in lower:
+        return "[NEEDS_REVIEW] "
+    return ""
+
+
 async def _is_enabled() -> bool:
     """Check if the agent is enabled via settings."""
     async with async_session() as session:
@@ -181,7 +197,7 @@ async def _save_task(pr: dict, result: AgentResult):
             trigger=f"PR #{pr['number']}",
             status="completed",
             conversation_id=conversation.id,
-            summary=result.response[:500],
+            summary=_extract_verdict(result.response) + result.response[:500],
             actions_taken={
                 "tool_calls": result.tool_calls,
                 "tokens": result.total_tokens,
@@ -421,15 +437,47 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
 
     # Check if deep review was already done for this PR
     async with async_session() as session:
-        from sqlalchemy import select
-
         existing = await session.execute(
             select(Conversation).where(
                 Conversation.source == "pr_deep_review",
                 Conversation.title.contains(f"#{pr_number}"),
             )
         )
-        if existing.scalars().first():
+        existing_review = existing.scalars().first()
+        if existing_review:
+            # Deep review exists — but did the merge succeed?
+            # Check the associated task summary for SAFE_TO_MERGE
+            task_result = await session.execute(
+                select(AgentTask).where(
+                    AgentTask.conversation_id == existing_review.id,
+                )
+            )
+            task = task_result.scalars().first()
+            if task and "safe_to_merge" in (task.summary or "").lower():
+                # Approved but PR still open — try to merge
+                from home_ops_agent.agent.tools.github import merge_pr
+                from home_ops_agent.agent.tools.ntfy import publish_notification
+
+                logger.info(
+                    "Deep review approved PR #%s previously, retrying merge",
+                    pr_number,
+                )
+                merge_result_str = await merge_pr({"pr_number": pr_number})
+                merge_result = json.loads(merge_result_str)
+                if merge_result.get("status") == "merged":
+                    try:
+                        await publish_notification(
+                            {
+                                "title": f"Auto-merged PR #{pr_number} (retry)",
+                                "message": pr["title"],
+                                "priority": "default",
+                                "tags": "white_check_mark",
+                                "click_url": pr.get("html_url", ""),
+                            }
+                        )
+                    except Exception:
+                        pass
+                return
             logger.info("Deep review already done for PR #%s, skipping", pr_number)
             return
 
@@ -496,7 +544,9 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                     trigger=f"PR #{pr_number}",
                     status="completed",
                     conversation_id=conversation.id,
-                    summary=f"[Deep Review] {result.response[:450]}",
+                    summary=(
+                        f"[Deep Review] {_extract_verdict(result.response)}{result.response[:450]}"
+                    ),
                     actions_taken={
                         "tool_calls": result.tool_calls,
                         "tokens": result.total_tokens,
@@ -737,7 +787,7 @@ async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
                     trigger=f"PR #{pr_number}",
                     status="completed",
                     conversation_id=conversation.id,
-                    summary=result.response[:500],
+                    summary=_extract_verdict(result.response) + result.response[:500],
                     actions_taken={
                         "tool_calls": result.tool_calls,
                         "tokens": result.total_tokens,
