@@ -54,8 +54,165 @@ async def _is_enabled() -> bool:
         return setting.value.lower() in ("true", "1", "yes")
 
 
+def _format_alert_context(alert: dict) -> str:
+    """Format alert details as a text block for the agent prompt."""
+    return (
+        f"**Topic:** {alert.get('topic', 'unknown')}\n"
+        f"**Title:** {alert.get('title', 'No title')}\n"
+        f"**Message:** {alert.get('message', 'No message')}\n"
+        f"**Priority:** {alert.get('priority', 3)}\n"
+        f"**Tags:** {', '.join(alert.get('tags', []))}\n"
+        f"**Time:** {alert.get('time', 'unknown')}"
+    )
+
+
+async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
+    """Stage 1: Quick triage with Haiku — diagnose severity and determine if fixable.
+
+    Returns (triage_summary, action) where action is one of:
+    - "fix" — the issue is fixable, escalate to Alert Fix agent
+    - "notify" — not fixable, just notify the user with diagnosis
+    - "ignore" — transient/resolved, no action needed
+    """
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "An alert has fired. Quickly triage it: check the affected component, "
+                "read recent logs, and determine the severity.\n\n"
+                f"{_format_alert_context(alert)}\n\n"
+                "After investigating, respond with your diagnosis and end with exactly "
+                "one of these action lines:\n"
+                "ACTION: fix — if you found a fixable issue "
+                "(stuck pod, failed reconciliation, etc.)\n"
+                "ACTION: notify — if the issue needs human attention (not auto-fixable)\n"
+                "ACTION: ignore — if the alert is transient or already resolved"
+            ),
+        }
+    ]
+
+    model = await get_model_for_task("alert_triage")
+    prompt = await get_prompt("alert_response")
+    result = await agent.run(
+        system_prompt=prompt,
+        messages=messages,
+        model=model,
+        max_turns=8,
+    )
+
+    response = result.response
+    response_lower = response.lower()
+
+    # Parse the action from the response
+    if "action: fix" in response_lower:
+        action = "fix"
+    elif "action: ignore" in response_lower:
+        action = "ignore"
+    else:
+        action = "notify"
+
+    # Save triage task
+    async with async_session() as session:
+        conversation = Conversation(
+            title=f"Alert Triage: {alert.get('title', 'Unknown')}",
+            source="alert_triage",
+            status="completed",
+        )
+        session.add(conversation)
+        await session.flush()
+
+        msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content={"text": response, "tool_calls": result.tool_calls},
+        )
+        session.add(msg)
+
+        task = AgentTask(
+            task_type="alert_triage",
+            trigger=f"{alert.get('topic', '')}:{alert.get('title', '')}",
+            status="completed",
+            conversation_id=conversation.id,
+            summary=response[:500],
+            actions_taken={
+                "tool_calls": result.tool_calls,
+                "tokens": result.total_tokens,
+                "action": action,
+            },
+            completed_at=datetime.now(UTC),
+        )
+        session.add(task)
+        await session.commit()
+
+    return response, action
+
+
+async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
+    """Stage 2: Fix the issue with Sonnet — take corrective action."""
+    messages = [
+        {
+            "role": "user",
+            "content": (
+                "An alert was triaged and determined to be fixable. "
+                "Take corrective action to resolve the issue.\n\n"
+                f"Alert:\n{_format_alert_context(alert)}\n\n"
+                f"Triage diagnosis:\n{triage_summary}\n\n"
+                "Actions you can take:\n"
+                "- Restart a stuck pod (delete it to force recreation)\n"
+                "- Trigger Flux reconciliation for a stuck HelmRelease or Kustomization\n"
+                "- Resume a suspended Flux resource\n\n"
+                "After taking action, verify the fix worked, then send an ntfy notification "
+                "to the 'home-ops-agent' topic explaining what was wrong and what you did."
+            ),
+        }
+    ]
+
+    model = await get_model_for_task("alert_fix")
+    prompt = await get_prompt("alert_response")
+    result = await agent.run(
+        system_prompt=prompt,
+        messages=messages,
+        model=model,
+        max_turns=15,
+    )
+
+    # Save fix task
+    async with async_session() as session:
+        conversation = Conversation(
+            title=f"Alert Fix: {alert.get('title', 'Unknown')}",
+            source="alert_fix",
+            status="completed",
+        )
+        session.add(conversation)
+        await session.flush()
+
+        msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content={"text": result.response, "tool_calls": result.tool_calls},
+        )
+        session.add(msg)
+
+        task = AgentTask(
+            task_type="alert_fix",
+            trigger=f"{alert.get('topic', '')}:{alert.get('title', '')}",
+            status="completed",
+            conversation_id=conversation.id,
+            summary=result.response[:500],
+            actions_taken={
+                "tool_calls": result.tool_calls,
+                "tokens": result.total_tokens,
+            },
+            completed_at=datetime.now(UTC),
+        )
+        session.add(task)
+        await session.commit()
+
+    logger.info("Alert fix completed: %s", alert.get("title"))
+
+
 async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
-    """Run the agent to investigate an alert."""
+    """Two-stage alert pipeline: Triage (Haiku) → Fix (Sonnet) if needed."""
     if not await _is_enabled():
         logger.debug("Agent is disabled, skipping alert investigation")
         return
@@ -76,71 +233,39 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
     agent = Agent(api_key=api_key, oauth_token=oauth_token)
     skill_tools = await registry.get_all_enabled_tools()
     agent.register_tools(skill_tools)
-
-    # Register MCP tools if available (Grafana, Flux)
     if mcp_tools:
         agent.register_tools(mcp_tools)
 
-    messages = [
-        {
-            "role": "user",
-            "content": (
-                f"An alert has fired. Investigate and take appropriate action.\n\n"
-                f"**Topic:** {alert.get('topic', 'unknown')}\n"
-                f"**Title:** {alert.get('title', 'No title')}\n"
-                f"**Message:** {alert.get('message', 'No message')}\n"
-                f"**Priority:** {alert.get('priority', 3)}\n"
-                f"**Tags:** {', '.join(alert.get('tags', []))}\n"
-                f"**Time:** {alert.get('time', 'unknown')}\n\n"
-                "Investigate this alert using the available tools. Check relevant pods, "
-                "logs, metrics, and Flux status. If you can fix the issue, do so. "
-                "Then send an ntfy notification to the 'home-ops-agent' topic reporting "
-                "your findings and any actions taken."
-            ),
-        }
-    ]
-
     try:
-        # Use alert_fix model since the agent may take corrective actions
-        model = await get_model_for_task("alert_fix")
-        prompt = await get_prompt("alert_response")
-        result = await agent.run(
-            system_prompt=prompt,
-            messages=messages,
-            model=model,
-            max_turns=15,
-        )
+        # Stage 1: Triage (cheap, fast — Haiku)
+        logger.info("Triaging alert: %s", alert.get("title"))
+        triage_summary, action = await _triage_alert(alert, agent)
+        logger.info("Alert triaged: %s — action: %s", alert.get("title"), action)
 
-        # Save to database
-        async with async_session() as session:
-            conversation = Conversation(
-                title=f"Alert: {alert.get('title', 'Unknown')}",
-                source="alert",
-                status="completed",
-            )
-            session.add(conversation)
-            await session.flush()
+        if action == "ignore":
+            logger.info("Alert ignored (transient/resolved): %s", alert.get("title"))
+            return
 
-            msg = Message(
-                conversation_id=conversation.id,
-                role="assistant",
-                content={"text": result.response, "tool_calls": result.tool_calls},
-            )
-            session.add(msg)
+        if action == "fix":
+            # Stage 2: Fix (capable — Sonnet)
+            logger.info("Escalating to fix agent: %s", alert.get("title"))
+            await _fix_alert(alert, triage_summary, agent)
+        else:
+            # Notify only — send the triage summary via ntfy
+            from home_ops_agent.agent.tools.ntfy import publish_notification
 
-            task = AgentTask(
-                task_type="alert_response",
-                trigger=f"{alert.get('topic', '')}:{alert.get('title', '')}",
-                status="completed",
-                conversation_id=conversation.id,
-                summary=result.response[:500],
-                actions_taken={"tool_calls": result.tool_calls, "tokens": result.total_tokens},
-                completed_at=datetime.now(UTC),
-            )
-            session.add(task)
-            await session.commit()
+            try:
+                await publish_notification(
+                    {
+                        "title": f"Alert: {alert.get('title', 'Unknown')}",
+                        "message": triage_summary[:300],
+                        "priority": "high",
+                        "tags": "warning",
+                    }
+                )
+            except Exception:
+                logger.exception("Failed to send alert notification")
 
-        logger.info("Alert investigated: %s — %s", alert.get("title"), result.response[:100])
     except Exception:
         logger.exception("Failed to investigate alert: %s", alert.get("title"))
 

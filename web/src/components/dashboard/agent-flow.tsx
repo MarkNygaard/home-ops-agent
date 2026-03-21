@@ -22,7 +22,24 @@ import {
   IconTerminal2,
   IconReport,
 } from '@tabler/icons-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+
+const AGENT_DESCRIPTIONS: Record<string, string> = {
+  pr_review:
+    'Reviews Renovate PRs, checks CI, fetches release notes, and posts review comments. Can auto-merge safe patches.',
+  alert_triage:
+    'First responder for Alertmanager and Gatus alerts. Checks pod status, reads logs, queries metrics.',
+  alert_fix:
+    'Takes corrective action when an issue is found. Can restart pods, reconcile Flux, and send diagnostics via ntfy.',
+  code_fix:
+    'Writes code fixes for PRs flagged as NEEDS_FIX. Creates branches, commits changes, and opens fix PRs.',
+  chat: 'Interactive assistant. Answers questions about the cluster, runs diagnostics, and executes commands on demand.',
+};
 
 type FlowStep = {
   icon: typeof IconRobot;
@@ -92,21 +109,29 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
 
         <div className="relative flex items-center justify-center gap-0 px-8 py-10">
           {/* Agent node */}
-          <div className="flex flex-col items-center gap-2.5">
-            <div
-              className="flex size-16 items-center justify-center rounded-full"
-              style={{
-                background:
-                  'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
-                padding: '2px',
-              }}
-            >
-              <div className="flex size-full items-center justify-center rounded-full bg-card">
-                <IconRobot className="size-7 text-accent-orange" />
+          <Tooltip>
+            <TooltipTrigger className="flex cursor-help flex-col items-center pt-4 gap-2.5">
+              <div
+                className="flex size-20 items-center justify-center rounded-full"
+                style={{
+                  background:
+                    'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
+                  padding: '2px',
+                }}
+              >
+                <div className="flex size-full items-center justify-center rounded-full bg-card">
+                  <IconRobot className="size-9 text-accent-orange" />
+                </div>
               </div>
-            </div>
-            <span className="text-xs font-semibold">Agent</span>
-          </div>
+              <span className="text-xs font-semibold">Agent</span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-xs">
+              <p className="text-sm">
+                {AGENT_DESCRIPTIONS[activeAgent] ??
+                  'Autonomous cluster operator'}
+              </p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Connecting line from agent */}
           <div className="mx-1 flex items-center sm:mx-2">

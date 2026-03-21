@@ -25,9 +25,10 @@ const FILTER_TABS = [
   { value: "", label: "All" },
   { value: "pr_review", label: "PRs" },
   { value: "pr_merge", label: "Merges" },
-  { value: "alert_response", label: "Alerts" },
+  { value: "alert_triage", label: "Triage" },
+  { value: "alert_fix", label: "Fixes" },
+  { value: "code_fix", label: "Code Fixes" },
   { value: "chat", label: "Chats" },
-  { value: "cluster_fix", label: "Fixes" },
 ] as const
 
 export default function HistoryPage() {
