@@ -251,6 +251,42 @@ async def create_commit(params: dict) -> str:
             return json.dumps({"status": "failed", "message": resp.text})
 
 
+async def get_release(params: dict) -> str:
+    """Get release notes for a specific tag from any GitHub repo."""
+    repo = params["repo"]  # e.g., "siderolabs/talos"
+    tag = params["tag"]  # e.g., "v1.12.6"
+
+    async with httpx.AsyncClient() as client:
+        url = f"{GITHUB_API}/repos/{repo}/releases/tags/{tag}"
+        resp = await client.get(url, headers=_headers())
+
+        if resp.status_code == 404:
+            # Try without 'v' prefix or with it
+            alt_tag = tag.lstrip("v") if tag.startswith("v") else f"v{tag}"
+            url = f"{GITHUB_API}/repos/{repo}/releases/tags/{alt_tag}"
+            resp = await client.get(url, headers=_headers())
+
+        if resp.status_code == 404:
+            return json.dumps({"error": f"Release {tag} not found in {repo}"})
+
+        resp.raise_for_status()
+        release = resp.json()
+
+        body = release.get("body", "") or ""
+        # Truncate very long release notes
+        if len(body) > 5000:
+            body = body[:5000] + "\n\n... (truncated)"
+
+        return json.dumps({
+            "tag": release["tag_name"],
+            "name": release.get("name", ""),
+            "published_at": release.get("published_at", ""),
+            "body": body,
+            "html_url": release["html_url"],
+            "prerelease": release.get("prerelease", False),
+        })
+
+
 async def create_branch(params: dict) -> str:
     """Create a new branch from a base ref (default: main)."""
     branch_name = params["branch_name"]
@@ -448,6 +484,29 @@ def get_github_tools() -> list[ToolDefinition]:
                 "required": ["path", "content", "message", "branch"],
             },
             handler=create_commit,
+        ),
+        ToolDefinition(
+            name="github_get_release",
+            description=(
+                "Get release notes for a specific version tag from any GitHub repository."
+                " Use this to check changelogs, breaking changes, and security fixes."
+                " Works with any public repo (e.g., 'siderolabs/talos', 'fluxcd/flux2')."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "repo": {
+                        "type": "string",
+                        "description": "GitHub repo in owner/name format (e.g., 'siderolabs/talos')",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Release tag (e.g., 'v1.12.6')",
+                    },
+                },
+                "required": ["repo", "tag"],
+            },
+            handler=get_release,
         ),
         ToolDefinition(
             name="github_create_branch",

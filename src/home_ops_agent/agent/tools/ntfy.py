@@ -24,6 +24,7 @@ async def publish(params: dict) -> str:
     message = params["message"]
     priority = params.get("priority", 3)
     tags = params.get("tags", [])
+    click_url = params.get("click_url")
 
     url = f"{settings.ntfy_url}/{topic}"
 
@@ -34,7 +35,12 @@ async def publish(params: dict) -> str:
     if settings.ntfy_token:
         headers["Authorization"] = f"Bearer {settings.ntfy_token}"
     if tags:
-        headers["Tags"] = ",".join(tags)
+        if isinstance(tags, list):
+            headers["Tags"] = ",".join(tags)
+        else:
+            headers["Tags"] = str(tags)
+    if click_url:
+        headers["Click"] = click_url
 
     try:
         async with httpx.AsyncClient() as client:
@@ -43,6 +49,11 @@ async def publish(params: dict) -> str:
             return json.dumps({"status": "ok", "topic": topic})
     except httpx.HTTPError as e:
         return json.dumps({"error": f"Failed to publish to ntfy: {e}"})
+
+
+async def publish_notification(params: dict) -> str:
+    """Convenience wrapper for internal use (PR monitor, alert subscriber)."""
+    return await publish(params)
 
 
 def _get_tools(config: dict) -> list[ToolDefinition]:

@@ -103,6 +103,42 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
         return None
 
 
+async def _notify_review(pr: dict, result: AgentResult):
+    """Send ntfy notification about a completed PR review."""
+    from home_ops_agent.agent.tools.ntfy import publish_notification
+
+    # Determine risk level from the response
+    response_lower = result.response.lower()
+    if "needs_review" in response_lower or "high risk" in response_lower:
+        priority = "high"
+        tag = "warning"
+        title = f"⚠️ PR #{pr['number']} needs your review"
+    elif "safe_to_merge" in response_lower:
+        priority = "default"
+        tag = "white_check_mark"
+        title = f"✅ PR #{pr['number']} reviewed — safe to merge"
+    else:
+        priority = "default"
+        tag = "mag"
+        title = f"🔍 PR #{pr['number']} reviewed"
+
+    # Truncate summary for notification
+    summary = result.response[:300]
+    if len(result.response) > 300:
+        summary += "..."
+
+    try:
+        await publish_notification({
+            "title": title,
+            "message": f"{pr['title']}\n\n{summary}",
+            "priority": priority,
+            "tags": tag,
+            "click_url": pr.get("html_url", ""),
+        })
+    except Exception:
+        logger.exception("Failed to send ntfy notification for PR #%s", pr["number"])
+
+
 async def _save_task(pr: dict, result: AgentResult):
     """Save PR review task to the database."""
     async with async_session() as session:
@@ -178,6 +214,7 @@ async def check_prs():
         result = await _review_pr(pr, agent)
         if result:
             await _save_task(pr, result)
+            await _notify_review(pr, result)
             reviewed_count += 1
             logger.info("Reviewed PR #%s: %s", pr["number"], result.response[:100])
 

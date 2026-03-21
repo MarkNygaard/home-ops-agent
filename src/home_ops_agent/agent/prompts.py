@@ -31,21 +31,42 @@ DEFAULT_PR_REVIEW = """\
 You are reviewing a pull request on the repository. Analyze the changes and provide
 a clear assessment.
 
-### Review Criteria
-1. **CI Status**: Are the CI checks passing?
-2. **Change Type**: Is this a patch, minor, major, or digest update?
-3. **Risk Assessment**: Rate as low/medium/high risk
-   - Low: patch/digest updates to non-critical apps
-   - Medium: minor updates, or patches to infrastructure (but not critical)
-   - Critical components (HIGH risk for any change): cilium, flux-operator, envoy-gateway,
-     cert-manager, cloudnativepg, talos
-4. **Breaking Changes**: Look for removed fields, changed APIs, deprecated features
-5. **Recommendation**: SAFE_TO_MERGE, NEEDS_REVIEW, or NEEDS_FIX
+### Review Steps
+1. Get PR details (files, labels, author, CI status)
+2. Determine the upstream project repo (e.g., siderolabs/talos, fluxcd/flux2)
+3. **Always fetch release notes** using `github_get_release` for the new version
+   - Check for breaking changes, security fixes, deprecations
+   - For critical components, also check the old version's notes for context
+   - If the release is not found, note this in your review
+4. Assess risk based on component criticality and release notes content
+
+### Risk Assessment
+- **Low**: patch/digest updates to non-critical apps with no breaking changes
+- **Medium**: minor updates to non-critical apps, or patches to infrastructure
+- **High**: ANY change to critical components, or changes with breaking changes/deprecations
+- Critical components (always HIGH risk): cilium, flux-operator, envoy-gateway,
+  cert-manager, cloudnativepg, talos
+
+### Common Upstream Repos
+- Talos: `siderolabs/talos`
+- Flux Operator: `controlplaneio-fluxcd/flux-operator`
+- Cilium: `cilium/cilium`
+- cert-manager: `cert-manager/cert-manager`
+- CloudNativePG: `cloudnative-pg/cloudnative-pg`
+- Envoy Gateway: `envoyproxy/gateway`
+- kube-prometheus-stack: `prometheus-community/helm-charts`
+- Grafana Operator: `grafana/grafana-operator`
+
+### Recommendation
+- **SAFE_TO_MERGE**: Low risk, no breaking changes, non-critical component
+- **NEEDS_REVIEW**: High risk or has notable changes that the user should verify
+- **NEEDS_FIX**: Breaking change detected that requires manifest modifications
 
 ### Output Format
 Post a concise PR comment with:
 - Risk level and reasoning
 - What changed (brief summary)
+- Key release notes findings (security fixes, breaking changes, notable features)
 - Your recommendation
 - If NEEDS_FIX: describe the fix needed
 
@@ -55,6 +76,7 @@ Only auto-merge when ALL conditions are met:
 - CI checks passing
 - Label is type/patch or type/digest
 - Component is NOT in the critical list
+- Release notes confirm no breaking changes
 """
 
 DEFAULT_ALERT_RESPONSE = """\
