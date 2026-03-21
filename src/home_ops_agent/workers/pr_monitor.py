@@ -418,6 +418,22 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
     approves (SAFE_TO_MERGE) or confirms NEEDS_REVIEW.
     """
     pr_number = pr["number"]
+
+    # Check if deep review was already done for this PR at this SHA
+    head_sha = pr.get("head_sha", "")
+    async with async_session() as session:
+        from sqlalchemy import select
+
+        existing = await session.execute(
+            select(AgentTask).where(
+                AgentTask.trigger == f"PR #{pr_number}",
+                AgentTask.actions_taken.contains({"deep_review": True}),
+            )
+        )
+        if existing.scalars().first():
+            logger.info("Deep review already done for PR #%s, skipping", pr_number)
+            return
+
     logger.info("Deep review with Opus for PR #%s", pr_number)
 
     try:
@@ -497,10 +513,23 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
             from home_ops_agent.agent.tools.ntfy import publish_notification
 
             response_lower = result.response.lower()
-            if "safe_to_merge" in response_lower or "safe to merge" in response_lower:
-                title = f"Deep review APPROVED PR #{pr_number}"
+            approved = "safe_to_merge" in response_lower or "safe to merge" in response_lower
+
+            if approved:
+                # Auto-merge after Opus approval
+                from home_ops_agent.agent.tools.github import merge_pr
+
+                logger.info("Opus approved PR #%s, auto-merging", pr_number)
+                merge_result_str = await merge_pr({"pr_number": pr_number})
+                merge_result = json.loads(merge_result_str)
+
+                if merge_result.get("status") == "merged":
+                    title = f"Deep review APPROVED and MERGED PR #{pr_number}"
+                    tags = "white_check_mark"
+                else:
+                    title = f"Deep review APPROVED PR #{pr_number} (merge failed)"
+                    tags = "warning"
                 priority = "default"
-                tags = "white_check_mark"
             else:
                 title = f"Deep review: PR #{pr_number} needs attention"
                 priority = "high"
