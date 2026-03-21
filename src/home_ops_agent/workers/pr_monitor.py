@@ -238,13 +238,8 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     labels = pr.get("labels", [])
 
     if pr_mode == "auto_merge_all":
-        # All tiers: merge anything rated safe, including critical
-        # For NEEDS_REVIEW, check if deep review approved it
+        # Fully autonomous: merge anything rated safe, no label restrictions
         if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
-        # Accept all label types
-        safe_labels = {"type/patch", "type/digest", "type/minor", "type/major"}
-        if not any(label in safe_labels for label in labels):
             return False
     elif pr_mode == "auto_merge_minor":
         if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
