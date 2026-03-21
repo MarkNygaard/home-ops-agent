@@ -30,7 +30,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
 - Prometheus + Loki — for metrics and log queries (optional, via skills system)
 - [Anthropic API key](https://console.anthropic.com/settings/keys) — for Claude access
-- GitHub fine-grained personal access token — with `Contents: Read/Write` and `Pull requests: Read/Write` on your repo
+- GitHub personal access token — fine-grained (scoped to your repo with `Contents: Read/Write` and `Pull requests: Read/Write`) or classic with `repo` scope (required if using a dedicated bot account)
 
 ## Quick Start
 
@@ -48,10 +48,13 @@ kubectl exec -n database <postgres-pod> -- psql -U postgres -c \
 
 ### 2. Create a GitHub token
 
+**Option A: Fine-grained token** (using your own account):
 Go to **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
-
 - **Repository access**: Only select your GitOps repo
 - **Permissions**: Contents (Read/Write), Pull requests (Read/Write)
+
+**Option B: Classic token** (using a dedicated bot account):
+Create a separate GitHub account for the agent, invite it as a collaborator to your repo, then create a classic token with `repo` scope. This is required because fine-grained tokens can only access repos owned by the token creator.
 
 ### 3. Create an ntfy user (if auth is enabled)
 
