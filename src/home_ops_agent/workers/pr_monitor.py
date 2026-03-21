@@ -177,6 +177,102 @@ async def _save_task(pr: dict, result: AgentResult):
         await session.commit()
 
 
+async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
+    """Get the review summary for a previously reviewed PR."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentTask).where(
+                AgentTask.task_type == "pr_review",
+                AgentTask.trigger == f"PR #{pr_number}",
+                AgentTask.status == "completed",
+            )
+        )
+        tasks = result.scalars().all()
+        for task in tasks:
+            if task.actions_taken and task.actions_taken.get("head_sha") == head_sha:
+                return task.summary
+        return None
+
+
+async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
+    """Check if a previously reviewed PR meets auto-merge criteria."""
+    summary_lower = summary.lower()
+
+    # Must have been rated as safe to merge
+    if "safe_to_merge" not in summary_lower:
+        return False
+
+    # Must be from renovate
+    if pr.get("author") != "renovate[bot]":
+        return False
+
+    # Must be patch or digest (not minor/major)
+    labels = pr.get("labels", [])
+    safe_labels = {"type/patch", "type/digest"}
+    if not any(label in safe_labels for label in labels):
+        return False
+
+    return True
+
+
+async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
+    """Try to auto-merge already-reviewed PRs that are safe to merge.
+
+    This handles the case where PRs were reviewed in comment-only mode
+    and the user later switches to auto-merge mode.
+    """
+    from home_ops_agent.agent.tools.github import merge_pr
+    from home_ops_agent.agent.tools.ntfy import publish_notification
+
+    merged_count = 0
+    for pr in prs:
+        if merged_count >= MAX_REVIEWS_PER_CYCLE:
+            break
+
+        pr_number = pr["number"]
+        head_sha = pr.get("head_sha", "")
+
+        # Only consider PRs that were already reviewed
+        if not await _already_reviewed(pr_number, head_sha):
+            continue
+
+        summary = await _get_review_summary(pr_number, head_sha)
+        if not summary:
+            continue
+
+        if not await _is_safe_to_auto_merge(pr, summary):
+            continue
+
+        # Merge it
+        logger.info("Auto-merging PR #%s: %s", pr_number, pr["title"])
+        result = await merge_pr({"pr_number": pr_number})
+        merge_result = json.loads(result)
+
+        if merge_result.get("status") == "merged":
+            merged_count += 1
+            logger.info("Successfully merged PR #%s", pr_number)
+            try:
+                await publish_notification(
+                    {
+                        "title": f"🔀 Auto-merged PR #{pr_number}",
+                        "message": pr["title"],
+                        "priority": "default",
+                        "tags": "merged",
+                        "click_url": pr.get("html_url", ""),
+                    }
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send merge notification for PR #%s", pr_number
+                )
+        else:
+            logger.warning(
+                "Failed to merge PR #%s: %s",
+                pr_number,
+                merge_result.get("message", "unknown error"),
+            )
+
+
 async def check_prs():
     """Check all open PRs and review any new/updated ones."""
     if not await _is_enabled():
@@ -203,6 +299,11 @@ async def check_prs():
         return
 
     logger.info("Found %d open PRs to check", len(prs))
+
+    # Auto-merge previously reviewed PRs if in auto-merge mode
+    pr_mode = await _get_pr_mode()
+    if pr_mode == "auto_merge":
+        await _auto_merge_reviewed_prs(prs, agent)
 
     reviewed_count = 0
     for pr in prs:
