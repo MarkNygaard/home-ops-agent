@@ -112,6 +112,7 @@ async def update_setting(key: str, body: UpdateSetting):
         "model_alert_triage",
         "model_alert_fix",
         "model_code_fix",
+        "model_deep_review",
         "model_chat",
     }
     if key not in allowed_keys:

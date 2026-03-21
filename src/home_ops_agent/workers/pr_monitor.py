@@ -284,23 +284,7 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             merged_count += 1
             logger.info("Successfully merged PR #%s", pr_number)
 
-            # Save merge task to DB so it appears in history
-            async with async_session() as session:
-                task = AgentTask(
-                    task_type="pr_merge",
-                    trigger=f"PR #{pr_number}",
-                    status="completed",
-                    summary=f"Auto-merged: {pr['title']}",
-                    actions_taken={
-                        "action": "merge",
-                        "head_sha": head_sha,
-                        "merge_sha": merge_result.get("sha"),
-                    },
-                    completed_at=datetime.now(UTC),
-                )
-                session.add(task)
-                await session.commit()
-
+            # Notify first — DB errors should not prevent notification
             try:
                 await publish_notification(
                     {
@@ -312,7 +296,33 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
                     }
                 )
             except Exception:
-                logger.exception("Failed to send merge notification for PR #%s", pr_number)
+                logger.exception(
+                    "Failed to send merge notification for PR #%s",
+                    pr_number,
+                )
+
+            # Save merge task to DB so it appears in history
+            try:
+                async with async_session() as session:
+                    task = AgentTask(
+                        task_type="pr_merge",
+                        trigger=f"PR #{pr_number}",
+                        status="completed",
+                        summary=f"Auto-merged: {pr['title']}",
+                        actions_taken={
+                            "action": "merge",
+                            "head_sha": head_sha,
+                            "merge_sha": merge_result.get("sha"),
+                        },
+                        completed_at=datetime.now(UTC),
+                    )
+                    session.add(task)
+                    await session.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to save merge task for PR #%s",
+                    pr_number,
+                )
         else:
             logger.warning(
                 "Failed to merge PR #%s: %s",
