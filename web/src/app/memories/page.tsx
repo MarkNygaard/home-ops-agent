@@ -29,46 +29,48 @@ export default function MemoriesPage() {
   return (
     <>
       <SiteHeader title="Memories" />
-      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
-        <p className="mb-4 text-sm text-muted-foreground">
-          Facts the agent remembers from previous conversations. These are
-          included in the system prompt for all future interactions.
-        </p>
-        {!memories || memories.length === 0 ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No memories yet. The agent will extract key facts from conversations
-            automatically.
+      <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
+        <div className="mx-auto max-w-6xl">
+          <p className="mb-4 text-sm text-muted-foreground">
+            Facts the agent remembers from previous conversations. These are
+            included in the system prompt for all future interactions.
           </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {memories.map((mem) => (
-              <Card key={mem.id}>
-                <CardContent>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex flex-col gap-1.5">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={categoryVariant(mem.category)}>
-                          {mem.category}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDate(mem.created_at)}
-                        </span>
+          {!memories || memories.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No memories yet. The agent will extract key facts from conversations
+              automatically.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {memories.map((mem) => (
+                <Card key={mem.id}>
+                  <CardContent>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                          <Badge variant={categoryVariant(mem.category)}>
+                            {mem.category}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(mem.created_at)}
+                          </span>
+                        </div>
+                        <p className="text-sm">{mem.content}</p>
                       </div>
-                      <p className="text-sm">{mem.content}</p>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => handleDelete(mem.id)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      onClick={() => handleDelete(mem.id)}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </>
   )

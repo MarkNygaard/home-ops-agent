@@ -3,6 +3,7 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
+  IconLayoutDashboard,
   IconMessageChatbot,
   IconHistory,
   IconBrain,
@@ -38,7 +39,8 @@ import {
 } from "@/components/ui/sidebar"
 
 const NAV_ITEMS = [
-  { href: "/", label: "Chat", icon: IconMessageChatbot },
+  { href: "/", label: "Dashboard", icon: IconLayoutDashboard },
+  { href: "/chat", label: "Chat", icon: IconMessageChatbot },
   { href: "/history", label: "History", icon: IconHistory },
   { href: "/memories", label: "Memories", icon: IconBrain },
 ] as const

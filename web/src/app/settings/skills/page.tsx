@@ -10,8 +10,8 @@ export default function SettingsSkillsPage() {
   return (
     <>
       <SiteHeader title="Skills" />
-      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
-        <div className="mx-auto max-w-3xl">
+      <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
+        <div className="mx-auto max-w-6xl">
           <SkillsSection
             skills={skills ?? []}
             onUpdate={() => mutateSkills()}

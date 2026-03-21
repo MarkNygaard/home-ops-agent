@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/select';
 import { AGENTS, MODEL_OPTIONS, PROMPT_DESCRIPTIONS } from '@/lib/constants';
 import type { PromptsResponse } from '@/lib/types';
-import { PromptModal } from './prompt-modal';
+import { PromptPanel } from './prompt-panel';
 
 interface AgentsSectionProps {
   prompts: PromptsResponse | null;
@@ -100,7 +100,7 @@ export function AgentsSection({
       </div>
 
       {editingPrompt && prompts && (
-        <PromptModal
+        <PromptPanel
           promptKey={editingPrompt}
           prompt={prompts[editingPrompt]}
           label={

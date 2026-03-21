@@ -57,8 +57,8 @@ export default function SettingsAgentsPage() {
   return (
     <>
       <SiteHeader title="Agents" />
-      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
-        <div className="mx-auto flex max-w-4xl flex-col gap-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
+        <div className="mx-auto flex max-w-6xl flex-col gap-6">
           <div className="flex flex-col gap-3">
             <p className="text-sm text-muted-foreground">
               Configure models and system prompts for each agent task. The

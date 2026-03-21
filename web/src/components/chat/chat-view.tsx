@@ -102,13 +102,13 @@ export function ChatView() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-end px-4 py-2 lg:px-6">
+      <div className="flex items-center justify-end px-4 py-2 lg:px-8">
         <Button variant="outline" size="sm" onClick={handleNewChat}>
           New Chat
         </Button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 lg:px-8">
         <div className="mx-auto flex max-w-5xl flex-col gap-4">
           {messages.map((msg, i) => (
             <MessageBubble key={i} message={msg} />
