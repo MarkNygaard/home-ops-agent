@@ -424,9 +424,9 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
         from sqlalchemy import select
 
         existing = await session.execute(
-            select(AgentTask).where(
-                AgentTask.trigger == f"PR #{pr_number}",
-                AgentTask.actions_taken.contains({"deep_review": True}),
+            select(Conversation).where(
+                Conversation.source == "pr_deep_review",
+                Conversation.title.contains(f"#{pr_number}"),
             )
         )
         if existing.scalars().first():
