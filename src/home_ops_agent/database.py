@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, Text, func, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -48,7 +48,17 @@ class Conversation(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     source: Mapped[str] = mapped_column(
-        Enum("chat", "pr_review", "alert", name="conversation_source"), nullable=False
+        Enum(
+            "chat",
+            "pr_review",
+            "pr_deep_review",
+            "alert",
+            "alert_triage",
+            "alert_fix",
+            "code_fix",
+            name="conversation_source",
+        ),
+        nullable=False,
     )
     status: Mapped[str] = mapped_column(
         Enum("active", "completed", "failed", name="conversation_status"),
@@ -82,7 +92,17 @@ class AgentTask(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     task_type: Mapped[str] = mapped_column(
-        Enum("pr_review", "alert_response", "user_chat", "cluster_fix", name="task_type"),
+        Enum(
+            "pr_review",
+            "pr_merge",
+            "alert_response",
+            "alert_triage",
+            "alert_fix",
+            "user_chat",
+            "cluster_fix",
+            "code_fix",
+            name="task_type",
+        ),
         nullable=False,
     )
     trigger: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -118,6 +138,18 @@ class Memory(Base):
 
 
 async def init_db():
-    """Create all tables."""
+    """Create all tables and migrate enums."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Add missing enum values that were added after initial table creation.
+    # PostgreSQL ADD VALUE is idempotent with IF NOT EXISTS.
+    async with engine.begin() as conn:
+        for value in ("pr_merge", "alert_triage", "alert_fix", "code_fix"):
+            await conn.execute(
+                text(f"ALTER TYPE task_type ADD VALUE IF NOT EXISTS '{value}'")
+            )
+        for value in ("pr_deep_review", "alert_triage", "alert_fix", "code_fix"):
+            await conn.execute(
+                text(f"ALTER TYPE conversation_source ADD VALUE IF NOT EXISTS '{value}'")
+            )

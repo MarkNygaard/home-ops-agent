@@ -60,12 +60,17 @@ export default function HistoryPage() {
     switch (type) {
       case "pr_review":
         return "default" as const
+      case "pr_merge":
+        return "default" as const
       case "alert_response":
+      case "alert_triage":
+      case "alert_fix":
         return "destructive" as const
-      case "chat":
-        return "secondary" as const
+      case "code_fix":
       case "cluster_fix":
         return "outline" as const
+      case "chat":
+        return "secondary" as const
       default:
         return "secondary" as const
     }
