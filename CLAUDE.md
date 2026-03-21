@@ -66,8 +66,9 @@ git tag v0.x.y && git push origin v0.x.y
 
 1. Run `uvx ruff check src/` and `uvx ruff format --check src/` — fix any issues before committing
 2. Commit on a feature branch (never push directly to main)
-3. Tag the commit with the next patch version (e.g. `v0.10.11`) and push both the branch and tag
-4. Create a PR — CI runs lint then build (build is skipped if lint fails)
+3. **Always tag** the commit with the next patch version (e.g. `v0.10.11`) — the tag triggers the CI build that pushes the Docker image to GHCR. Without a tag, no image is built. Check existing tags with `git tag --sort=-creatordate | head -5` and increment accordingly.
+4. Push both the branch and tag, then create a PR — CI runs lint then build (build is skipped if lint fails)
+5. After merge, Renovate detects the new GHCR image and opens a PR in home-ops to update the deployment
 
 ## Important patterns
 
