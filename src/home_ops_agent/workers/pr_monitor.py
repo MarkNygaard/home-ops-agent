@@ -419,8 +419,7 @@ async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
     """
     pr_number = pr["number"]
 
-    # Check if deep review was already done for this PR at this SHA
-    head_sha = pr.get("head_sha", "")
+    # Check if deep review was already done for this PR
     async with async_session() as session:
         from sqlalchemy import select
 
