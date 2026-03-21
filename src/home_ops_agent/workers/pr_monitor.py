@@ -112,15 +112,15 @@ async def _notify_review(pr: dict, result: AgentResult):
     if "needs_review" in response_lower or "high risk" in response_lower:
         priority = "high"
         tag = "warning"
-        title = f"⚠️ PR #{pr['number']} needs your review"
+        title = f"PR #{pr['number']} needs your review"
     elif "safe_to_merge" in response_lower:
         priority = "default"
         tag = "white_check_mark"
-        title = f"✅ PR #{pr['number']} reviewed — safe to merge"
+        title = f"PR #{pr['number']} reviewed - safe to merge"
     else:
         priority = "default"
         tag = "mag"
-        title = f"🔍 PR #{pr['number']} reviewed"
+        title = f"PR #{pr['number']} reviewed"
 
     # Truncate summary for notification
     summary = result.response[:300]
@@ -254,7 +254,7 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             try:
                 await publish_notification(
                     {
-                        "title": f"🔀 Auto-merged PR #{pr_number}",
+                        "title": f"Auto-merged PR #{pr_number}",
                         "message": pr["title"],
                         "priority": "default",
                         "tags": "merged",
