@@ -1,4 +1,4 @@
-"use client"
+'use client';
 
 import {
   IconRobot,
@@ -21,58 +21,58 @@ import {
   IconSearch,
   IconTerminal2,
   IconReport,
-} from "@tabler/icons-react"
-import { cn } from "@/lib/utils"
+} from '@tabler/icons-react';
+import { cn } from '@/lib/utils';
 
 type FlowStep = {
-  icon: typeof IconRobot
-  label: string
-}
+  icon: typeof IconRobot;
+  label: string;
+};
 
 const FLOWS: Record<string, FlowStep[]> = {
   pr_review: [
-    { icon: IconGitPullRequest, label: "Trigger" },
-    { icon: IconFileSearch, label: "Check PR" },
-    { icon: IconFileText, label: "Read Diff" },
-    { icon: IconNotes, label: "Release Notes" },
-    { icon: IconMessage, label: "Post Review" },
+    { icon: IconGitPullRequest, label: 'Trigger' },
+    { icon: IconFileSearch, label: 'Check PR' },
+    { icon: IconFileText, label: 'Read Diff' },
+    { icon: IconNotes, label: 'Release Notes' },
+    { icon: IconMessage, label: 'Post Review' },
   ],
   alert_triage: [
-    { icon: IconAlertTriangle, label: "Receive Alert" },
-    { icon: IconBox, label: "Check Pods" },
-    { icon: IconFileAnalytics, label: "Read Logs" },
-    { icon: IconChartLine, label: "Query Metrics" },
-    { icon: IconBell, label: "Notify" },
+    { icon: IconAlertTriangle, label: 'Receive Alert' },
+    { icon: IconBox, label: 'Check Pods' },
+    { icon: IconFileAnalytics, label: 'Read Logs' },
+    { icon: IconChartLine, label: 'Query Metrics' },
+    { icon: IconBell, label: 'Notify' },
   ],
   alert_fix: [
-    { icon: IconAlertTriangle, label: "Receive Alert" },
-    { icon: IconFileAnalytics, label: "Diagnose" },
-    { icon: IconBolt, label: "Apply Fix" },
-    { icon: IconBox, label: "Verify" },
-    { icon: IconBell, label: "Notify" },
+    { icon: IconAlertTriangle, label: 'Receive Alert' },
+    { icon: IconFileAnalytics, label: 'Diagnose' },
+    { icon: IconBolt, label: 'Apply Fix' },
+    { icon: IconBox, label: 'Verify' },
+    { icon: IconBell, label: 'Notify' },
   ],
   code_fix: [
-    { icon: IconCode, label: "Detect Issue" },
-    { icon: IconGitBranch, label: "Create Branch" },
-    { icon: IconFileText, label: "Write Fix" },
-    { icon: IconTestPipe, label: "Validate" },
-    { icon: IconSend, label: "Open PR" },
+    { icon: IconCode, label: 'Detect Issue' },
+    { icon: IconGitBranch, label: 'Create Branch' },
+    { icon: IconFileText, label: 'Write Fix' },
+    { icon: IconTestPipe, label: 'Validate' },
+    { icon: IconSend, label: 'Open PR' },
   ],
   chat: [
-    { icon: IconMessageChatbot, label: "User Message" },
-    { icon: IconSearch, label: "Gather Context" },
-    { icon: IconTerminal2, label: "Run Tools" },
-    { icon: IconReport, label: "Analyze" },
-    { icon: IconMessage, label: "Respond" },
+    { icon: IconMessageChatbot, label: 'User Message' },
+    { icon: IconSearch, label: 'Gather Context' },
+    { icon: IconTerminal2, label: 'Run Tools' },
+    { icon: IconReport, label: 'Analyze' },
+    { icon: IconMessage, label: 'Respond' },
   ],
-}
+};
 
 interface AgentFlowProps {
-  activeAgent: string
+  activeAgent: string;
 }
 
 export function AgentFlow({ activeAgent }: AgentFlowProps) {
-  const steps = FLOWS[activeAgent] ?? FLOWS.chat
+  const steps = FLOWS[activeAgent] ?? FLOWS.chat;
 
   return (
     <div className="flex flex-col gap-4">
@@ -85,8 +85,8 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           className="absolute inset-0 opacity-[0.03]"
           style={{
             backgroundImage:
-              "radial-gradient(circle, currentColor 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
+              'radial-gradient(circle, currentColor 1px, transparent 1px)',
+            backgroundSize: '24px 24px',
           }}
         />
 
@@ -97,8 +97,8 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
               className="flex size-16 items-center justify-center rounded-full"
               style={{
                 background:
-                  "linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))",
-                padding: "2px",
+                  'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
+                padding: '2px',
               }}
             >
               <div className="flex size-full items-center justify-center rounded-full bg-card">
@@ -137,7 +137,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
               <div className="flex flex-col items-center gap-2.5">
                 <span
                   className={cn(
-                    "mb-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground/60"
+                    'mb-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground/60',
                   )}
                 >
                   Step {i + 1}
@@ -182,5 +182,5 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
         </div>
       </div>
     </div>
-  )
+  );
 }

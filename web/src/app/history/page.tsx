@@ -24,6 +24,7 @@ import type { AgentTask, HistoryItem } from "@/lib/types"
 const FILTER_TABS = [
   { value: "", label: "All" },
   { value: "pr_review", label: "PRs" },
+  { value: "pr_merge", label: "Merges" },
   { value: "alert_response", label: "Alerts" },
   { value: "chat", label: "Chats" },
   { value: "cluster_fix", label: "Fixes" },

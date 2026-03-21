@@ -254,6 +254,24 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
         if merge_result.get("status") == "merged":
             merged_count += 1
             logger.info("Successfully merged PR #%s", pr_number)
+
+            # Save merge task to DB so it appears in history
+            async with async_session() as session:
+                task = AgentTask(
+                    task_type="pr_merge",
+                    trigger=f"PR #{pr_number}",
+                    status="completed",
+                    summary=f"Auto-merged: {pr['title']}",
+                    actions_taken={
+                        "action": "merge",
+                        "head_sha": head_sha,
+                        "merge_sha": merge_result.get("sha"),
+                    },
+                    completed_at=datetime.now(UTC),
+                )
+                session.add(task)
+                await session.commit()
+
             try:
                 await publish_notification(
                     {
