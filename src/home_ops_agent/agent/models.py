@@ -11,6 +11,7 @@ _DEFAULTS = {
     "alert_triage": settings.model_alert_triage,
     "alert_fix": settings.model_alert_fix,
     "code_fix": settings.model_code_fix,
+    "deep_review": "claude-opus-4-6",
     "chat": settings.model_chat,
 }
 

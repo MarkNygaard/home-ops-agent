@@ -81,9 +81,35 @@ export default function SettingsGeneralPage() {
                   checked={prMode === "auto_merge"}
                   onChange={(e) => setField("pr_mode", e.target.value)}
                 />
-                Auto-Merge
+                Auto-Merge Patch
                 <span className="text-muted-foreground">
-                  — Agent merges safe Renovate patch/digest PRs with passing CI.
+                  — Merges safe Renovate patch/digest PRs.
+                </span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="pr_mode"
+                  value="auto_merge_minor"
+                  checked={prMode === "auto_merge_minor"}
+                  onChange={(e) => setField("pr_mode", e.target.value)}
+                />
+                Auto-Merge Minor
+                <span className="text-muted-foreground">
+                  — Also merges minor updates to non-critical components.
+                </span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="pr_mode"
+                  value="auto_merge_all"
+                  checked={prMode === "auto_merge_all"}
+                  onChange={(e) => setField("pr_mode", e.target.value)}
+                />
+                Fully Autonomous
+                <span className="text-muted-foreground">
+                  — All PRs, including critical. Uses Opus for deep review on high-risk.
                 </span>
               </label>
             </div>

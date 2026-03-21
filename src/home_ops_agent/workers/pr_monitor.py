@@ -70,11 +70,24 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
         return None
 
     pr_mode = await _get_pr_mode()
-    mode_instruction = (
-        "You are in COMMENT-ONLY mode. Post a review comment but do NOT merge."
-        if pr_mode == "comment_only"
-        else "Auto-merge is ENABLED. You may merge PRs that meet all auto-merge criteria."
-    )
+    if pr_mode == "comment_only":
+        mode_instruction = "You are in COMMENT-ONLY mode. Post a review comment but do NOT merge."
+    elif pr_mode == "auto_merge_all":
+        mode_instruction = (
+            "Auto-merge is ENABLED for ALL updates including critical components. "
+            "You may merge PRs that meet auto-merge criteria. "
+            "For critical components, be extra thorough in your review."
+        )
+    elif pr_mode == "auto_merge_minor":
+        mode_instruction = (
+            "Auto-merge is ENABLED for patch, digest, AND minor updates. "
+            "You may merge PRs that meet all auto-merge criteria."
+        )
+    else:
+        mode_instruction = (
+            "Auto-merge is ENABLED for patch and digest updates only. "
+            "You may merge PRs that meet all auto-merge criteria."
+        )
 
     messages = [
         {
@@ -201,19 +214,35 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     """Check if a previously reviewed PR meets auto-merge criteria."""
     summary_lower = summary.lower()
 
-    # Must have been rated as safe to merge (check both formats)
-    if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-        return False
-
     # Must be from renovate
     if pr.get("author") != "renovate[bot]":
         return False
 
-    # Must be patch or digest (not minor/major)
+    pr_mode = await _get_pr_mode()
     labels = pr.get("labels", [])
-    safe_labels = {"type/patch", "type/digest"}
-    if not any(label in safe_labels for label in labels):
-        return False
+
+    if pr_mode == "auto_merge_all":
+        # All tiers: merge anything rated safe, including critical
+        # For NEEDS_REVIEW, check if deep review approved it
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+        # Accept all label types
+        safe_labels = {"type/patch", "type/digest", "type/minor", "type/major"}
+        if not any(label in safe_labels for label in labels):
+            return False
+    elif pr_mode == "auto_merge_minor":
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+        safe_labels = {"type/patch", "type/digest", "type/minor"}
+        if not any(label in safe_labels for label in labels):
+            return False
+    else:
+        # auto_merge (patch only)
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+        safe_labels = {"type/patch", "type/digest"}
+        if not any(label in safe_labels for label in labels):
+            return False
 
     return True
 
@@ -321,7 +350,7 @@ async def check_prs():
 
     # Auto-merge previously reviewed PRs if in auto-merge mode
     pr_mode = await _get_pr_mode()
-    if pr_mode == "auto_merge":
+    if pr_mode in ("auto_merge", "auto_merge_minor", "auto_merge_all"):
         await _auto_merge_reviewed_prs(prs, agent)
 
     reviewed_count = 0
@@ -338,11 +367,139 @@ async def check_prs():
             await _save_task(pr, result)
             await _notify_review(pr, result)
             reviewed_count += 1
-            logger.info("Reviewed PR #%s: %s", pr["number"], result.response[:100])
+            logger.info(
+                "Reviewed PR #%s: %s",
+                pr["number"],
+                result.response[:100],
+            )
+
+            response_lower = result.response.lower()
 
             # If review says NEEDS_FIX, attempt a code fix
-            if "needs_fix" in result.response.lower():
+            if "needs_fix" in response_lower:
                 await _attempt_code_fix(pr, result.response, agent)
+
+            # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
+            elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
+                await _deep_review_pr(pr, result.response, agent)
+
+
+async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
+    """Escalate a NEEDS_REVIEW PR to Opus for a deep review.
+
+    Used in auto_merge_all mode when the initial Haiku/Sonnet review
+    flags a critical component. Opus does a thorough check and either
+    approves (SAFE_TO_MERGE) or confirms NEEDS_REVIEW.
+    """
+    pr_number = pr["number"]
+    logger.info("Deep review with Opus for PR #%s", pr_number)
+
+    try:
+        prompt = await get_prompt("pr_review")
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "A previous review flagged this PR as NEEDS_REVIEW. "
+                    "You are the senior reviewer — do a thorough deep review.\n\n"
+                    f"PR #{pr['number']}: {pr['title']}\n"
+                    f"Author: {pr['author']}\n"
+                    f"Labels: {', '.join(pr.get('labels', []))}\n"
+                    f"URL: {pr.get('html_url', '')}\n\n"
+                    f"Initial review:\n{initial_review[:1000]}\n\n"
+                    "Your task:\n"
+                    "1. Fetch the release notes for the new version\n"
+                    "2. Read the full diff carefully\n"
+                    "3. Check for breaking changes, deprecations, "
+                    "security issues\n"
+                    "4. Determine if this is actually safe to merge\n\n"
+                    "End your review with SAFE_TO_MERGE if approved "
+                    "or NEEDS_REVIEW if it truly needs human attention. "
+                    "Post your review as a comment on the PR."
+                ),
+            }
+        ]
+
+        # Use the deep_review model (defaults to Opus)
+        model = await get_model_for_task("deep_review")
+        result = await agent.run(
+            system_prompt=prompt,
+            messages=messages,
+            model=model,
+            max_turns=12,
+        )
+
+        if result:
+            # Save as a separate task
+            async with async_session() as session:
+                conversation = Conversation(
+                    title=f"Deep Review: #{pr_number} {pr['title'][:80]}",
+                    source="pr_deep_review",
+                    status="completed",
+                )
+                session.add(conversation)
+                await session.flush()
+
+                msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content={
+                        "text": result.response,
+                        "tool_calls": result.tool_calls,
+                    },
+                )
+                session.add(msg)
+
+                task = AgentTask(
+                    task_type="pr_review",
+                    trigger=f"PR #{pr_number}",
+                    status="completed",
+                    conversation_id=conversation.id,
+                    summary=f"[Deep Review] {result.response[:450]}",
+                    actions_taken={
+                        "tool_calls": result.tool_calls,
+                        "tokens": result.total_tokens,
+                        "head_sha": pr.get("head_sha", ""),
+                        "deep_review": True,
+                    },
+                    completed_at=datetime.now(UTC),
+                )
+                session.add(task)
+                await session.commit()
+
+            # Notify
+            from home_ops_agent.agent.tools.ntfy import publish_notification
+
+            response_lower = result.response.lower()
+            if "safe_to_merge" in response_lower or "safe to merge" in response_lower:
+                title = f"Deep review APPROVED PR #{pr_number}"
+                priority = "default"
+                tags = "white_check_mark"
+            else:
+                title = f"Deep review: PR #{pr_number} needs attention"
+                priority = "high"
+                tags = "warning"
+
+            try:
+                await publish_notification(
+                    {
+                        "title": title,
+                        "message": f"{pr['title']}\n\n{result.response[:200]}",
+                        "priority": priority,
+                        "tags": tags,
+                        "click_url": pr.get("html_url", ""),
+                    }
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send deep review notification for PR #%s",
+                    pr_number,
+                )
+
+            logger.info("Deep review completed for PR #%s", pr_number)
+
+    except Exception:
+        logger.exception("Deep review failed for PR #%s", pr_number)
 
 
 async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):

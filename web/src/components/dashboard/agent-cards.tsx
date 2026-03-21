@@ -15,7 +15,7 @@ const FLOW_DEFS = [
     name: "PR Review",
     icon: IconGitPullRequest,
     description: "Reviews PRs, auto-merges safe patches, fixes breaking changes",
-    models: ["pr_review", "code_fix"],
+    models: ["pr_review", "code_fix", "deep_review"],
   },
   {
     key: "alert",

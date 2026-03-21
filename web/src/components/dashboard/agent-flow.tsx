@@ -36,6 +36,7 @@ import {
   IconSearch,
   IconTerminal2,
   IconMessage,
+  IconEye,
 } from '@tabler/icons-react';
 import {
   Tooltip,
@@ -50,7 +51,8 @@ type AgentNodeData = { label: string };
 type StepNodeData = {
   label: string;
   icon: string;
-  accent?: boolean;
+  subagent?: boolean;
+  decision?: boolean;
   size?: 'sm' | 'md';
 };
 
@@ -73,6 +75,7 @@ const ICONS: Record<string, typeof IconRobot> = {
   IconCheck,
   IconBell,
   IconPlayerSkipForward,
+  IconEye,
   IconMessageChatbot,
   IconSearch,
   IconTerminal2,
@@ -104,7 +107,7 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
           <IconRobot className="size-11 text-accent-orange" />
         </div>
       </div>
-      <span className="text-sm font-semibold text-foreground">
+      <span className="whitespace-nowrap text-xs font-semibold text-foreground">
         {data.label}
       </span>
       <Handle
@@ -119,11 +122,16 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
 
 function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
   const Icon = ICONS[data.icon] ?? IconReport;
-  const accent = data.accent ?? false;
+  const subagent = data.subagent ?? false;
   const small = data.size === 'sm';
   const circleSize = small ? 'size-14' : 'size-18';
   const iconSize = small ? 'size-6' : 'size-8';
   const handleTop = small ? '28px' : '36px';
+
+  const iconClass = subagent
+    ? 'text-accent-orange'
+    : 'text-muted-foreground';
+
   return (
     <div className="relative flex flex-col items-center gap-2">
       <Handle
@@ -132,22 +140,29 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
         style={{ top: handleTop }}
         className="bg-transparent! border-0! w-0! h-0!"
       />
-      <div
-        className={cn(
-          'flex items-center justify-center rounded-full transition-colors',
-          circleSize,
-          accent
-            ? 'bg-accent-orange/10 ring-1 ring-accent-orange/40'
-            : 'bg-muted/30 ring-1 ring-foreground/10',
-        )}
-      >
-        <Icon
+      {subagent ? (
+        <div
+          className={cn('flex items-center justify-center rounded-full', circleSize)}
+          style={{
+            background: 'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
+            padding: '1.5px',
+          }}
+        >
+          <div className={cn('flex size-full items-center justify-center rounded-full bg-accent-orange/10')}>
+            <Icon className={cn(iconSize, iconClass)} />
+          </div>
+        </div>
+      ) : (
+        <div
           className={cn(
-            iconSize,
-            accent ? 'text-accent-orange' : 'text-muted-foreground',
+            'flex items-center justify-center rounded-full transition-colors',
+            circleSize,
+            'bg-muted/30 ring-1 ring-foreground/10',
           )}
-        />
-      </div>
+        >
+          <Icon className={cn(iconSize, iconClass)} />
+        </div>
+      )}
       <span
         className={cn(
           'max-w-24 text-center leading-tight text-muted-foreground',
@@ -295,7 +310,7 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'agent',
       type: 'agent',
       position: { x: 0, y: 0 },
-      data: { label: 'Agent' },
+      data: { label: 'PR Review' },
     },
     {
       id: 's1',
@@ -328,7 +343,6 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       data: {
         label: 'Decide',
         icon: 'IconReport',
-        accent: true,
         decision: true,
       },
     },
@@ -342,7 +356,7 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b2a',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Code Fix', icon: 'IconCode', size: 'sm' },
+      data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true },
     },
     {
       id: 'b2b',
@@ -366,6 +380,18 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b3',
       type: 'step',
       position: { x: 0, y: 0 },
+      data: { label: 'Deep Review', icon: 'IconEye', size: 'sm', subagent: true, decision: true },
+    },
+    {
+      id: 'b3a',
+      type: 'step',
+      position: { x: 0, y: 0 },
+      data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
+    },
+    {
+      id: 'b3b',
+      type: 'step',
+      position: { x: 0, y: 0 },
       data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' },
     },
   ];
@@ -382,6 +408,8 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
     mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
     mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
     branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
+    branchEdge('e-b3-b3a', 'b3', 'b3a', false, 'OK'),
+    branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
   ];
 
   return getLayoutedElements(nodes, edges);
@@ -393,7 +421,7 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'agent',
       type: 'agent',
       position: { x: 0, y: 0 },
-      data: { label: 'Agent' },
+      data: { label: 'Alert Triage' },
     },
     {
       id: 's1',
@@ -426,7 +454,6 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
       data: {
         label: 'Triage',
         icon: 'IconReport',
-        accent: true,
         decision: true,
       },
     },
@@ -434,7 +461,7 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b1a',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Alert Fix', icon: 'IconBolt', size: 'sm' },
+      data: { label: 'Alert Fix', icon: 'IconBolt', size: 'sm', subagent: true },
     },
     {
       id: 'b1b',

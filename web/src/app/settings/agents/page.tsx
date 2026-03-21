@@ -41,6 +41,7 @@ export default function SettingsAgentsPage() {
       'alert_triage',
       'alert_fix',
       'code_fix',
+      'deep_review',
       'chat',
     ];
     const saves = modelTasks

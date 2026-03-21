@@ -28,6 +28,13 @@ export const AGENTS = [
       "Writes code fixes for failing PRs. Understands Kubernetes manifests and HelmRelease schemas. Only modifies files under kubernetes/apps/.",
   },
   {
+    promptKey: null,
+    modelKey: "deep_review",
+    name: "Deep Review",
+    description:
+      "Escalation agent for critical PRs. Re-reviews high-risk PRs with a more capable model. Used in Fully Autonomous mode.",
+  },
+  {
     promptKey: "chat",
     modelKey: "chat",
     name: "Chat",

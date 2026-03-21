@@ -7,7 +7,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import {
   Select,
   SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
@@ -81,7 +80,11 @@ export function AgentsSection({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        {MODEL_OPTIONS.find(
+                          (o) =>
+                            o.value ===
+                            (models[agent.modelKey] || 'claude-sonnet-4-6'),
+                        )?.label ?? 'Select model'}
                       </SelectTrigger>
                       <SelectContent>
                         {MODEL_OPTIONS.map((opt) => (

@@ -83,8 +83,14 @@ export function StatusBar() {
 
       <span className="text-border">|</span>
 
-      <Badge variant={prMode === "auto_merge" ? "accent" : "outline"}>
-        {prMode === "auto_merge" ? "Auto-Merge" : "Comment Only"}
+      <Badge variant={prMode !== "comment_only" ? "accent" : "outline"}>
+        {prMode === "auto_merge_all"
+          ? "Fully Autonomous"
+          : prMode === "auto_merge_minor"
+            ? "Auto-Merge Minor"
+            : prMode === "auto_merge"
+              ? "Auto-Merge Patch"
+              : "Comment Only"}
       </Badge>
 
       {agentEnabled && (
