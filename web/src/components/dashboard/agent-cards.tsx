@@ -1,99 +1,108 @@
-'use client';
+"use client"
 
 import {
   IconGitPullRequest,
   IconAlertTriangle,
-  IconBolt,
-  IconCode,
   IconMessageChatbot,
-} from '@tabler/icons-react';
-import { Badge } from '@/components/ui/badge';
-import { CardContent } from '@/components/ui/card';
-import { useSettings } from '@/hooks/use-settings';
-import { MODEL_MIGRATION } from '@/lib/constants';
-import { cn } from '@/lib/utils';
+} from "@tabler/icons-react"
+import { Badge } from "@/components/ui/badge"
+import { useSettings } from "@/hooks/use-settings"
+import { MODEL_MIGRATION } from "@/lib/constants"
+import { cn } from "@/lib/utils"
 
-const AGENT_DEFS = [
+const FLOW_DEFS = [
   {
-    key: 'pr_review',
-    name: 'PR Review',
+    key: "pr_review",
+    name: "PR Review",
     icon: IconGitPullRequest,
+    description: "Reviews PRs, auto-merges safe patches, fixes breaking changes",
+    models: ["pr_review", "code_fix"],
   },
   {
-    key: 'alert_triage',
-    name: 'Alert Triage',
+    key: "alert",
+    name: "Alert",
     icon: IconAlertTriangle,
+    description: "Triages alerts, fixes issues, notifies when needed",
+    models: ["alert_triage", "alert_fix"],
   },
   {
-    key: 'alert_fix',
-    name: 'Alert Fix',
-    icon: IconBolt,
-  },
-  {
-    key: 'code_fix',
-    name: 'Code Fix',
-    icon: IconCode,
-  },
-  {
-    key: 'chat',
-    name: 'Chat',
+    key: "chat",
+    name: "Chat",
     icon: IconMessageChatbot,
+    description: "Interactive cluster assistant",
+    models: ["chat"],
   },
-] as const;
+] as const
 
 interface AgentCardsProps {
-  activeAgent: string;
-  onSelect: (key: string) => void;
+  activeAgent: string
+  onSelect: (key: string) => void
 }
 
 export function AgentCards({ activeAgent, onSelect }: AgentCardsProps) {
-  const { data: settings } = useSettings();
+  const { data: settings } = useSettings()
 
   function getModelLabel(key: string): string {
-    const raw = settings?.models?.[key];
-    if (!raw) return 'Sonnet 4.6';
-    const migrated = MODEL_MIGRATION[raw] || raw;
-    if (migrated.includes('haiku')) return 'Haiku 4.5';
-    if (migrated.includes('opus')) return 'Opus 4.6';
-    return 'Sonnet 4.6';
+    const raw = settings?.models?.[key]
+    if (!raw) return "Sonnet 4.6"
+    const migrated = MODEL_MIGRATION[raw] || raw
+    if (migrated.includes("haiku")) return "Haiku 4.5"
+    if (migrated.includes("opus")) return "Opus 4.6"
+    return "Sonnet 4.6"
   }
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-      {AGENT_DEFS.map((agent) => {
-        const isActive = activeAgent === agent.key;
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      {FLOW_DEFS.map((flow) => {
+        const isActive = activeAgent === flow.key
         return (
           <div
-            key={agent.key}
+            key={flow.key}
             className="cursor-pointer"
-            onClick={() => onSelect(agent.key)}
+            onClick={() => onSelect(flow.key)}
           >
             <div
               className={cn(
-                'rounded-xl p-0.5 transition-all',
+                "rounded-xl p-0.5 transition-all",
                 isActive
-                  ? 'bg-linear-to-br from-accent-orange-light to-accent-orange'
-                  : 'bg-border hover:bg-muted-foreground/20',
+                  ? "bg-linear-to-br from-accent-orange-light to-accent-orange"
+                  : "bg-border hover:bg-muted-foreground/20"
               )}
             >
-              <div className="rounded-[10px] bg-card p-4">
-                <CardContent className="flex flex-col items-center gap-3 pt-1 text-center">
-                  <agent.icon
-                    className={cn(
-                      'size-6',
-                      isActive ? 'text-accent-orange' : 'text-muted-foreground',
-                    )}
-                  />
-                  <span className="text-sm font-medium">{agent.name}</span>
-                  <Badge variant="accent" className="text-[0.65rem]">
-                    {getModelLabel(agent.key)}
-                  </Badge>
-                </CardContent>
+              <div className="rounded-[10px] bg-card p-5">
+                <div className="flex flex-col gap-3">
+                  <div className="flex items-center gap-3">
+                    <flow.icon
+                      className={cn(
+                        "size-6",
+                        isActive
+                          ? "text-accent-orange"
+                          : "text-muted-foreground"
+                      )}
+                    />
+                    <span className="text-sm font-semibold">{flow.name}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {flow.description}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {flow.models.map((m) => (
+                      <Badge
+                        key={m}
+                        variant="accent"
+                        className="text-[0.6rem]"
+                      >
+                        {m.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}:{" "}
+                        {getModelLabel(m)}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        );
+        )
       })}
     </div>
-  );
+  )
 }
