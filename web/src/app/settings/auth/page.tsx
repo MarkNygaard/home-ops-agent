@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { SiteHeader } from "@/components/site-header"
 import { useSettings } from "@/hooks/use-settings"
@@ -12,14 +12,9 @@ export default function SettingsAuthPage() {
 
   const [dirty, setDirty] = useState(false)
   const [statusMsg, setStatusMsg] = useState("")
-  const [authMethod, setAuthMethod] = useState("api_key")
+  const [authMethodOverride, setAuthMethodOverride] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!settings) return
-    setAuthMethod(settings.auth_method)
-  }, [settings])
-
-  const markDirty = useCallback(() => setDirty(true), [])
+  const authMethod = authMethodOverride ?? settings?.auth_method ?? "api_key"
 
   function showStatus(msg: string) {
     setStatusMsg(msg)
@@ -29,6 +24,7 @@ export default function SettingsAuthPage() {
   async function handleSave() {
     await updateSetting("auth_method", authMethod)
     setDirty(false)
+    setAuthMethodOverride(null)
     showStatus("Auth settings saved")
     mutateSettings()
   }
@@ -42,8 +38,8 @@ export default function SettingsAuthPage() {
             settings={settings ?? null}
             authMethod={authMethod}
             onAuthMethodChange={(v) => {
-              setAuthMethod(v)
-              markDirty()
+              setAuthMethodOverride(v)
+              setDirty(true)
             }}
             onSaved={() => {
               mutateSettings()

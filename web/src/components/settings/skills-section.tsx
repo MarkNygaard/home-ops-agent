@@ -1,32 +1,32 @@
-"use client"
+'use client';
 
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { updateSkill as apiUpdateSkill } from "@/lib/api"
-import type { Skill } from "@/lib/types"
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { updateSkill as apiUpdateSkill } from '@/lib/api';
+import type { Skill } from '@/lib/types';
 
 interface SkillsSectionProps {
-  skills: Skill[]
-  onUpdate: () => void
+  skills: Skill[];
+  onUpdate: () => void;
 }
 
 export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
   async function handleToggle(skill: Skill, checked: boolean) {
-    await apiUpdateSkill(skill.id, { enabled: checked })
-    onUpdate()
+    await apiUpdateSkill(skill.id, { enabled: checked });
+    onUpdate();
   }
 
   async function handleConfigChange(
     skill: Skill,
     configKey: string,
-    value: string
+    value: string,
   ) {
-    const config = { ...skill.config, [configKey]: value }
-    await apiUpdateSkill(skill.id, { config })
-    onUpdate()
+    const config = { ...skill.config, [configKey]: value };
+    await apiUpdateSkill(skill.id, { config });
+    onUpdate();
   }
 
   return (
@@ -39,9 +39,9 @@ export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
         </p>
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-4">
         {skills.map((skill) => (
-          <Card key={skill.id} size="sm">
+          <Card key={skill.id}>
             <CardContent>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex flex-col gap-1">
@@ -49,7 +49,7 @@ export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
                     <span className="text-sm font-medium">{skill.name}</span>
                     <span className="text-xs text-muted-foreground">
                       {skill.tool_count} tool
-                      {skill.tool_count !== 1 ? "s" : ""}
+                      {skill.tool_count !== 1 ? 's' : ''}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -64,14 +64,13 @@ export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
                 ) : (
                   <div className="flex shrink-0 items-center gap-2">
                     <Label className="text-xs text-muted-foreground">
-                      {skill.enabled ? "Enabled" : "Disabled"}
+                      {skill.enabled ? 'Enabled' : 'Disabled'}
                     </Label>
                     <Switch
                       checked={skill.enabled}
                       onCheckedChange={(checked) =>
                         handleToggle(skill, checked)
                       }
-                      size="sm"
                     />
                   </div>
                 )}
@@ -85,17 +84,13 @@ export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
                       <div key={field.key} className="flex flex-col gap-1">
                         <Label className="text-xs">{field.label}</Label>
                         <Input
-                          type={field.type === "url" ? "text" : field.type}
+                          type={field.type === 'url' ? 'text' : field.type}
                           defaultValue={
-                            skill.config[field.key] || field.default || ""
+                            skill.config[field.key] || field.default || ''
                           }
-                          placeholder={field.default || ""}
+                          placeholder={field.default || ''}
                           onBlur={(e) =>
-                            handleConfigChange(
-                              skill,
-                              field.key,
-                              e.target.value
-                            )
+                            handleConfigChange(skill, field.key, e.target.value)
                           }
                         />
                       </div>
@@ -107,5 +102,5 @@ export function SkillsSection({ skills, onUpdate }: SkillsSectionProps) {
         ))}
       </div>
     </div>
-  )
+  );
 }

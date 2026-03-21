@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { SiteHeader } from "@/components/site-header"
@@ -14,21 +14,18 @@ export default function SettingsGeneralPage() {
 
   const [dirty, setDirty] = useState(false)
   const [statusMsg, setStatusMsg] = useState("")
+  const [overrides, setOverrides] = useState<Record<string, string>>({})
 
-  const [prMode, setPrMode] = useState("comment_only")
-  const [alertCooldown, setAlertCooldown] = useState("900")
-  const [ntfyTopics, setNtfyTopics] = useState("alertmanager,gatus")
-  const [prInterval, setPrInterval] = useState("1800")
+  // Derive values from settings with local overrides
+  const prMode = overrides.pr_mode ?? settings?.pr_mode ?? "comment_only"
+  const alertCooldown = overrides.alert_cooldown ?? String(settings?.alert_cooldown_seconds ?? "900")
+  const ntfyTopics = overrides.ntfy_topics ?? settings?.ntfy_topics ?? "alertmanager,gatus"
+  const prInterval = overrides.pr_interval ?? String(settings?.pr_check_interval_seconds ?? "1800")
 
-  useEffect(() => {
-    if (!settings) return
-    setPrMode(settings.pr_mode)
-    setAlertCooldown(String(settings.alert_cooldown_seconds))
-    setNtfyTopics(settings.ntfy_topics)
-    setPrInterval(String(settings.pr_check_interval_seconds))
-  }, [settings])
-
-  const markDirty = useCallback(() => setDirty(true), [])
+  function setField(key: string, value: string) {
+    setOverrides((prev) => ({ ...prev, [key]: value }))
+    setDirty(true)
+  }
 
   function showStatus(msg: string) {
     setStatusMsg(msg)
@@ -43,6 +40,7 @@ export default function SettingsGeneralPage() {
       updateSetting("pr_check_interval_seconds", prInterval),
     ])
     setDirty(false)
+    setOverrides({})
     showStatus("Settings saved")
     mutateSettings()
   }
@@ -68,10 +66,7 @@ export default function SettingsGeneralPage() {
                   name="pr_mode"
                   value="comment_only"
                   checked={prMode === "comment_only"}
-                  onChange={(e) => {
-                    setPrMode(e.target.value)
-                    markDirty()
-                  }}
+                  onChange={(e) => setField("pr_mode", e.target.value)}
                 />
                 Comment Only
                 <span className="text-muted-foreground">
@@ -84,10 +79,7 @@ export default function SettingsGeneralPage() {
                   name="pr_mode"
                   value="auto_merge"
                   checked={prMode === "auto_merge"}
-                  onChange={(e) => {
-                    setPrMode(e.target.value)
-                    markDirty()
-                  }}
+                  onChange={(e) => setField("pr_mode", e.target.value)}
                 />
                 Auto-Merge
                 <span className="text-muted-foreground">
@@ -103,18 +95,9 @@ export default function SettingsGeneralPage() {
             alertCooldown={alertCooldown}
             ntfyTopics={ntfyTopics}
             prInterval={prInterval}
-            onAlertCooldownChange={(v) => {
-              setAlertCooldown(v)
-              markDirty()
-            }}
-            onNtfyTopicsChange={(v) => {
-              setNtfyTopics(v)
-              markDirty()
-            }}
-            onPrIntervalChange={(v) => {
-              setPrInterval(v)
-              markDirty()
-            }}
+            onAlertCooldownChange={(v) => setField("alert_cooldown", v)}
+            onNtfyTopicsChange={(v) => setField("ntfy_topics", v)}
+            onPrIntervalChange={(v) => setField("pr_interval", v)}
           />
 
           <Separator />
