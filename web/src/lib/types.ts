@@ -35,6 +35,8 @@ export interface Skill {
 export interface Conversation {
   id: number
   title: string
+  source: string
+  status: string
   created_at: string
 }
 

@@ -8,21 +8,22 @@ async function fetchMergedHistory(
   filter: string
 ): Promise<HistoryItem[]> {
   const [conversations, tasks] = await Promise.all([
-    filter && filter !== "chat"
-      ? Promise.resolve([])
-      : fetchConversations(),
-    filter ? fetchHistory(filter) : fetchHistory(),
+    fetchConversations(),
+    fetchHistory(),
   ])
 
   const items: HistoryItem[] = [
-    ...conversations.map((c) => ({
-      type: "chat",
-      id: c.id,
-      trigger: c.title,
-      created_at: c.created_at,
-      summary: null,
-      is_conversation: true,
-    })),
+    // Only include user-initiated chat conversations (not PR review or alert conversations)
+    ...conversations
+      .filter((c) => c.source === "chat")
+      .map((c) => ({
+        type: "chat" as const,
+        id: c.id,
+        trigger: c.title,
+        created_at: c.created_at,
+        summary: null,
+        is_conversation: true,
+      })),
     ...tasks.map((t) => ({
       type: t.type,
       id: t.id,
