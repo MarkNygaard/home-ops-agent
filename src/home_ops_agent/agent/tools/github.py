@@ -277,14 +277,16 @@ async def get_release(params: dict) -> str:
         if len(body) > 5000:
             body = body[:5000] + "\n\n... (truncated)"
 
-        return json.dumps({
-            "tag": release["tag_name"],
-            "name": release.get("name", ""),
-            "published_at": release.get("published_at", ""),
-            "body": body,
-            "html_url": release["html_url"],
-            "prerelease": release.get("prerelease", False),
-        })
+        return json.dumps(
+            {
+                "tag": release["tag_name"],
+                "name": release.get("name", ""),
+                "published_at": release.get("published_at", ""),
+                "body": body,
+                "html_url": release["html_url"],
+                "prerelease": release.get("prerelease", False),
+            }
+        )
 
 
 async def create_branch(params: dict) -> str:
@@ -498,8 +500,7 @@ def get_github_tools() -> list[ToolDefinition]:
                     "repo": {
                         "type": "string",
                         "description": (
-                            "GitHub repo in owner/name format"
-                            " (e.g., 'siderolabs/talos')"
+                            "GitHub repo in owner/name format (e.g., 'siderolabs/talos')"
                         ),
                     },
                     "tag": {

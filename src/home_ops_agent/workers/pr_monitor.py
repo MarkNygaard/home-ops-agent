@@ -128,13 +128,15 @@ async def _notify_review(pr: dict, result: AgentResult):
         summary += "..."
 
     try:
-        await publish_notification({
-            "title": title,
-            "message": f"{pr['title']}\n\n{summary}",
-            "priority": priority,
-            "tags": tag,
-            "click_url": pr.get("html_url", ""),
-        })
+        await publish_notification(
+            {
+                "title": title,
+                "message": f"{pr['title']}\n\n{summary}",
+                "priority": priority,
+                "tags": tag,
+                "click_url": pr.get("html_url", ""),
+            }
+        )
     except Exception:
         logger.exception("Failed to send ntfy notification for PR #%s", pr["number"])
 
