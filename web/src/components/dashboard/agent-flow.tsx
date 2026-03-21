@@ -11,6 +11,7 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import Dagre from '@dagrejs/dagre';
 import {
   IconRobot,
   IconGitPullRequest,
@@ -52,7 +53,6 @@ type StepNodeData = {
   accent?: boolean;
   size?: 'sm' | 'md';
 };
-type BranchLabelData = { label: string };
 
 const ICONS: Record<string, typeof IconRobot> = {
   IconGitPullRequest,
@@ -79,9 +79,19 @@ const ICONS: Record<string, typeof IconRobot> = {
   IconMessage,
 };
 
+// Node dimensions for dagre layout (height = circle only, excludes text label)
+const AGENT_W = 100;
+const AGENT_H = 96;
+const STEP_W = 80;
+const STEP_H = 72;
+// Decision nodes declared wider so dagre gives more room for outgoing edge labels
+const DECISION_W = 140;
+// Small continuation nodes declared narrower to pack tighter
+const SMALL_STEP_W = 50;
+
 function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="relative flex flex-col items-center gap-3">
       <div
         className="flex size-24 items-center justify-center rounded-full"
         style={{
@@ -100,6 +110,7 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
       <Handle
         type="source"
         position={Position.Right}
+        style={{ top: '48px' }}
         className="bg-transparent! border-0! w-0! h-0!"
       />
     </div>
@@ -110,13 +121,15 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
   const Icon = ICONS[data.icon] ?? IconReport;
   const accent = data.accent ?? false;
   const small = data.size === 'sm';
-  const circleSize = small ? 'size-13' : 'size-16';
-  const iconSize = small ? 'size-5' : 'size-7';
+  const circleSize = small ? 'size-14' : 'size-18';
+  const iconSize = small ? 'size-6' : 'size-8';
+  const handleTop = small ? '28px' : '36px';
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className="relative flex flex-col items-center gap-2">
       <Handle
         type="target"
         position={Position.Left}
+        style={{ top: handleTop }}
         className="bg-transparent! border-0! w-0! h-0!"
       />
       <div
@@ -124,7 +137,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
           'flex items-center justify-center rounded-full transition-colors',
           circleSize,
           accent
-            ? 'bg-accent-orange/10 ring-2 ring-accent-orange/40'
+            ? 'bg-accent-orange/10 ring-1 ring-accent-orange/40'
             : 'bg-muted/30 ring-1 ring-foreground/10',
         )}
       >
@@ -146,26 +159,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
       <Handle
         type="source"
         position={Position.Right}
-        className="bg-transparent! border-0! w-0! h-0!"
-      />
-    </div>
-  );
-}
-
-function BranchLabelNode({ data }: NodeProps<Node<BranchLabelData>>) {
-  return (
-    <div className="flex items-center">
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="bg-transparent! border-0! w-0! h-0!"
-      />
-      <span className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted-foreground/40">
-        {data.label}
-      </span>
-      <Handle
-        type="source"
-        position={Position.Right}
+        style={{ top: handleTop }}
         className="bg-transparent! border-0! w-0! h-0!"
       />
     </div>
@@ -175,19 +169,64 @@ function BranchLabelNode({ data }: NodeProps<Node<BranchLabelData>>) {
 const nodeTypes = {
   agent: AgentNode,
   step: StepNode,
-  branchLabel: BranchLabelNode,
 };
 
-/* ── Flow definitions ────────────────────────────────────── */
+/* ── Auto-layout with Dagre ──────────────────────────────── */
 
-// Layout constants
-const STEP = 120; // horizontal spacing between main steps
-const BRANCH_Y = 100; // vertical spacing between branches
-const BRANCH_X = 100; // horizontal spacing between branch steps
-const MAIN_Y = 0; // y position of main flow
-const DECIDE_X = 5 * STEP;
+function getLayoutedElements(
+  nodes: Node[],
+  edges: Edge[],
+): { nodes: Node[]; edges: Edge[] } {
+  const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
 
-// Helper to make edges consistent
+  g.setGraph({
+    rankdir: 'LR',
+    nodesep: 30,
+    ranksep: 45,
+    marginx: 20,
+    marginy: 20,
+  });
+
+  for (const node of nodes) {
+    const isDecision =
+      node.data && 'decision' in node.data && node.data.decision;
+    const isSmall = node.data && 'size' in node.data && node.data.size === 'sm';
+    const w =
+      node.type === 'agent'
+        ? AGENT_W
+        : isDecision
+          ? DECISION_W
+          : isSmall
+            ? SMALL_STEP_W
+            : STEP_W;
+    const h = node.type === 'agent' ? AGENT_H : STEP_H;
+    g.setNode(node.id, { width: w, height: h });
+  }
+
+  for (const edge of edges) {
+    g.setEdge(edge.source, edge.target);
+  }
+
+  Dagre.layout(g);
+
+  const layoutedNodes = nodes.map((node) => {
+    const pos = g.node(node.id);
+    const w = node.type === 'agent' ? AGENT_W : STEP_W;
+    const h = node.type === 'agent' ? AGENT_H : STEP_H;
+    return {
+      ...node,
+      position: {
+        x: pos.x - w / 2,
+        y: pos.y - h / 2,
+      },
+    };
+  });
+
+  return { nodes: layoutedNodes, edges };
+}
+
+/* ── Edge helpers ────────────────────────────────────────── */
+
 function mainEdge(
   id: string,
   source: string,
@@ -204,7 +243,7 @@ function mainEdge(
           animated: true,
           style: {
             stroke: 'var(--accent-orange)',
-            strokeWidth: 2.5,
+            strokeWidth: 2,
             opacity: 0.5,
           },
         }
@@ -217,12 +256,25 @@ function branchEdge(
   source: string,
   target: string,
   accent?: boolean,
+  label?: string,
 ): Edge {
   return {
     id,
     source,
     target,
     type: 'default',
+    ...(label
+      ? {
+          label,
+          labelStyle: {
+            fill: 'var(--muted-foreground)',
+            opacity: 0.4,
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: '0.1em',
+          },
+        }
+      : {}),
     ...(accent
       ? {
           style: {
@@ -235,102 +287,85 @@ function branchEdge(
   };
 }
 
-function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
-  const bx = DECIDE_X + 100; // branch label x
-  const bsx = bx + 90; // branch step start x
+/* ── Flow definitions (no positions needed!) ─────────────── */
 
+function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [
     {
       id: 'agent',
       type: 'agent',
-      position: { x: 0, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Agent' },
     },
     {
       id: 's1',
       type: 'step',
-      position: { x: STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Trigger', icon: 'IconGitPullRequest' },
     },
     {
       id: 's2',
       type: 'step',
-      position: { x: 2 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Check PR', icon: 'IconFileSearch' },
     },
     {
       id: 's3',
       type: 'step',
-      position: { x: 3 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Read Diff', icon: 'IconFileText' },
     },
     {
       id: 's4',
       type: 'step',
-      position: { x: 4 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Release Notes', icon: 'IconNotes' },
     },
     {
       id: 's5',
       type: 'step',
-      position: { x: DECIDE_X, y: MAIN_Y + 10 },
-      data: { label: 'Decide', icon: 'IconReport', accent: true },
-    },
-    // Branch 1: Safe → Merge
-    {
-      id: 'bl1',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y - BRANCH_Y + 20 },
-      data: { label: 'Safe' },
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Decide',
+        icon: 'IconReport',
+        accent: true,
+        decision: true,
+      },
     },
     {
       id: 'b1',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y - BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
-    },
-    // Branch 2: Fix → Code Fix pipeline
-    {
-      id: 'bl2',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y + 20 },
-      data: { label: 'Fix' },
     },
     {
       id: 'b2a',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y },
-      data: { label: 'Code Fix', icon: 'IconCode', accent: true, size: 'sm' },
+      position: { x: 0, y: 0 },
+      data: { label: 'Code Fix', icon: 'IconCode', size: 'sm' },
     },
     {
       id: 'b2b',
       type: 'step',
-      position: { x: bsx + BRANCH_X, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Branch', icon: 'IconGitBranch', size: 'sm' },
     },
     {
       id: 'b2c',
       type: 'step',
-      position: { x: bsx + 2 * BRANCH_X, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' },
     },
     {
       id: 'b2d',
       type: 'step',
-      position: { x: bsx + 3 * BRANCH_X, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Open PR', icon: 'IconSend', size: 'sm' },
-    },
-    // Branch 3: Review → Notify
-    {
-      id: 'bl3',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y + BRANCH_Y + 20 },
-      data: { label: 'Review' },
     },
     {
       id: 'b3',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y + BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' },
     },
   ];
@@ -341,116 +376,94 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
-    branchEdge('e-s5-bl1', 's5', 'bl1'),
-    branchEdge('e-bl1-b1', 'bl1', 'b1'),
-    branchEdge('e-s5-bl2', 's5', 'bl2', true),
-    branchEdge('e-bl2-b2a', 'bl2', 'b2a', true),
+    branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
+    branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
     mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
     mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
     mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
-    branchEdge('e-s5-bl3', 's5', 'bl3'),
-    branchEdge('e-bl3-b3', 'bl3', 'b3'),
+    branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
   ];
 
-  return { nodes, edges };
+  return getLayoutedElements(nodes, edges);
 }
 
 function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
-  const bx = DECIDE_X + 100;
-  const bsx = bx + 90;
-
   const nodes: Node[] = [
     {
       id: 'agent',
       type: 'agent',
-      position: { x: 0, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Agent' },
     },
     {
       id: 's1',
       type: 'step',
-      position: { x: STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Alert', icon: 'IconAlertTriangle' },
     },
     {
       id: 's2',
       type: 'step',
-      position: { x: 2 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Check Pods', icon: 'IconBox' },
     },
     {
       id: 's3',
       type: 'step',
-      position: { x: 3 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Read Logs', icon: 'IconFileAnalytics' },
     },
     {
       id: 's4',
       type: 'step',
-      position: { x: 4 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Metrics', icon: 'IconChartLine' },
     },
     {
       id: 's5',
       type: 'step',
-      position: { x: DECIDE_X, y: MAIN_Y + 10 },
-      data: { label: 'Triage', icon: 'IconReport', accent: true },
-    },
-    // Branch 1: Fix
-    {
-      id: 'bl1',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y - BRANCH_Y + 20 },
-      data: { label: 'Fix' },
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Triage',
+        icon: 'IconReport',
+        accent: true,
+        decision: true,
+      },
     },
     {
       id: 'b1a',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y - BRANCH_Y },
-      data: { label: 'Alert Fix', icon: 'IconBolt', accent: true, size: 'sm' },
+      position: { x: 0, y: 0 },
+      data: { label: 'Alert Fix', icon: 'IconBolt', size: 'sm' },
     },
     {
       id: 'b1b',
       type: 'step',
-      position: { x: bsx + BRANCH_X, y: MAIN_Y - BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Apply Fix', icon: 'IconBolt', size: 'sm' },
     },
     {
       id: 'b1c',
       type: 'step',
-      position: { x: bsx + 2 * BRANCH_X, y: MAIN_Y - BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Verify', icon: 'IconCheck', size: 'sm' },
     },
     {
       id: 'b1d',
       type: 'step',
-      position: { x: bsx + 3 * BRANCH_X, y: MAIN_Y - BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Notify', icon: 'IconBell', size: 'sm' },
-    },
-    // Branch 2: Notify
-    {
-      id: 'bl2',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y + 20 },
-      data: { label: 'Notify' },
     },
     {
       id: 'b2',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Notify User', icon: 'IconBell', size: 'sm' },
-    },
-    // Branch 3: Ignore
-    {
-      id: 'bl3',
-      type: 'branchLabel',
-      position: { x: bx, y: MAIN_Y + BRANCH_Y + 20 },
-      data: { label: 'Ignore' },
     },
     {
       id: 'b3',
       type: 'step',
-      position: { x: bsx, y: MAIN_Y + BRANCH_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Ignore', icon: 'IconPlayerSkipForward', size: 'sm' },
     },
   ];
@@ -461,18 +474,15 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
-    branchEdge('e-s5-bl1', 's5', 'bl1', true),
-    branchEdge('e-bl1-b1a', 'bl1', 'b1a', true),
+    branchEdge('e-s5-b1a', 's5', 'b1a', true, 'FIX'),
     mainEdge('e-b1a-b1b', 'b1a', 'b1b'),
     mainEdge('e-b1b-b1c', 'b1b', 'b1c'),
     mainEdge('e-b1c-b1d', 'b1c', 'b1d'),
-    branchEdge('e-s5-bl2', 's5', 'bl2'),
-    branchEdge('e-bl2-b2', 'bl2', 'b2'),
-    branchEdge('e-s5-bl3', 's5', 'bl3'),
-    branchEdge('e-bl3-b3', 'bl3', 'b3'),
+    branchEdge('e-s5-b2', 's5', 'b2', false, 'NOTIFY'),
+    branchEdge('e-s5-b3', 's5', 'b3', false, 'IGNORE'),
   ];
 
-  return { nodes, edges };
+  return getLayoutedElements(nodes, edges);
 }
 
 function makeChatFlow(): { nodes: Node[]; edges: Edge[] } {
@@ -480,37 +490,37 @@ function makeChatFlow(): { nodes: Node[]; edges: Edge[] } {
     {
       id: 'agent',
       type: 'agent',
-      position: { x: 0, y: MAIN_Y },
+      position: { x: 0, y: 0 },
       data: { label: 'Agent' },
     },
     {
       id: 's1',
       type: 'step',
-      position: { x: STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Message', icon: 'IconMessageChatbot' },
     },
     {
       id: 's2',
       type: 'step',
-      position: { x: 2 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Context', icon: 'IconSearch' },
     },
     {
       id: 's3',
       type: 'step',
-      position: { x: 3 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Run Tools', icon: 'IconTerminal2' },
     },
     {
       id: 's4',
       type: 'step',
-      position: { x: 4 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Analyze', icon: 'IconReport' },
     },
     {
       id: 's5',
       type: 'step',
-      position: { x: 5 * STEP, y: MAIN_Y + 10 },
+      position: { x: 0, y: 0 },
       data: { label: 'Respond', icon: 'IconMessage' },
     },
   ];
@@ -523,7 +533,7 @@ function makeChatFlow(): { nodes: Node[]; edges: Edge[] } {
     mainEdge('e-s4-s5', 's4', 's5'),
   ];
 
-  return { nodes, edges };
+  return getLayoutedElements(nodes, edges);
 }
 
 const FLOW_BUILDERS: Record<string, () => { nodes: Node[]; edges: Edge[] }> = {
@@ -541,6 +551,7 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 };
 
 const defaultEdgeOptions = {
+  animated: true,
   style: {
     stroke: 'var(--muted-foreground)',
     strokeWidth: 2,
@@ -548,8 +559,8 @@ const defaultEdgeOptions = {
   },
   markerEnd: {
     type: MarkerType.ArrowClosed,
-    width: 16,
-    height: 16,
+    width: 12,
+    height: 12,
     color: 'var(--muted-foreground)',
   },
 };
@@ -565,7 +576,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
   const { nodes, edges } = useMemo(() => builder(), [builder]);
 
   const hasBranches = activeAgent !== 'chat';
-  const height = hasBranches ? 450 : 200;
+  const height = hasBranches ? 450 : 250;
 
   return (
     <div className="flex flex-col gap-4">
@@ -592,7 +603,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           defaultEdgeOptions={defaultEdgeOptions}
           colorMode="dark"
           fitView
-          fitViewOptions={{ padding: 0.02 }}
+          fitViewOptions={{ padding: 0.05 }}
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
