@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
+import { SiteHeader } from "@/components/site-header"
 import { useSettings } from "@/hooks/use-settings"
 import { useSkills } from "@/hooks/use-skills"
 import { usePrompts } from "@/hooks/use-prompts"
@@ -80,12 +81,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b px-6 py-3">
-        <h2 className="text-lg font-semibold">Settings</h2>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+    <>
+      <SiteHeader title="Settings" />
+      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-6">
           <KillSwitch
             settings={settings ?? null}
@@ -213,6 +211,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-    </div>
+    </>
   )
 }

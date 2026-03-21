@@ -4,6 +4,7 @@ import { Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { SiteHeader } from "@/components/site-header"
 import { useMemories } from "@/hooks/use-memories"
 import { deleteMemory } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
@@ -26,16 +27,13 @@ export default function MemoriesPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b px-6 py-3">
-        <h2 className="text-lg font-semibold">Memories</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <>
+      <SiteHeader title="Memories" />
+      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
+        <p className="mb-4 text-sm text-muted-foreground">
           Facts the agent remembers from previous conversations. These are
           included in the system prompt for all future interactions.
         </p>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-6 py-4">
         {!memories || memories.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             No memories yet. The agent will extract key facts from conversations
@@ -72,6 +70,6 @@ export default function MemoriesPage() {
           </div>
         )}
       </div>
-    </div>
+    </>
   )
 }

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { SiteHeader } from "@/components/site-header"
 import { useHistory } from "@/hooks/use-history"
 import { deleteConversation, fetchTaskDetail } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
@@ -63,12 +64,9 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b px-6 py-3">
-        <h2 className="text-lg font-semibold">Activity History</h2>
-      </div>
-
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+    <>
+      <SiteHeader title="Activity History" />
+      <div className="flex-1 overflow-y-auto px-4 py-4 lg:px-6">
         <Tabs
           defaultValue=""
           onValueChange={(val) => setFilter(val as string)}
@@ -142,6 +140,6 @@ export default function HistoryPage() {
           />
         )}
       </div>
-    </div>
+    </>
   )
 }
