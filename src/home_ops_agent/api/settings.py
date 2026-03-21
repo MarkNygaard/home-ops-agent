@@ -88,6 +88,7 @@ async def get_settings():
             "alert_triage": db_settings.get("model_alert_triage", settings.model_alert_triage),
             "alert_fix": db_settings.get("model_alert_fix", settings.model_alert_fix),
             "code_fix": db_settings.get("model_code_fix", settings.model_code_fix),
+            "deep_review": db_settings.get("model_deep_review", settings.model_deep_review),
             "chat": db_settings.get("model_chat", settings.model_chat),
         },
     }

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     model_alert_triage: str = "claude-haiku-4-5"
     model_alert_fix: str = "claude-sonnet-4-6"
     model_code_fix: str = "claude-sonnet-4-6"
+    model_deep_review: str = "claude-opus-4-6"
     model_chat: str = "claude-sonnet-4-6"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
