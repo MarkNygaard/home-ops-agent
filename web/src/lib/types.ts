@@ -97,4 +97,5 @@ export interface HistoryItem {
 
 export interface StatusResponse {
   has_credentials: boolean
+  last_pr_check_at: string | null
 }

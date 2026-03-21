@@ -9,7 +9,12 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { SiteHeader } from "@/components/site-header"
-import { SlidePanel } from "@/components/slide-panel"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useHistory } from "@/hooks/use-history"
 import { deleteConversation, fetchTaskDetail } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
@@ -136,47 +141,51 @@ export default function HistoryPage() {
           </Tabs>
         </div>
 
-        <SlidePanel
+        <Dialog
           open={taskDetail !== null}
-          onOpenChange={(open) => {
+          onOpenChange={(open: boolean) => {
             if (!open) setTaskDetail(null)
           }}
-          title={taskDetail?.trigger ?? "Task Detail"}
         >
-          {taskDetail && (
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Badge variant="outline">{taskDetail.type}</Badge>
-                <span>{taskDetail.status}</span>
-                <span>{formatDate(taskDetail.created_at)}</span>
+          <DialogContent className="fixed top-6 right-6 left-auto bottom-auto translate-x-0 translate-y-0 sm:max-w-lg md:max-w-xl lg:max-w-2xl max-h-[calc(100vh-3rem)] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{taskDetail?.trigger ?? "Task Detail"}</DialogTitle>
+            </DialogHeader>
+            {taskDetail && (
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Badge variant="outline">{taskDetail.type}</Badge>
+                  <span>{taskDetail.status}</span>
+                  <span>{formatDate(taskDetail.created_at)}</span>
+                </div>
+
+                {taskDetail.summary && (
+                  <p className="text-sm">{taskDetail.summary}</p>
+                )}
+
+                {taskDetail.messages && taskDetail.messages.length > 0 && (
+                  <>
+                    <Separator />
+                    <div className="flex flex-col gap-3">
+                      {taskDetail.messages.map((msg, i) => {
+                        const text =
+                          typeof msg.content === "string"
+                            ? msg.content
+                            : msg.content?.text || JSON.stringify(msg.content)
+                        return (
+                          <div key={i} className="text-sm">
+                            <span className="font-medium">{msg.role}:</span>{" "}
+                            {text}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
-
-              {taskDetail.summary && (
-                <p className="text-sm">{taskDetail.summary}</p>
-              )}
-
-              {taskDetail.messages && taskDetail.messages.length > 0 && (
-                <>
-                  <Separator />
-                  <div className="flex flex-col gap-3">
-                    {taskDetail.messages.map((msg, i) => {
-                      const text =
-                        typeof msg.content === "string"
-                          ? msg.content
-                          : msg.content?.text || JSON.stringify(msg.content)
-                      return (
-                        <div key={i} className="text-sm">
-                          <span className="font-medium">{msg.role}:</span>{" "}
-                          {text}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </SlidePanel>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </>
   )

@@ -1,25 +1,34 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import useSWR from "swr"
 import { Badge } from "@/components/ui/badge"
 import { useWs } from "@/providers/websocket-provider"
 import { useSettings } from "@/hooks/use-settings"
+import { fetchStatus } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-function useCountdown(intervalSeconds: number) {
-  const [remaining, setRemaining] = useState(intervalSeconds)
+function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
+  const [remaining, setRemaining] = useState<number | null>(null)
 
   useEffect(() => {
-    setRemaining(intervalSeconds)
+    function calcRemaining() {
+      if (!lastCheckAt) return intervalSeconds
+      const lastCheck = new Date(lastCheckAt).getTime()
+      const now = Date.now()
+      const elapsed = Math.floor((now - lastCheck) / 1000)
+      const rem = intervalSeconds - elapsed
+      return rem > 0 ? rem : 0
+    }
+
+    setRemaining(calcRemaining())
     const timer = setInterval(() => {
-      setRemaining((prev) => {
-        if (prev <= 1) return intervalSeconds
-        return prev - 1
-      })
+      setRemaining(calcRemaining())
     }, 1000)
     return () => clearInterval(timer)
-  }, [intervalSeconds])
+  }, [intervalSeconds, lastCheckAt])
 
+  if (remaining === null) return "--:--"
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
   return `${mins}:${secs.toString().padStart(2, "0")}`
@@ -28,11 +37,15 @@ function useCountdown(intervalSeconds: number) {
 export function StatusBar() {
   const { status } = useWs()
   const { data: settings } = useSettings()
+  const { data: statusData } = useSWR("/api/status", fetchStatus, {
+    refreshInterval: 30000,
+  })
 
   const agentEnabled = settings?.agent_enabled ?? true
   const prMode = settings?.pr_mode ?? "comment_only"
   const prInterval = settings?.pr_check_interval_seconds ?? 1800
-  const countdown = useCountdown(prInterval)
+  const lastCheckAt = statusData?.last_pr_check_at ?? null
+  const countdown = useCountdown(prInterval, lastCheckAt)
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-xl bg-card px-5 py-3.5 ring-1 ring-foreground/10">

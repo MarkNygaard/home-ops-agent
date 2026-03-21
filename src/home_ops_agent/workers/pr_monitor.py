@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 # Maximum number of PRs to review per cycle (rate limit)
 MAX_REVIEWS_PER_CYCLE = 3
 
+# Track last check time for the status API
+last_pr_check_at: datetime | None = None
+
 
 async def _is_enabled() -> bool:
     """Check if the agent is enabled via settings."""
@@ -339,9 +342,12 @@ async def run_pr_monitor():
         settings.pr_check_interval_seconds,
     )
 
+    global last_pr_check_at
+
     while True:
         try:
             await check_prs()
+            last_pr_check_at = datetime.now(UTC)
         except Exception:
             logger.exception("PR monitor cycle failed")
 

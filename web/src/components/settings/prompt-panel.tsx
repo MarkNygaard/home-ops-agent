@@ -4,7 +4,14 @@ import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { SlidePanel } from "@/components/slide-panel"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { updateSetting, resetPrompt } from "@/lib/api"
 import type { PromptInfo } from "@/lib/types"
 
@@ -42,39 +49,39 @@ export function PromptPanel({
   }
 
   return (
-    <SlidePanel
+    <Dialog
       open
       onOpenChange={(open) => {
         if (!open) onClose()
       }}
-      title={label}
-      description={description}
-      footer={
-        <div className="flex w-full items-center gap-2">
+    >
+      <DialogContent className="fixed top-6 right-6 left-auto bottom-auto translate-x-0 translate-y-0 sm:max-w-lg md:max-w-xl lg:max-w-2xl max-h-[calc(100vh-3rem)] overflow-y-auto">
+        <DialogHeader>
+          <div className="flex items-center gap-2">
+            <DialogTitle>{label}</DialogTitle>
+            {prompt?.is_customized && (
+              <Badge variant="accent">Customized</Badge>
+            )}
+          </div>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+
+        <Textarea
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className="min-h-80 font-mono text-xs"
+          placeholder="Enter prompt..."
+        />
+
+        <DialogFooter>
           {prompt?.is_customized && (
             <Button variant="outline" onClick={handleReset}>
               Reset to Default
             </Button>
           )}
-          <Button onClick={handleSave} className="ml-auto">
-            Save
-          </Button>
-        </div>
-      }
-    >
-      <div className="flex flex-col gap-3">
-        {prompt?.is_customized && (
-          <Badge variant="outline" className="w-fit">
-            Customized
-          </Badge>
-        )}
-        <Textarea
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          className="min-h-80"
-          placeholder="Enter prompt..."
-        />
-      </div>
-    </SlidePanel>
+          <Button onClick={handleSave}>Save Prompt</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

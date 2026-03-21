@@ -21,6 +21,8 @@ async def health():
 @router.get("/api/status")
 async def agent_status():
     """Get agent status overview."""
+    from home_ops_agent.workers.pr_monitor import last_pr_check_at
+
     auth_method = await get_auth_method()
     has_credentials = False
 
@@ -48,6 +50,7 @@ async def agent_status():
         "has_credentials": has_credentials,
         "github_repo": settings.github_repo,
         "cluster_domain": settings.cluster_domain,
+        "last_pr_check_at": last_pr_check_at.isoformat() if last_pr_check_at else None,
         "task_counts": task_counts,
         "latest_task": {
             "type": latest_task.task_type,

@@ -21,7 +21,6 @@ import {
   IconSearch,
   IconTerminal2,
   IconReport,
-  IconArrowRight,
 } from "@tabler/icons-react"
 import { cn } from "@/lib/utils"
 
@@ -80,38 +79,107 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
       <h2 className="text-sm font-medium text-muted-foreground">
         Agent Workflow
       </h2>
-      <div className="flex items-center justify-center gap-2 overflow-x-auto rounded-xl bg-card px-6 py-6 ring-1 ring-foreground/10 sm:gap-3">
-        {/* Center robot icon */}
-        <div className="flex flex-col items-center gap-1.5">
-          <div className="flex size-12 items-center justify-center rounded-full ring-2 ring-accent-orange">
-            <IconRobot className="size-6 text-accent-orange" />
-          </div>
-          <span className="text-xs font-medium">Agent</span>
-        </div>
+      <div className="relative overflow-x-auto rounded-xl bg-card ring-1 ring-foreground/10">
+        {/* Subtle grid background */}
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle, currentColor 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
+          }}
+        />
 
-        <IconArrowRight className="size-4 shrink-0 text-muted-foreground" />
-
-        {/* Flow steps */}
-        {steps.map((step, i) => (
-          <div key={step.label} className="flex items-center gap-2 sm:gap-3">
-            <div className="flex flex-col items-center gap-1.5">
-              <div
-                className={cn(
-                  "flex size-10 items-center justify-center rounded-full ring-1",
-                  "ring-foreground/10 text-muted-foreground"
-                )}
-              >
-                <step.icon className="size-5" />
+        <div className="relative flex items-center justify-center gap-0 px-8 py-10">
+          {/* Agent node */}
+          <div className="flex flex-col items-center gap-2.5">
+            <div
+              className="flex size-16 items-center justify-center rounded-full"
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))",
+                padding: "2px",
+              }}
+            >
+              <div className="flex size-full items-center justify-center rounded-full bg-card">
+                <IconRobot className="size-7 text-accent-orange" />
               </div>
-              <span className="whitespace-nowrap text-[0.65rem] text-muted-foreground">
-                {step.label}
-              </span>
             </div>
-            {i < steps.length - 1 && (
-              <IconArrowRight className="size-3.5 shrink-0 text-muted-foreground/50" />
-            )}
+            <span className="text-xs font-semibold">Agent</span>
           </div>
-        ))}
+
+          {/* Connecting line from agent */}
+          <div className="mx-1 flex items-center sm:mx-2">
+            <svg width="40" height="2" className="text-accent-orange/40">
+              <line
+                x1="0"
+                y1="1"
+                x2="40"
+                y2="1"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeDasharray="4 3"
+              />
+            </svg>
+            <svg
+              width="8"
+              height="10"
+              viewBox="0 0 8 10"
+              className="-ml-1 text-accent-orange/40"
+            >
+              <path d="M0 0 L8 5 L0 10" fill="currentColor" />
+            </svg>
+          </div>
+
+          {/* Flow steps */}
+          {steps.map((step, i) => (
+            <div key={step.label} className="flex items-center">
+              <div className="flex flex-col items-center gap-2.5">
+                <span
+                  className={cn(
+                    "mb-0.5 text-[0.6rem] uppercase tracking-wider text-muted-foreground/60"
+                  )}
+                >
+                  Step {i + 1}
+                </span>
+                <div className="flex size-12 items-center justify-center rounded-full bg-muted/50 ring-1 ring-foreground/10 transition-colors">
+                  <step.icon className="size-5 text-muted-foreground" />
+                </div>
+                <span className="whitespace-nowrap text-[0.7rem] text-muted-foreground">
+                  {step.label}
+                </span>
+              </div>
+
+              {i < steps.length - 1 && (
+                <div className="mx-1 flex items-center sm:mx-2">
+                  <svg
+                    width="32"
+                    height="2"
+                    className="text-muted-foreground/20"
+                  >
+                    <line
+                      x1="0"
+                      y1="1"
+                      x2="32"
+                      y2="1"
+                      stroke="currentColor"
+                      strokeWidth="1"
+                      strokeDasharray="4 3"
+                    />
+                  </svg>
+                  <svg
+                    width="6"
+                    height="8"
+                    viewBox="0 0 6 8"
+                    className="-ml-0.5 text-muted-foreground/20"
+                  >
+                    <path d="M0 0 L6 4 L0 8" fill="currentColor" />
+                  </svg>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
