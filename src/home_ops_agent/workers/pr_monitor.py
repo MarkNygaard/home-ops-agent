@@ -287,6 +287,8 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
                 )
                 await _deep_review_pr(pr, summary, agent)
                 merged_count += 1  # Count towards cycle limit
+                # Delay between deep reviews to avoid API rate limits (Opus)
+                await asyncio.sleep(60)
             continue
 
         # Merge it
