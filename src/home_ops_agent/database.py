@@ -146,9 +146,7 @@ async def init_db():
     # PostgreSQL ADD VALUE is idempotent with IF NOT EXISTS.
     async with engine.begin() as conn:
         for value in ("pr_merge", "alert_triage", "alert_fix", "code_fix"):
-            await conn.execute(
-                text(f"ALTER TYPE task_type ADD VALUE IF NOT EXISTS '{value}'")
-            )
+            await conn.execute(text(f"ALTER TYPE task_type ADD VALUE IF NOT EXISTS '{value}'"))
         for value in ("pr_deep_review", "alert_triage", "alert_fix", "code_fix"):
             await conn.execute(
                 text(f"ALTER TYPE conversation_source ADD VALUE IF NOT EXISTS '{value}'")
