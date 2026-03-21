@@ -95,7 +95,43 @@ app.include_router(chat_router)
 app.include_router(settings_router)
 app.include_router(skills_router)
 
-# Static files (web UI)
+# Static files (web UI) with catch-all for Next.js client-side routing
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    # Mount _next directory for static assets (JS, CSS, fonts)
+    next_dir = static_dir / "_next"
+    if next_dir.exists():
+        app.mount("/_next", StaticFiles(directory=str(next_dir)), name="next_static")
+
+    from fastapi.responses import FileResponse, Response
+
+    @app.get("/{path:path}")
+    @app.head("/{path:path}")
+    async def serve_static(path: str):
+        """Serve Next.js static export with fallback to index.html."""
+        # Try exact file first (e.g., style.css, favicon.ico)
+        file_path = static_dir / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+
+        # Try .html extension (e.g., /settings -> settings.html)
+        html_path = static_dir / f"{path}.html"
+        if html_path.is_file():
+            return FileResponse(html_path, media_type="text/html")
+
+        # Try path/index.html (e.g., /settings/ -> settings/index.html)
+        index_path = static_dir / path / "index.html"
+        if index_path.is_file():
+            return FileResponse(index_path, media_type="text/html")
+
+        # Try .txt for Next.js RSC requests
+        txt_path = static_dir / f"{path}.txt"
+        if txt_path.is_file():
+            return FileResponse(txt_path)
+
+        # Fallback to index.html for client-side routing
+        fallback = static_dir / "index.html"
+        if fallback.is_file():
+            return FileResponse(fallback, media_type="text/html")
+
+        return Response(status_code=404)
