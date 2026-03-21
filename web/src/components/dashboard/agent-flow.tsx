@@ -368,7 +368,7 @@ function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b2c',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Open PR', icon: 'IconSend', size: 'sm' },
+      data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' },
     },
     {
       id: 'b2d',
