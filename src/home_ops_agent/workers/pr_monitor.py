@@ -262,9 +262,7 @@ async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
                     }
                 )
             except Exception:
-                logger.exception(
-                    "Failed to send merge notification for PR #%s", pr_number
-                )
+                logger.exception("Failed to send merge notification for PR #%s", pr_number)
         else:
             logger.warning(
                 "Failed to merge PR #%s: %s",
