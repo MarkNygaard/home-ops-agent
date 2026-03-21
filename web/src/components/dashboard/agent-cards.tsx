@@ -3,7 +3,6 @@
 import {
   IconGitPullRequest,
   IconAlertTriangle,
-  IconMessageChatbot,
 } from "@tabler/icons-react"
 import { Badge } from "@/components/ui/badge"
 import { useSettings } from "@/hooks/use-settings"
@@ -25,13 +24,6 @@ const FLOW_DEFS = [
     description: "Triages alerts, fixes issues, notifies when needed",
     models: ["alert_triage", "alert_fix"],
   },
-  {
-    key: "chat",
-    name: "Chat",
-    icon: IconMessageChatbot,
-    description: "Interactive cluster assistant",
-    models: ["chat"],
-  },
 ] as const
 
 interface AgentCardsProps {
@@ -52,7 +44,7 @@ export function AgentCards({ activeAgent, onSelect }: AgentCardsProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       {FLOW_DEFS.map((flow) => {
         const isActive = activeAgent === flow.key
         return (

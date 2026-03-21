@@ -485,61 +485,10 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
   return getLayoutedElements(nodes, edges);
 }
 
-function makeChatFlow(): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = [
-    {
-      id: 'agent',
-      type: 'agent',
-      position: { x: 0, y: 0 },
-      data: { label: 'Agent' },
-    },
-    {
-      id: 's1',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Message', icon: 'IconMessageChatbot' },
-    },
-    {
-      id: 's2',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Context', icon: 'IconSearch' },
-    },
-    {
-      id: 's3',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Run Tools', icon: 'IconTerminal2' },
-    },
-    {
-      id: 's4',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Analyze', icon: 'IconReport' },
-    },
-    {
-      id: 's5',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Respond', icon: 'IconMessage' },
-    },
-  ];
-
-  const edges: Edge[] = [
-    mainEdge('e-a-s1', 'agent', 's1', true),
-    mainEdge('e-s1-s2', 's1', 's2'),
-    mainEdge('e-s2-s3', 's2', 's3'),
-    mainEdge('e-s3-s4', 's3', 's4'),
-    mainEdge('e-s4-s5', 's4', 's5'),
-  ];
-
-  return getLayoutedElements(nodes, edges);
-}
 
 const FLOW_BUILDERS: Record<string, () => { nodes: Node[]; edges: Edge[] }> = {
   pr_review: makePRReviewFlow,
   alert: makeAlertFlow,
-  chat: makeChatFlow,
 };
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {
@@ -547,7 +496,6 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
     'Reviews Renovate PRs, checks CI, fetches release notes. Auto-merges safe patches or escalates to Code Fix agent.',
   alert:
     'Two-stage pipeline: Triage (Haiku) diagnoses severity, then Alert Fix (Sonnet) takes corrective action when needed.',
-  chat: 'Interactive assistant. Answers questions, runs diagnostics, and executes commands on demand.',
 };
 
 const defaultEdgeOptions = {
@@ -572,11 +520,15 @@ interface AgentFlowProps {
 }
 
 export function AgentFlow({ activeAgent }: AgentFlowProps) {
-  const builder = FLOW_BUILDERS[activeAgent] ?? makeChatFlow;
-  const { nodes, edges } = useMemo(() => builder(), [builder]);
+  const builder = FLOW_BUILDERS[activeAgent];
+  const { nodes, edges } = useMemo(
+    () => (builder ? builder() : { nodes: [], edges: [] }),
+    [builder]
+  );
 
-  const hasBranches = activeAgent !== 'chat';
-  const height = hasBranches ? 450 : 250;
+  if (!builder) return null;
+
+  const height = 450;
 
   return (
     <div className="flex flex-col gap-4">
