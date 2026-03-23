@@ -2,9 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # --- Pure logic tests ---
 
@@ -58,7 +56,6 @@ def test_text_truncation():
 # --- Async tests with mocks ---
 
 
-@pytest.mark.asyncio
 async def test_extract_memories_too_few_messages():
     from home_ops_agent.agent.memory import extract_memories
 
@@ -66,7 +63,6 @@ async def test_extract_memories_too_few_messages():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_extract_memories_no_credentials():
     from home_ops_agent.agent.memory import extract_memories
 
@@ -85,7 +81,6 @@ async def test_extract_memories_no_credentials():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_extract_memories_short_text():
     from home_ops_agent.agent.memory import extract_memories
 
@@ -104,7 +99,6 @@ async def test_extract_memories_short_text():
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_extract_memories_parses_json(db_session):
     from home_ops_agent.agent.memory import extract_memories
 
@@ -144,7 +138,6 @@ async def test_extract_memories_parses_json(db_session):
     assert result[0]["content"] == "Test memory"
 
 
-@pytest.mark.asyncio
 async def test_load_memories_formats_markdown(db_session):
     from home_ops_agent.agent.memory import load_memories
     from home_ops_agent.database import Memory
@@ -159,11 +152,8 @@ async def test_load_memories_formats_markdown(db_session):
     assert "[preference] User prefers ntfy for alerts" in result
 
 
-@pytest.mark.asyncio
 async def test_load_memories_no_results():
     """Test load_memories returns empty string when no memories exist."""
-    from unittest.mock import AsyncMock, MagicMock
-
     from home_ops_agent.agent.memory import load_memories
 
     # Mock the session to return no memories
@@ -180,7 +170,6 @@ async def test_load_memories_no_results():
     assert result == ""
 
 
-@pytest.mark.asyncio
 async def test_extract_memories_api_error():
     from home_ops_agent.agent.memory import extract_memories
 

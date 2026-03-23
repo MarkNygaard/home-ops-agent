@@ -155,7 +155,6 @@ def test_get_tool_schemas_format(mock_cls):
 # --- Agent.run() tests ---
 
 
-@pytest.mark.asyncio
 async def test_run_text_response():
     """Agent returns text when no tool_use blocks in response."""
     mock_client = AsyncMock()
@@ -173,7 +172,6 @@ async def test_run_text_response():
     assert result.total_tokens == 150
 
 
-@pytest.mark.asyncio
 async def test_run_tool_use_loop():
     """Agent executes a tool and then gets a text response."""
     tool_response = make_anthropic_response(
@@ -212,7 +210,6 @@ async def test_run_tool_use_loop():
     assert result.total_tokens == 300  # 150 * 2 turns
 
 
-@pytest.mark.asyncio
 async def test_run_unknown_tool():
     """Unknown tool calls return error JSON."""
     tool_response = make_anthropic_response(
@@ -236,7 +233,6 @@ async def test_run_unknown_tool():
     assert result.tool_calls[0]["tool"] == "unknown_tool"
 
 
-@pytest.mark.asyncio
 async def test_run_tool_exception():
     """Tool handler exceptions are caught and returned as error JSON."""
     tool_response = make_anthropic_response(
@@ -269,7 +265,6 @@ async def test_run_tool_exception():
     assert result.response == "Handled error"
 
 
-@pytest.mark.asyncio
 async def test_run_max_turns():
     """Agent returns sentinel message when max turns exceeded."""
     # Always return a tool_use block to keep looping
@@ -299,7 +294,6 @@ async def test_run_max_turns():
     assert result.total_tokens == 300  # 2 turns * 150
 
 
-@pytest.mark.asyncio
 async def test_run_tool_result_non_string():
     """Tool handler returning a dict gets JSON-serialized."""
     tool_response = make_anthropic_response(
@@ -329,7 +323,6 @@ async def test_run_tool_result_non_string():
     assert result.response == "Got dict"
 
 
-@pytest.mark.asyncio
 async def test_run_no_tools():
     """Agent works with no registered tools."""
     mock_client = AsyncMock()

@@ -1,6 +1,6 @@
 """Tests for api/settings.py — settings management and API key masking."""
 
-from home_ops_agent.api.settings import _mask_key
+from home_ops_agent.api.settings import ALLOWED_SETTING_KEYS, _mask_key
 
 # --- _mask_key() pure function tests ---
 
@@ -31,7 +31,7 @@ def test_mask_key_exact_boundary():
 
 
 def test_mask_key_nine_chars():
-    # 9 chars — first 7 + ... + last 4
+    # 9 chars — key[:7] + "..." + key[-4:]
     result = _mask_key("123456789")
     assert result == "1234567...6789"
 
@@ -39,34 +39,31 @@ def test_mask_key_nine_chars():
 # --- Settings whitelist test ---
 
 
-def test_allowed_keys():
-    """Verify the allowed keys whitelist from the update_setting endpoint."""
-    allowed_keys = {
-        "agent_enabled",
-        "pr_mode",
-        "auth_method",
-        "anthropic_api_key",
-        "alert_cooldown_seconds",
-        "ntfy_topics",
-        "pr_check_interval_seconds",
+def test_allowed_keys_contains_critical_keys():
+    """Verify critical keys are in the actual whitelist."""
+    assert "agent_enabled" in ALLOWED_SETTING_KEYS
+    assert "pr_mode" in ALLOWED_SETTING_KEYS
+    assert "anthropic_api_key" in ALLOWED_SETTING_KEYS
+
+
+def test_allowed_keys_excludes_dangerous_keys():
+    """Verify dangerous keys are NOT in the actual whitelist."""
+    assert "database_url" not in ALLOWED_SETTING_KEYS
+    assert "github_token" not in ALLOWED_SETTING_KEYS
+    assert "session_secret" not in ALLOWED_SETTING_KEYS
+
+
+def test_allowed_keys_includes_all_model_keys():
+    """Verify all model keys are settable via the API."""
+    model_keys = {
         "model_pr_review",
-        "prompt_cluster_context",
-        "prompt_pr_review",
-        "prompt_alert_response",
-        "prompt_chat",
         "model_alert_triage",
         "model_alert_fix",
         "model_code_fix",
         "model_deep_review",
         "model_chat",
     }
-    # Verify critical keys are in the list
-    assert "agent_enabled" in allowed_keys
-    assert "pr_mode" in allowed_keys
-    assert "anthropic_api_key" in allowed_keys
-    # Verify a dangerous key is NOT in the list
-    assert "database_url" not in allowed_keys
-    assert "github_token" not in allowed_keys
+    assert model_keys.issubset(ALLOWED_SETTING_KEYS)
 
 
 # --- Prompt defaults test ---

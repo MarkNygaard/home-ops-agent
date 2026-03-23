@@ -22,6 +22,23 @@ from home_ops_agent.workers.pr_monitor import (
 
 logger = logging.getLogger(__name__)
 
+PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
+
+
+def checks_all_passed(checks: list[dict]) -> bool:
+    """Return True if all CI checks completed successfully."""
+    if not checks:
+        return False
+    return all(c.get("status") == "completed" for c in checks) and all(
+        c.get("conclusion") in PASSING_CONCLUSIONS for c in checks
+    )
+
+
+def is_approved_by_deep_review(response: str) -> bool:
+    """Return True if a deep review response indicates approval."""
+    response_lower = response.lower()
+    return "safe_to_merge" in response_lower or "safe to merge" in response_lower
+
 
 async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
     """Try to auto-merge already-reviewed PRs that are safe to merge.
@@ -278,8 +295,7 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
             # Notify
             from home_ops_agent.agent.tools.ntfy import publish_notification
 
-            response_lower = result.response.lower()
-            approved = "safe_to_merge" in response_lower or "safe to merge" in response_lower
+            approved = is_approved_by_deep_review(result.response)
 
             if approved:
                 # Auto-merge after Opus approval
@@ -377,12 +393,7 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
             if not all_completed:
                 continue
 
-            # Check if all passed
-            all_passed = all(
-                c.get("conclusion") in ("success", "neutral", "skipped") for c in checks
-            )
-
-            if all_passed:
+            if checks_all_passed(checks):
                 # Merge it
                 merge_result_json = await merge_pr({"pr_number": pr_number})
                 merge_result = json.loads(merge_result_json)

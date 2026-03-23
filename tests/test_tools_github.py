@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from home_ops_agent.agent.tools.github import (
     ALLOWED_COMMIT_PATHS,
     PROTECTED_BRANCHES,
@@ -23,7 +21,6 @@ from home_ops_agent.agent.tools.github import (
 # --- Safety guardrail tests (no HTTP needed) ---
 
 
-@pytest.mark.asyncio
 async def test_create_commit_blocked_protected_branch_main():
     result = json.loads(
         await create_commit(
@@ -34,7 +31,6 @@ async def test_create_commit_blocked_protected_branch_main():
     assert "protected branch" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_create_commit_blocked_protected_branch_master():
     result = json.loads(
         await create_commit(
@@ -49,7 +45,6 @@ async def test_create_commit_blocked_protected_branch_master():
     assert "BLOCKED" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_create_commit_blocked_disallowed_path():
     result = json.loads(
         await create_commit(
@@ -60,14 +55,12 @@ async def test_create_commit_blocked_disallowed_path():
     assert "Cannot modify" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_create_branch_blocked_bad_prefix():
     result = json.loads(await create_branch({"branch_name": "bad-branch-name"}))
     assert "BLOCKED" in result["error"]
     assert "must start with" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_create_branch_blocked_random_prefix():
     result = json.loads(await create_branch({"branch_name": "hotfix/urgent"}))
     assert "BLOCKED" in result["error"]
@@ -84,14 +77,12 @@ def test_allowed_commit_paths_set():
 # --- HTTP-mocked tests ---
 
 
-@pytest.mark.asyncio
 async def test_list_prs_empty(httpx_mock, mock_settings):
     httpx_mock.add_response(json=[])
     result = json.loads(await list_prs({"state": "open"}))
     assert result == []
 
 
-@pytest.mark.asyncio
 async def test_list_prs_with_results(httpx_mock, mock_settings):
     httpx_mock.add_response(
         json=[
@@ -115,7 +106,6 @@ async def test_list_prs_with_results(httpx_mock, mock_settings):
     assert result[0]["labels"] == ["type/patch"]
 
 
-@pytest.mark.asyncio
 async def test_list_prs_filter_author(httpx_mock, mock_settings):
     httpx_mock.add_response(
         json=[
@@ -146,7 +136,6 @@ async def test_list_prs_filter_author(httpx_mock, mock_settings):
     assert result[0]["author"] == "renovate[bot]"
 
 
-@pytest.mark.asyncio
 async def test_get_pr_details(httpx_mock, mock_settings):
     httpx_mock.add_response(
         json={
@@ -172,7 +161,6 @@ async def test_get_pr_details(httpx_mock, mock_settings):
     assert result["additions"] == 5
 
 
-@pytest.mark.asyncio
 async def test_get_pr_files_truncates_patch(httpx_mock, mock_settings):
     long_patch = "x" * 3000
     httpx_mock.add_response(
@@ -190,7 +178,6 @@ async def test_get_pr_files_truncates_patch(httpx_mock, mock_settings):
     assert len(result[0]["patch"]) == 2000
 
 
-@pytest.mark.asyncio
 async def test_get_check_runs(httpx_mock, mock_settings):
     httpx_mock.add_response(
         json={
@@ -211,7 +198,6 @@ async def test_get_check_runs(httpx_mock, mock_settings):
     assert result[0]["conclusion"] == "success"
 
 
-@pytest.mark.asyncio
 async def test_merge_pr_success(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=200, json={"sha": "merge_sha_123"})
     result = json.loads(await merge_pr({"pr_number": 42}))
@@ -219,7 +205,6 @@ async def test_merge_pr_success(httpx_mock, mock_settings):
     assert result["sha"] == "merge_sha_123"
 
 
-@pytest.mark.asyncio
 async def test_merge_pr_failure(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=409, json={"message": "Pull request not mergeable"})
     result = json.loads(await merge_pr({"pr_number": 42}))
@@ -227,7 +212,6 @@ async def test_merge_pr_failure(httpx_mock, mock_settings):
     assert "not mergeable" in result["message"]
 
 
-@pytest.mark.asyncio
 async def test_create_pr_comment_success(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=201, json={"id": 999})
     result = json.loads(await create_pr_comment({"pr_number": 42, "body": "LGTM"}))
@@ -235,7 +219,6 @@ async def test_create_pr_comment_success(httpx_mock, mock_settings):
     assert result["comment_id"] == 999
 
 
-@pytest.mark.asyncio
 async def test_get_file_content_base64(httpx_mock, mock_settings):
     import base64
 
@@ -252,7 +235,6 @@ async def test_get_file_content_base64(httpx_mock, mock_settings):
     assert "apiVersion" in result["content"]
 
 
-@pytest.mark.asyncio
 async def test_get_release_found(httpx_mock, mock_settings):
     httpx_mock.add_response(
         json={
@@ -269,7 +251,6 @@ async def test_get_release_found(httpx_mock, mock_settings):
     assert "Bug fixes" in result["body"]
 
 
-@pytest.mark.asyncio
 async def test_get_release_404_fallback_v_prefix(httpx_mock, mock_settings):
     # First request 404, second with alt tag succeeds
     httpx_mock.add_response(status_code=404)
@@ -287,7 +268,6 @@ async def test_get_release_404_fallback_v_prefix(httpx_mock, mock_settings):
     assert result["tag"] == "v1.0.0"
 
 
-@pytest.mark.asyncio
 async def test_get_release_not_found(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=404)
     httpx_mock.add_response(status_code=404)
@@ -296,7 +276,6 @@ async def test_get_release_not_found(httpx_mock, mock_settings):
     assert "not found" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_create_commit_allowed_path(httpx_mock, mock_settings):
     httpx_mock.add_response(
         status_code=201,
@@ -316,7 +295,6 @@ async def test_create_commit_allowed_path(httpx_mock, mock_settings):
     assert result["sha"] == "new_sha_123"
 
 
-@pytest.mark.asyncio
 async def test_create_branch_allowed_fix(httpx_mock, mock_settings):
     httpx_mock.add_response(json={"object": {"sha": "base_sha"}})
     httpx_mock.add_response(status_code=201, json={})
@@ -324,7 +302,6 @@ async def test_create_branch_allowed_fix(httpx_mock, mock_settings):
     assert result["status"] == "ok"
 
 
-@pytest.mark.asyncio
 async def test_create_branch_allowed_feat(httpx_mock, mock_settings):
     httpx_mock.add_response(json={"object": {"sha": "base_sha"}})
     httpx_mock.add_response(status_code=201, json={})
@@ -332,7 +309,6 @@ async def test_create_branch_allowed_feat(httpx_mock, mock_settings):
     assert result["status"] == "ok"
 
 
-@pytest.mark.asyncio
 async def test_create_branch_allowed_agent(httpx_mock, mock_settings):
     httpx_mock.add_response(json={"object": {"sha": "base_sha"}})
     httpx_mock.add_response(status_code=201, json={})
@@ -340,7 +316,6 @@ async def test_create_branch_allowed_agent(httpx_mock, mock_settings):
     assert result["status"] == "ok"
 
 
-@pytest.mark.asyncio
 async def test_create_pr_success(httpx_mock, mock_settings):
     httpx_mock.add_response(
         status_code=201,

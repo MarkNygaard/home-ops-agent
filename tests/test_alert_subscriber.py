@@ -3,12 +3,11 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from home_ops_agent.workers.alert_subscriber import (
     _cooldowns,
     _format_alert_context,
     _is_on_cooldown,
+    _parse_triage_action,
 )
 
 # --- _format_alert_context() pure function tests ---
@@ -49,14 +48,12 @@ def test_format_alert_context_empty_tags():
 # --- _is_on_cooldown() tests ---
 
 
-@pytest.mark.asyncio
 async def test_is_on_cooldown_no_previous():
     _cooldowns.clear()
     result = await _is_on_cooldown("test:alert:message")
     assert result is False
 
 
-@pytest.mark.asyncio
 async def test_is_on_cooldown_within_window():
     _cooldowns.clear()
     _cooldowns["test:alert:msg"] = datetime.now(UTC) - timedelta(seconds=10)
@@ -69,7 +66,6 @@ async def test_is_on_cooldown_within_window():
     assert result is True
 
 
-@pytest.mark.asyncio
 async def test_is_on_cooldown_expired():
     _cooldowns.clear()
     _cooldowns["test:alert:msg"] = datetime.now(UTC) - timedelta(seconds=1000)
@@ -82,38 +78,21 @@ async def test_is_on_cooldown_expired():
     assert result is False
 
 
-# --- Action parsing tests (tested via _triage_alert behavior) ---
+# --- _parse_triage_action() tests ---
 
 
-def test_action_parsing_fix():
-    """Verify the action parsing logic used in _triage_alert."""
-    response_lower = "the pod is stuck. action: fix".lower()
-    if "action: fix" in response_lower:
-        action = "fix"
-    elif "action: ignore" in response_lower:
-        action = "ignore"
-    else:
-        action = "notify"
-    assert action == "fix"
+def test_parse_triage_action_fix():
+    assert _parse_triage_action("the pod is stuck. ACTION: fix") == "fix"
 
 
-def test_action_parsing_ignore():
-    response_lower = "transient alert, resolved. action: ignore"
-    if "action: fix" in response_lower:
-        action = "fix"
-    elif "action: ignore" in response_lower:
-        action = "ignore"
-    else:
-        action = "notify"
-    assert action == "ignore"
+def test_parse_triage_action_ignore():
+    assert _parse_triage_action("transient alert, resolved. action: ignore") == "ignore"
 
 
-def test_action_parsing_notify_default():
-    response_lower = "this needs human attention, cannot auto-fix."
-    if "action: fix" in response_lower:
-        action = "fix"
-    elif "action: ignore" in response_lower:
-        action = "ignore"
-    else:
-        action = "notify"
-    assert action == "notify"
+def test_parse_triage_action_notify_default():
+    assert _parse_triage_action("this needs human attention, cannot auto-fix.") == "notify"
+
+
+def test_parse_triage_action_case_insensitive():
+    assert _parse_triage_action("ACTION: FIX") == "fix"
+    assert _parse_triage_action("Action: Ignore") == "ignore"

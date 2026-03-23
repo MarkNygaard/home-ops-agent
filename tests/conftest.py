@@ -138,67 +138,47 @@ def clean_sessions():
 
 @pytest.fixture
 def mock_settings():
-    """Provide a mock settings object with safe defaults for testing.
+    """Provide a real Settings object with safe defaults for testing.
 
     Patches settings in the config module AND in all tool modules that import it directly.
     """
+    from home_ops_agent.config import Settings
+
+    test_settings = Settings(
+        anthropic_api_key="test-api-key",
+        anthropic_client_id="",
+        anthropic_client_secret="",
+        database_url="sqlite+aiosqlite:///:memory:",
+        github_token="test-gh-token",
+        github_repo="test-owner/test-repo",
+        cluster_domain="test.local",
+        ntfy_url="http://ntfy.test",
+        ntfy_alertmanager_topic="alertmanager",
+        ntfy_gatus_topic="gatus",
+        ntfy_agent_topic="home-ops-agent",
+        ntfy_token="test-ntfy-token",
+        session_secret="test-secret",
+        base_url="https://test.local",
+        pr_check_interval_seconds=1800,
+        alert_cooldown_seconds=900,
+        model_pr_review="claude-haiku-4-5",
+        model_alert_triage="claude-haiku-4-5",
+        model_alert_fix="claude-sonnet-4-6",
+        model_code_fix="claude-sonnet-4-6",
+        model_deep_review="claude-opus-4-6",
+        model_chat="claude-sonnet-4-6",
+    )
+
     targets = [
         "home_ops_agent.config.settings",
         "home_ops_agent.agent.tools.github.settings",
         "home_ops_agent.agent.tools.ntfy.settings",
     ]
-    patches = []
-    mock = None
-    for target in targets:
-        p = patch(target)
-        m = p.start()
-        if mock is None:
-            mock = m
-        else:
-            # Copy attributes from the first mock
-            for attr in dir(mock):
-                if not attr.startswith("_"):
-                    try:
-                        setattr(m, attr, getattr(mock, attr))
-                    except (AttributeError, TypeError):
-                        pass
-        patches.append(p)
+    patches = [patch(target, test_settings) for target in targets]
+    for p in patches:
+        p.start()
 
-    # Set all attributes on all mocks
-    attrs = {
-        "anthropic_api_key": "test-api-key",
-        "anthropic_client_id": "",
-        "anthropic_client_secret": "",
-        "database_url": "sqlite+aiosqlite:///:memory:",
-        "github_token": "test-gh-token",
-        "github_repo": "test-owner/test-repo",
-        "cluster_domain": "test.local",
-        "ntfy_url": "http://ntfy.test",
-        "ntfy_alertmanager_topic": "alertmanager",
-        "ntfy_gatus_topic": "gatus",
-        "ntfy_agent_topic": "home-ops-agent",
-        "ntfy_token": "test-ntfy-token",
-        "session_secret": "test-secret",
-        "base_url": "https://test.local",
-        "pr_check_interval_seconds": 1800,
-        "alert_cooldown_seconds": 900,
-        "model_pr_review": "claude-haiku-4-5",
-        "model_alert_triage": "claude-haiku-4-5",
-        "model_alert_fix": "claude-sonnet-4-6",
-        "model_code_fix": "claude-sonnet-4-6",
-        "model_deep_review": "claude-opus-4-6",
-        "model_chat": "claude-sonnet-4-6",
-    }
-    for target in targets:
-        import importlib
-
-        parts = target.rsplit(".", 1)
-        mod = importlib.import_module(parts[0])
-        obj = getattr(mod, parts[1])
-        for k, v in attrs.items():
-            setattr(obj, k, v)
-
-    yield mock
+    yield test_settings
 
     for p in patches:
         p.stop()

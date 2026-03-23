@@ -1,61 +1,62 @@
 """Tests for workers/pr_merge.py — auto-merge and CI gating."""
 
+from home_ops_agent.workers.pr_merge import (
+    PASSING_CONCLUSIONS,
+    checks_all_passed,
+    is_approved_by_deep_review,
+)
 
-# --- wait_for_ci_and_merge logic tests ---
+# --- checks_all_passed() tests ---
 
 
-def test_ci_check_all_passed_logic():
-    """Verify the CI pass logic used in wait_for_ci_and_merge."""
+def test_checks_all_passed_success():
     checks = [
         {"status": "completed", "conclusion": "success"},
         {"status": "completed", "conclusion": "neutral"},
         {"status": "completed", "conclusion": "skipped"},
     ]
-    all_completed = all(c.get("status") == "completed" for c in checks)
-    all_passed = all(c.get("conclusion") in ("success", "neutral", "skipped") for c in checks)
-    assert all_completed is True
-    assert all_passed is True
+    assert checks_all_passed(checks) is True
 
 
-def test_ci_check_failure_logic():
+def test_checks_all_passed_failure():
     checks = [
         {"status": "completed", "conclusion": "success"},
         {"status": "completed", "conclusion": "failure"},
     ]
-    all_completed = all(c.get("status") == "completed" for c in checks)
-    all_passed = all(c.get("conclusion") in ("success", "neutral", "skipped") for c in checks)
-    assert all_completed is True
-    assert all_passed is False
+    assert checks_all_passed(checks) is False
 
 
-def test_ci_check_not_completed_logic():
+def test_checks_all_passed_not_completed():
     checks = [
         {"status": "completed", "conclusion": "success"},
         {"status": "in_progress", "conclusion": None},
     ]
-    all_completed = all(c.get("status") == "completed" for c in checks)
-    assert all_completed is False
+    assert checks_all_passed(checks) is False
 
 
-def test_ci_check_empty_list():
-    checks = []
-    # Empty list should not count as "all passed"
-    assert not checks  # Falsy — the code checks `if not checks: continue`
+def test_checks_all_passed_empty_list():
+    assert checks_all_passed([]) is False
 
 
-# --- Verdict in deep review logic ---
+def test_passing_conclusions_values():
+    assert PASSING_CONCLUSIONS == {"success", "neutral", "skipped"}
 
 
-def test_deep_review_approved_detection():
-    """Verify the approved detection logic from deep_review_pr."""
-    response = "After thorough review, this is SAFE_TO_MERGE. No breaking changes."
-    response_lower = response.lower()
-    approved = "safe_to_merge" in response_lower or "safe to merge" in response_lower
-    assert approved is True
+# --- is_approved_by_deep_review() tests ---
 
 
-def test_deep_review_not_approved_detection():
-    response = "This NEEDS_REVIEW by a human. Critical component change."
-    response_lower = response.lower()
-    approved = "safe_to_merge" in response_lower or "safe to merge" in response_lower
-    assert approved is False
+def test_deep_review_approved_underscore():
+    assert is_approved_by_deep_review("This is SAFE_TO_MERGE. No breaking changes.") is True
+
+
+def test_deep_review_approved_spaces():
+    assert is_approved_by_deep_review("This is safe to merge after review.") is True
+
+
+def test_deep_review_not_approved():
+    assert is_approved_by_deep_review("This NEEDS_REVIEW by a human.") is False
+
+
+def test_deep_review_case_insensitive():
+    assert is_approved_by_deep_review("Safe_To_Merge") is True
+    assert is_approved_by_deep_review("SAFE TO MERGE") is True

@@ -1,7 +1,5 @@
 """Tests for agent/skills.py — SkillRegistry and skill management."""
 
-import pytest
-
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.agent.skills import SkillDefinition, SkillRegistry
 
@@ -47,7 +45,6 @@ def test_skill_definition_defaults():
 # --- DB-backed tests ---
 
 
-@pytest.mark.asyncio
 async def test_get_skill_settings_builtin_always_enabled(db_session):
     reg = SkillRegistry()
     reg.register(SkillDefinition(id="k8s", name="K8s", description="", builtin=True))
@@ -56,7 +53,6 @@ async def test_get_skill_settings_builtin_always_enabled(db_session):
     assert config == {}
 
 
-@pytest.mark.asyncio
 async def test_get_skill_settings_optional_disabled_by_default(db_session):
     reg = SkillRegistry()
     reg.register(SkillDefinition(id="prom", name="Prometheus", description=""))
@@ -64,7 +60,6 @@ async def test_get_skill_settings_optional_disabled_by_default(db_session):
     assert enabled is False
 
 
-@pytest.mark.asyncio
 async def test_get_skill_settings_optional_enabled(db_session):
     from home_ops_agent.database import Setting
 
@@ -77,22 +72,23 @@ async def test_get_skill_settings_optional_enabled(db_session):
     assert enabled is True
 
 
-@pytest.mark.asyncio
 async def test_update_skill_unknown_raises(db_session):
+    import pytest
+
     reg = SkillRegistry()
     with pytest.raises(ValueError, match="Unknown skill"):
         await reg.update_skill("nonexistent", enabled=True)
 
 
-@pytest.mark.asyncio
 async def test_update_skill_disable_builtin_raises(db_session):
+    import pytest
+
     reg = SkillRegistry()
     reg.register(SkillDefinition(id="k8s", name="K8s", description="", builtin=True))
     with pytest.raises(ValueError, match="Cannot disable built-in"):
         await reg.update_skill("k8s", enabled=False)
 
 
-@pytest.mark.asyncio
 async def test_get_all_enabled_tools(db_session):
     def make_tools(config):
         return [
@@ -113,7 +109,6 @@ async def test_get_all_enabled_tools(db_session):
     assert tools[0].name == "tool1"
 
 
-@pytest.mark.asyncio
 async def test_get_skill_state(db_session):
     def make_tools(config):
         return [ToolDefinition(name="t1", description="d", input_schema={}, handler=lambda p: "ok")]
@@ -135,7 +130,6 @@ async def test_get_skill_state(db_session):
     assert state["tool_count"] == 1
 
 
-@pytest.mark.asyncio
 async def test_get_skill_settings_unknown_skill(db_session):
     reg = SkillRegistry()
     enabled, config = await reg._get_skill_settings("unknown")

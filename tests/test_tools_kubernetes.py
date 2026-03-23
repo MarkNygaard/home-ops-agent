@@ -3,8 +3,6 @@
 import json
 from datetime import datetime
 
-import pytest
-
 from home_ops_agent.agent.tools.kubernetes import (
     PROTECTED_NAMESPACES,
     _serialize,
@@ -20,14 +18,12 @@ def test_protected_namespaces():
     assert PROTECTED_NAMESPACES == {"kube-system", "flux-system", "cert-manager"}
 
 
-@pytest.mark.asyncio
 async def test_restart_deployment_protected_kube_system():
     result = json.loads(await restart_deployment({"name": "coredns", "namespace": "kube-system"}))
     assert "BLOCKED" in result["error"]
     assert "protected namespace" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_restart_deployment_protected_flux_system():
     result = json.loads(
         await restart_deployment({"name": "source-controller", "namespace": "flux-system"})
@@ -35,7 +31,6 @@ async def test_restart_deployment_protected_flux_system():
     assert "BLOCKED" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_restart_deployment_protected_cert_manager():
     result = json.loads(
         await restart_deployment({"name": "cert-manager", "namespace": "cert-manager"})
@@ -43,14 +38,12 @@ async def test_restart_deployment_protected_cert_manager():
     assert "BLOCKED" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_delete_pod_protected_namespace():
     result = json.loads(await delete_pod({"name": "pod-1", "namespace": "kube-system"}))
     assert "BLOCKED" in result["error"]
     assert "protected namespace" in result["error"]
 
 
-@pytest.mark.asyncio
 async def test_describe_resource_unsupported_kind():
     params = {"kind": "networkpolicy", "name": "deny-all", "namespace": "default"}
     result = json.loads(await describe_resource(params))
@@ -87,7 +80,6 @@ def test_serialize_object_with_to_dict():
 # --- Restart with unsupported kind ---
 
 
-@pytest.mark.asyncio
 async def test_restart_unsupported_kind():
     result = json.loads(
         await restart_deployment({"name": "test", "namespace": "default", "kind": "cronjob"})

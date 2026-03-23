@@ -94,29 +94,31 @@ async def get_settings():
     }
 
 
+ALLOWED_SETTING_KEYS = {
+    "agent_enabled",
+    "pr_mode",
+    "auth_method",
+    "anthropic_api_key",
+    "alert_cooldown_seconds",
+    "ntfy_topics",
+    "pr_check_interval_seconds",
+    "model_pr_review",
+    "prompt_cluster_context",
+    "prompt_pr_review",
+    "prompt_alert_response",
+    "prompt_chat",
+    "model_alert_triage",
+    "model_alert_fix",
+    "model_code_fix",
+    "model_deep_review",
+    "model_chat",
+}
+
+
 @router.put("/api/settings/{key}")
 async def update_setting(key: str, body: UpdateSetting):
     """Update a single setting."""
-    allowed_keys = {
-        "agent_enabled",
-        "pr_mode",
-        "auth_method",
-        "anthropic_api_key",
-        "alert_cooldown_seconds",
-        "ntfy_topics",
-        "pr_check_interval_seconds",
-        "model_pr_review",
-        "prompt_cluster_context",
-        "prompt_pr_review",
-        "prompt_alert_response",
-        "prompt_chat",
-        "model_alert_triage",
-        "model_alert_fix",
-        "model_code_fix",
-        "model_deep_review",
-        "model_chat",
-    }
-    if key not in allowed_keys:
+    if key not in ALLOWED_SETTING_KEYS:
         return {"error": f"Unknown setting: {key}"}
 
     async with async_session() as session:

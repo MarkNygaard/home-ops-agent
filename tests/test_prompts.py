@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from home_ops_agent.agent.prompts import (
     DEFAULT_ALERT_RESPONSE,
     DEFAULT_CHAT,
@@ -42,7 +40,6 @@ def test_default_chat_not_empty():
     assert "Interactive Chat" in DEFAULT_CHAT
 
 
-@pytest.mark.asyncio
 async def test_get_prompt_default_no_custom(db_session):
     with patch(
         "home_ops_agent.agent.memory.load_memories",
@@ -54,7 +51,6 @@ async def test_get_prompt_default_no_custom(db_session):
     assert DEFAULT_PR_REVIEW in result
 
 
-@pytest.mark.asyncio
 async def test_get_prompt_includes_memory(db_session):
     with patch(
         "home_ops_agent.agent.memory.load_memories",
@@ -66,7 +62,6 @@ async def test_get_prompt_includes_memory(db_session):
     assert "test fact" in result
 
 
-@pytest.mark.asyncio
 async def test_get_prompt_no_memory_flag(db_session):
     with patch(
         "home_ops_agent.agent.memory.load_memories",
@@ -78,7 +73,6 @@ async def test_get_prompt_no_memory_flag(db_session):
     assert "Agent Memory" not in result
 
 
-@pytest.mark.asyncio
 async def test_get_prompt_custom_override(db_session):
     from home_ops_agent.database import Setting
 
@@ -95,7 +89,6 @@ async def test_get_prompt_custom_override(db_session):
     assert DEFAULT_CLUSTER_CONTEXT not in result
 
 
-@pytest.mark.asyncio
 async def test_get_prompt_unknown_agent(db_session):
     with patch(
         "home_ops_agent.agent.memory.load_memories",

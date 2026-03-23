@@ -2,8 +2,6 @@
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from home_ops_agent.workers.pr_monitor import _extract_verdict
 
 # --- _extract_verdict() pure function tests ---
@@ -58,7 +56,6 @@ def test_extract_verdict_needs_fix_priority():
 # --- _is_safe_to_auto_merge() tests ---
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_wrong_author():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -66,7 +63,6 @@ async def test_is_safe_to_auto_merge_wrong_author():
     assert await _is_safe_to_auto_merge(pr, "[SAFE_TO_MERGE] looks good") is False
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_not_safe_verdict():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -79,7 +75,6 @@ async def test_is_safe_to_auto_merge_not_safe_verdict():
         assert await _is_safe_to_auto_merge(pr, "[NEEDS_REVIEW] risky") is False
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_patch_mode():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -92,7 +87,6 @@ async def test_is_safe_to_auto_merge_patch_mode():
         assert await _is_safe_to_auto_merge(pr, "[SAFE_TO_MERGE] good") is True
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_patch_mode_wrong_label():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -105,7 +99,6 @@ async def test_is_safe_to_auto_merge_patch_mode_wrong_label():
         assert await _is_safe_to_auto_merge(pr, "[SAFE_TO_MERGE] good") is False
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_minor_mode():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -118,7 +111,6 @@ async def test_is_safe_to_auto_merge_minor_mode():
         assert await _is_safe_to_auto_merge(pr, "[SAFE_TO_MERGE] good") is True
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_all_mode():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -131,7 +123,6 @@ async def test_is_safe_to_auto_merge_all_mode():
         assert await _is_safe_to_auto_merge(pr, "[SAFE_TO_MERGE] good") is True
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_all_mode_needs_review():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
@@ -144,7 +135,6 @@ async def test_is_safe_to_auto_merge_all_mode_needs_review():
         assert await _is_safe_to_auto_merge(pr, "[NEEDS_REVIEW] risky") is False
 
 
-@pytest.mark.asyncio
 async def test_is_safe_to_auto_merge_digest_label():
     from home_ops_agent.workers.pr_monitor import _is_safe_to_auto_merge
 
