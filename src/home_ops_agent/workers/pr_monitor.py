@@ -76,6 +76,55 @@ async def _already_reviewed(pr_number: int, head_sha: str) -> bool:
         return False
 
 
+async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
+    """Get the review summary for a previously reviewed PR."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentTask).where(
+                AgentTask.task_type == "pr_review",
+                AgentTask.trigger == f"PR #{pr_number}",
+                AgentTask.status == "completed",
+            )
+        )
+        tasks = result.scalars().all()
+        for task in tasks:
+            if task.actions_taken and task.actions_taken.get("head_sha") == head_sha:
+                return task.summary
+        return None
+
+
+async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
+    """Check if a previously reviewed PR meets auto-merge criteria."""
+    summary_lower = summary.lower()
+
+    # Must be from renovate
+    if pr.get("author") != "renovate[bot]":
+        return False
+
+    pr_mode = await _get_pr_mode()
+    labels = pr.get("labels", [])
+
+    if pr_mode == "auto_merge_all":
+        # Fully autonomous: merge anything rated safe, no label restrictions
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+    elif pr_mode == "auto_merge_minor":
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+        safe_labels = {"type/patch", "type/digest", "type/minor"}
+        if not any(label in safe_labels for label in labels):
+            return False
+    else:
+        # auto_merge (patch only)
+        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
+            return False
+        safe_labels = {"type/patch", "type/digest"}
+        if not any(label in safe_labels for label in labels):
+            return False
+
+    return True
+
+
 async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
     """Run the agent to review a single PR."""
     pr_number = pr["number"]
@@ -209,157 +258,11 @@ async def _save_task(pr: dict, result: AgentResult):
         await session.commit()
 
 
-async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
-    """Get the review summary for a previously reviewed PR."""
-    async with async_session() as session:
-        result = await session.execute(
-            select(AgentTask).where(
-                AgentTask.task_type == "pr_review",
-                AgentTask.trigger == f"PR #{pr_number}",
-                AgentTask.status == "completed",
-            )
-        )
-        tasks = result.scalars().all()
-        for task in tasks:
-            if task.actions_taken and task.actions_taken.get("head_sha") == head_sha:
-                return task.summary
-        return None
-
-
-async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
-    """Check if a previously reviewed PR meets auto-merge criteria."""
-    summary_lower = summary.lower()
-
-    # Must be from renovate
-    if pr.get("author") != "renovate[bot]":
-        return False
-
-    pr_mode = await _get_pr_mode()
-    labels = pr.get("labels", [])
-
-    if pr_mode == "auto_merge_all":
-        # Fully autonomous: merge anything rated safe, no label restrictions
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
-    elif pr_mode == "auto_merge_minor":
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
-        safe_labels = {"type/patch", "type/digest", "type/minor"}
-        if not any(label in safe_labels for label in labels):
-            return False
-    else:
-        # auto_merge (patch only)
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
-        safe_labels = {"type/patch", "type/digest"}
-        if not any(label in safe_labels for label in labels):
-            return False
-
-    return True
-
-
-async def _auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
-    """Try to auto-merge already-reviewed PRs that are safe to merge.
-
-    This handles the case where PRs were reviewed in comment-only mode
-    and the user later switches to auto-merge mode.
-    """
-    from home_ops_agent.agent.tools.github import merge_pr
-    from home_ops_agent.agent.tools.ntfy import publish_notification
-
-    merged_count = 0
-    for pr in prs:
-        if merged_count >= MAX_REVIEWS_PER_CYCLE:
-            break
-
-        pr_number = pr["number"]
-        head_sha = pr.get("head_sha", "")
-
-        # Only consider PRs that were already reviewed
-        if not await _already_reviewed(pr_number, head_sha):
-            continue
-
-        summary = await _get_review_summary(pr_number, head_sha)
-        if not summary:
-            continue
-
-        if not await _is_safe_to_auto_merge(pr, summary):
-            # In auto_merge_all mode, escalate NEEDS_REVIEW to deep review
-            pr_mode = await _get_pr_mode()
-            summary_lower = summary.lower()
-            if (
-                pr_mode == "auto_merge_all"
-                and ("needs_review" in summary_lower or "needs review" in summary_lower)
-                and "deep_review" not in summary_lower
-            ):
-                logger.info(
-                    "Escalating PR #%s to deep review (auto_merge_all mode)",
-                    pr_number,
-                )
-                await _deep_review_pr(pr, summary, agent)
-                merged_count += 1  # Count towards cycle limit
-                # Delay between deep reviews to avoid API rate limits (Opus)
-                await asyncio.sleep(60)
-            continue
-
-        # Merge it
-        logger.info("Auto-merging PR #%s: %s", pr_number, pr["title"])
-        result = await merge_pr({"pr_number": pr_number})
-        merge_result = json.loads(result)
-
-        if merge_result.get("status") == "merged":
-            merged_count += 1
-            logger.info("Successfully merged PR #%s", pr_number)
-
-            # Notify first — DB errors should not prevent notification
-            try:
-                await publish_notification(
-                    {
-                        "title": f"Auto-merged PR #{pr_number}",
-                        "message": pr["title"],
-                        "priority": "default",
-                        "tags": "merged",
-                        "click_url": pr.get("html_url", ""),
-                    }
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to send merge notification for PR #%s",
-                    pr_number,
-                )
-
-            # Save merge task to DB so it appears in history
-            try:
-                async with async_session() as session:
-                    task = AgentTask(
-                        task_type="pr_merge",
-                        trigger=f"PR #{pr_number}",
-                        status="completed",
-                        summary=f"Auto-merged: {pr['title']}",
-                        actions_taken={
-                            "action": "merge",
-                            "head_sha": head_sha,
-                            "merge_sha": merge_result.get("sha"),
-                        },
-                        completed_at=datetime.now(UTC),
-                    )
-                    session.add(task)
-                    await session.commit()
-            except Exception:
-                logger.exception(
-                    "Failed to save merge task for PR #%s",
-                    pr_number,
-                )
-        else:
-            logger.warning(
-                "Failed to merge PR #%s: %s",
-                pr_number,
-                merge_result.get("message", "unknown error"),
-            )
-
-
 async def check_prs():
     """Check all open PRs and review any new/updated ones."""
+    from home_ops_agent.workers.pr_fix import attempt_code_fix
+    from home_ops_agent.workers.pr_merge import auto_merge_reviewed_prs, deep_review_pr
+
     if not await _is_enabled():
         logger.debug("Agent is disabled, skipping PR review")
         return
@@ -388,7 +291,7 @@ async def check_prs():
     # Auto-merge previously reviewed PRs if in auto-merge mode
     pr_mode = await _get_pr_mode()
     if pr_mode in ("auto_merge", "auto_merge_minor", "auto_merge_all"):
-        await _auto_merge_reviewed_prs(prs, agent)
+        await auto_merge_reviewed_prs(prs, agent)
 
     reviewed_count = 0
     for pr in prs:
@@ -414,407 +317,11 @@ async def check_prs():
 
             # If review says NEEDS_FIX, attempt a code fix
             if "needs_fix" in response_lower:
-                await _attempt_code_fix(pr, result.response, agent)
+                await attempt_code_fix(pr, result.response, agent)
 
             # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
             elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
-                await _deep_review_pr(pr, result.response, agent)
-
-
-async def _deep_review_pr(pr: dict, initial_review: str, agent: Agent):
-    """Escalate a NEEDS_REVIEW PR to Opus for a deep review.
-
-    Used in auto_merge_all mode when the initial Haiku/Sonnet review
-    flags a critical component. Opus does a thorough check and either
-    approves (SAFE_TO_MERGE) or confirms NEEDS_REVIEW.
-    """
-    pr_number = pr["number"]
-
-    # Check if deep review was already done for this PR
-    async with async_session() as session:
-        existing = await session.execute(
-            select(Conversation).where(
-                Conversation.source == "pr_deep_review",
-                Conversation.title.contains(f"#{pr_number}"),
-            )
-        )
-        existing_review = existing.scalars().first()
-        if existing_review:
-            # Deep review exists — but did the merge succeed?
-            # Check the associated task summary for SAFE_TO_MERGE
-            task_result = await session.execute(
-                select(AgentTask).where(
-                    AgentTask.conversation_id == existing_review.id,
-                )
-            )
-            task = task_result.scalars().first()
-            if task and "safe_to_merge" in (task.summary or "").lower():
-                # Approved but PR still open — try to merge
-                from home_ops_agent.agent.tools.github import merge_pr
-                from home_ops_agent.agent.tools.ntfy import publish_notification
-
-                logger.info(
-                    "Deep review approved PR #%s previously, retrying merge",
-                    pr_number,
-                )
-                merge_result_str = await merge_pr({"pr_number": pr_number})
-                merge_result = json.loads(merge_result_str)
-                if merge_result.get("status") == "merged":
-                    try:
-                        await publish_notification(
-                            {
-                                "title": f"Auto-merged PR #{pr_number} (retry)",
-                                "message": pr["title"],
-                                "priority": "default",
-                                "tags": "white_check_mark",
-                                "click_url": pr.get("html_url", ""),
-                            }
-                        )
-                    except Exception:
-                        pass
-                return
-            logger.info("Deep review already done for PR #%s, skipping", pr_number)
-            return
-
-    logger.info("Deep review with Opus for PR #%s", pr_number)
-
-    try:
-        prompt = await get_prompt("pr_review")
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    "A previous review flagged this PR as NEEDS_REVIEW. "
-                    "You are the senior reviewer — do a thorough deep review.\n\n"
-                    f"PR #{pr['number']}: {pr['title']}\n"
-                    f"Author: {pr['author']}\n"
-                    f"Labels: {', '.join(pr.get('labels', []))}\n"
-                    f"URL: {pr.get('html_url', '')}\n\n"
-                    f"Initial review:\n{initial_review[:1000]}\n\n"
-                    "Your task:\n"
-                    "1. Fetch the release notes for the new version\n"
-                    "2. Read the full diff carefully\n"
-                    "3. Check for breaking changes, deprecations, "
-                    "security issues\n"
-                    "4. Determine if this is actually safe to merge\n\n"
-                    "End your review with SAFE_TO_MERGE if approved "
-                    "or NEEDS_REVIEW if it truly needs human attention. "
-                    "Post your review as a comment on the PR."
-                ),
-            }
-        ]
-
-        # Use the deep_review model (defaults to Opus)
-        model = await get_model_for_task("deep_review")
-        result = await agent.run(
-            system_prompt=prompt,
-            messages=messages,
-            model=model,
-            max_turns=12,
-        )
-
-        if result:
-            # Save as a separate task
-            async with async_session() as session:
-                conversation = Conversation(
-                    title=f"Deep Review: #{pr_number} {pr['title'][:80]}",
-                    source="pr_deep_review",
-                    status="completed",
-                )
-                session.add(conversation)
-                await session.flush()
-
-                msg = Message(
-                    conversation_id=conversation.id,
-                    role="assistant",
-                    content={
-                        "text": result.response,
-                        "tool_calls": result.tool_calls,
-                    },
-                )
-                session.add(msg)
-
-                task = AgentTask(
-                    task_type="pr_review",
-                    trigger=f"PR #{pr_number}",
-                    status="completed",
-                    conversation_id=conversation.id,
-                    summary=(
-                        f"[Deep Review] {_extract_verdict(result.response)}{result.response[:450]}"
-                    ),
-                    actions_taken={
-                        "tool_calls": result.tool_calls,
-                        "tokens": result.total_tokens,
-                        "head_sha": pr.get("head_sha", ""),
-                        "deep_review": True,
-                    },
-                    completed_at=datetime.now(UTC),
-                )
-                session.add(task)
-                await session.commit()
-
-            # Notify
-            from home_ops_agent.agent.tools.ntfy import publish_notification
-
-            response_lower = result.response.lower()
-            approved = "safe_to_merge" in response_lower or "safe to merge" in response_lower
-
-            if approved:
-                # Auto-merge after Opus approval
-                from home_ops_agent.agent.tools.github import merge_pr
-
-                logger.info("Opus approved PR #%s, auto-merging", pr_number)
-                merge_result_str = await merge_pr({"pr_number": pr_number})
-                merge_result = json.loads(merge_result_str)
-
-                if merge_result.get("status") == "merged":
-                    title = f"Deep review APPROVED and MERGED PR #{pr_number}"
-                    tags = "white_check_mark"
-                else:
-                    title = f"Deep review APPROVED PR #{pr_number} (merge failed)"
-                    tags = "warning"
-                priority = "default"
-            else:
-                title = f"Deep review: PR #{pr_number} needs attention"
-                priority = "high"
-                tags = "warning"
-
-            try:
-                await publish_notification(
-                    {
-                        "title": title,
-                        "message": f"{pr['title']}\n\n{result.response[:200]}",
-                        "priority": priority,
-                        "tags": tags,
-                        "click_url": pr.get("html_url", ""),
-                    }
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to send deep review notification for PR #%s",
-                    pr_number,
-                )
-
-            logger.info("Deep review completed for PR #%s", pr_number)
-
-    except Exception:
-        logger.exception("Deep review failed for PR #%s", pr_number)
-
-
-async def _wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
-    """Wait for CI to pass on a PR, then merge it. Notify on success or failure."""
-    from home_ops_agent.agent.tools.github import get_check_runs, get_pr, merge_pr
-    from home_ops_agent.agent.tools.ntfy import publish_notification
-
-    logger.info("Waiting for CI on PR #%s before merging", pr_number)
-
-    # Wait up to 5 minutes, checking every 30 seconds
-    for attempt in range(10):
-        await asyncio.sleep(30)
-
-        try:
-            # Get the latest PR info (head SHA may have changed after fix commit)
-            pr_json = await get_pr({"pr_number": pr_number})
-            pr_data = json.loads(pr_json)
-            head_sha = pr_data.get("head_sha", "")
-
-            if not head_sha:
-                continue
-
-            checks_json = await get_check_runs({"ref": head_sha})
-            checks = json.loads(checks_json)
-
-            if not checks:
-                continue
-
-            # Check if all checks completed
-            all_completed = all(c.get("status") == "completed" for c in checks)
-            if not all_completed:
-                continue
-
-            # Check if all passed
-            all_passed = all(
-                c.get("conclusion") in ("success", "neutral", "skipped") for c in checks
-            )
-
-            if all_passed:
-                # Merge it
-                merge_result_json = await merge_pr({"pr_number": pr_number})
-                merge_result = json.loads(merge_result_json)
-
-                if merge_result.get("status") == "merged":
-                    logger.info("CI passed, merged code fix PR #%s", pr_number)
-
-                    async with async_session() as session:
-                        task = AgentTask(
-                            task_type="pr_merge",
-                            trigger=f"PR #{pr_number}",
-                            status="completed",
-                            summary=f"Auto-merged after code fix: {title}",
-                            actions_taken={
-                                "action": "merge_after_fix",
-                                "merge_sha": merge_result.get("sha"),
-                            },
-                            completed_at=datetime.now(UTC),
-                        )
-                        session.add(task)
-                        await session.commit()
-
-                    try:
-                        await publish_notification(
-                            {
-                                "title": f"Code fix merged: PR #{pr_number}",
-                                "message": title,
-                                "priority": "default",
-                                "tags": "white_check_mark",
-                                "click_url": html_url,
-                            }
-                        )
-                    except Exception:
-                        logger.exception("Failed to send merge notification")
-                    return
-                else:
-                    logger.warning(
-                        "Failed to merge PR #%s: %s",
-                        pr_number,
-                        merge_result.get("message"),
-                    )
-                    return
-            else:
-                # CI failed
-                logger.warning("CI failed on code fix PR #%s", pr_number)
-                try:
-                    await publish_notification(
-                        {
-                            "title": f"Code fix CI failed: PR #{pr_number}",
-                            "message": (
-                                f"{title}\n\nCI checks failed after code fix. Manual review needed."
-                            ),
-                            "priority": "high",
-                            "tags": "x",
-                            "click_url": html_url,
-                        }
-                    )
-                except Exception:
-                    logger.exception("Failed to send CI failure notification")
-                return
-
-        except Exception:
-            logger.exception("Error checking CI for PR #%s, attempt %d", pr_number, attempt + 1)
-
-    # Timed out waiting for CI
-    logger.warning("Timed out waiting for CI on PR #%s", pr_number)
-    try:
-        await publish_notification(
-            {
-                "title": f"Code fix: CI timeout on PR #{pr_number}",
-                "message": f"{title}\n\nCI did not complete within 5 minutes.",
-                "priority": "default",
-                "tags": "clock",
-                "click_url": html_url,
-            }
-        )
-    except Exception:
-        logger.exception("Failed to send timeout notification")
-
-
-async def _attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
-    """Attempt to fix a PR that was flagged as NEEDS_FIX by the review agent."""
-    pr_number = pr["number"]
-    logger.info("Attempting code fix for PR #%s", pr_number)
-
-    try:
-        model = await get_model_for_task("code_fix")
-        prompt = await get_prompt("chat")
-
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"A PR review identified that PR #{pr_number} needs a code fix.\n\n"
-                    f"PR: {pr['title']}\n"
-                    f"Author: {pr['author']}\n"
-                    f"Branch: {pr.get('head_ref', 'unknown')}\n"
-                    f"URL: {pr.get('html_url', '')}\n\n"
-                    f"Review findings:\n{review_summary}\n\n"
-                    "Your task:\n"
-                    "1. Read the changed files using github_get_pr_files\n"
-                    "2. Understand what breaking change occurred\n"
-                    "3. Read the full file content that needs fixing\n"
-                    "4. Create a fix commit on the PR branch\n"
-                    "5. Post a comment on the PR explaining what you fixed\n\n"
-                    "Only modify files under kubernetes/apps/. "
-                    "Use the PR's head branch for the commit, not main."
-                ),
-            }
-        ]
-
-        result = await agent.run(
-            system_prompt=prompt,
-            messages=messages,
-            model=model,
-            max_turns=15,
-        )
-
-        if result:
-            # Save as a code_fix task
-            async with async_session() as session:
-                conversation = Conversation(
-                    title=f"Code Fix: #{pr_number} {pr['title'][:100]}",
-                    source="code_fix",
-                    status="completed",
-                )
-                session.add(conversation)
-                await session.flush()
-
-                msg = Message(
-                    conversation_id=conversation.id,
-                    role="assistant",
-                    content={
-                        "text": result.response,
-                        "tool_calls": result.tool_calls,
-                    },
-                )
-                session.add(msg)
-
-                task = AgentTask(
-                    task_type="code_fix",
-                    trigger=f"PR #{pr_number}",
-                    status="completed",
-                    conversation_id=conversation.id,
-                    summary=_extract_verdict(result.response) + result.response[:500],
-                    actions_taken={
-                        "tool_calls": result.tool_calls,
-                        "tokens": result.total_tokens,
-                    },
-                    completed_at=datetime.now(UTC),
-                )
-                session.add(task)
-                await session.commit()
-
-            # Notify about the fix
-            from home_ops_agent.agent.tools.ntfy import publish_notification
-
-            try:
-                await publish_notification(
-                    {
-                        "title": f"Code fix pushed for PR #{pr_number}",
-                        "message": f"{pr['title']}\n\nWaiting for CI...",
-                        "priority": "default",
-                        "tags": "wrench",
-                        "click_url": pr.get("html_url", ""),
-                    }
-                )
-            except Exception:
-                logger.exception("Failed to send code fix notification")
-
-            logger.info("Code fix completed for PR #%s, waiting for CI", pr_number)
-
-            # Wait for CI and merge
-            await _wait_for_ci_and_merge(pr_number, pr.get("html_url", ""), pr["title"])
-
-    except Exception:
-        logger.exception("Code fix failed for PR #%s", pr_number)
+                await deep_review_pr(pr, result.response, agent)
 
 
 async def _get_check_interval() -> int:
