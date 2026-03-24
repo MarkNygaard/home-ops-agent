@@ -7,12 +7,9 @@ import { AgentCards } from "@/components/dashboard/agent-cards"
 import { AgentFlow } from "@/components/dashboard/agent-flow"
 import { RecentActivity } from "@/components/dashboard/recent-activity"
 import { SkillsOverview } from "@/components/dashboard/skills-overview"
-import { useSettings } from "@/hooks/use-settings"
 
 export default function DashboardPage() {
   const [activeAgent, setActiveAgent] = useState("pr_review")
-  const { data: settings } = useSettings()
-  const prMode = settings?.pr_mode ?? "comment_only"
 
   return (
     <>
@@ -21,7 +18,7 @@ export default function DashboardPage() {
         <div className="mx-auto flex max-w-7xl flex-col gap-8">
           <StatusBar />
           <AgentCards activeAgent={activeAgent} onSelect={setActiveAgent} />
-          <AgentFlow activeAgent={activeAgent} prMode={prMode} />
+          <AgentFlow activeAgent={activeAgent} />
           <RecentActivity />
           <SkillsOverview />
         </div>

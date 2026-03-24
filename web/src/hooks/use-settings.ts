@@ -5,5 +5,7 @@ import { fetchSettings } from "@/lib/api"
 import type { Settings } from "@/lib/types"
 
 export function useSettings() {
-  return useSWR<Settings>("/api/settings", fetchSettings)
+  return useSWR<Settings>("/api/settings", fetchSettings, {
+    errorRetryCount: 3,
+  })
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useSettings } from '@/hooks/use-settings';
 import {
   ReactFlow,
   type Node,
@@ -530,10 +531,11 @@ const defaultEdgeOptions = {
 
 interface AgentFlowProps {
   activeAgent: string;
-  prMode?: string;
 }
 
-export function AgentFlow({ activeAgent, prMode }: AgentFlowProps) {
+export function AgentFlow({ activeAgent }: AgentFlowProps) {
+  const { data: settings } = useSettings();
+  const prMode = settings?.pr_mode ?? 'comment_only';
   const builder = FLOW_BUILDERS[activeAgent];
   const { nodes, edges } = useMemo(
     () => (builder ? builder(prMode) : { nodes: [], edges: [] }),
