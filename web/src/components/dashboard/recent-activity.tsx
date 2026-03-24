@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { useHistory } from "@/hooks/use-history"
 import { formatDate } from "@/lib/utils"
 
@@ -33,9 +32,9 @@ export function RecentActivity() {
         <h2 className="text-sm font-medium text-muted-foreground">
           Recent Activity
         </h2>
-        <Button variant="link" size="sm" className="text-xs" render={<Link href="/history" />}>
+        <Link href="/history" className="text-xs text-muted-foreground hover:text-foreground">
           View all
-        </Button>
+        </Link>
       </div>
 
       {recent.length === 0 ? (

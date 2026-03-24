@@ -1,6 +1,6 @@
 "use client"
 
-import useSWR from "swr"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { fetchConversations, fetchHistory } from "@/lib/api"
 import type { HistoryItem } from "@/lib/types"
 
@@ -41,8 +41,13 @@ async function fetchMergedHistory(
 }
 
 export function useHistory(filter: string = "") {
-  return useSWR<HistoryItem[]>(
-    ["history", filter],
-    () => fetchMergedHistory(filter)
-  )
+  const queryClient = useQueryClient()
+  const query = useQuery<HistoryItem[]>({
+    queryKey: ["history", filter],
+    queryFn: () => fetchMergedHistory(filter),
+  })
+  return {
+    ...query,
+    mutate: () => queryClient.invalidateQueries({ queryKey: ["history"] }),
+  }
 }

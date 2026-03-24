@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { useSkills } from "@/hooks/use-skills"
 
 export function SkillsOverview() {
@@ -17,9 +16,9 @@ export function SkillsOverview() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-muted-foreground">Skills</h2>
-        <Button variant="link" size="sm" className="text-xs" render={<Link href="/settings/skills" />}>
+        <Link href="/settings/skills" className="text-xs text-muted-foreground hover:text-foreground">
           Manage
-        </Button>
+        </Link>
       </div>
 
       {enabledSkills.length === 0 ? (

@@ -313,15 +313,17 @@ async def check_prs():
                 result.response[:100],
             )
 
-            response_lower = result.response.lower()
+            # Post-review actions depend on the current PR mode
+            if pr_mode != "comment_only":
+                response_lower = result.response.lower()
 
-            # If review says NEEDS_FIX, attempt a code fix
-            if "needs_fix" in response_lower:
-                await attempt_code_fix(pr, result.response, agent)
+                # If review says NEEDS_FIX, attempt a code fix
+                if "needs_fix" in response_lower:
+                    await attempt_code_fix(pr, result.response, agent)
 
-            # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
-            elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
-                await deep_review_pr(pr, result.response, agent)
+                # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
+                elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
+                    await deep_review_pr(pr, result.response, agent)
 
 
 async def _get_check_interval() -> int:
