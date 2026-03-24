@@ -10,26 +10,16 @@ import { fetchStatus, triggerPrCheck } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
-  const [remaining, setRemaining] = useState<number | null>(null)
+  const [now, setNow] = useState(Date.now)
 
   useEffect(() => {
-    function calcRemaining() {
-      if (!lastCheckAt) return intervalSeconds
-      const lastCheck = new Date(lastCheckAt).getTime()
-      const now = Date.now()
-      const elapsed = Math.floor((now - lastCheck) / 1000)
-      const rem = intervalSeconds - elapsed
-      return rem > 0 ? rem : 0
-    }
-
-    setRemaining(calcRemaining())
-    const timer = setInterval(() => {
-      setRemaining(calcRemaining())
-    }, 1000)
+    const timer = setInterval(() => setNow(Date.now), 1000)
     return () => clearInterval(timer)
-  }, [intervalSeconds, lastCheckAt])
+  }, [])
 
-  if (remaining === null) return "--:--"
+  if (!lastCheckAt) return "--:--"
+  const elapsed = Math.floor((now - new Date(lastCheckAt).getTime()) / 1000)
+  const remaining = Math.max(intervalSeconds - elapsed, 0)
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
   return `${mins}:${secs.toString().padStart(2, "0")}`

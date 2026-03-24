@@ -569,6 +569,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
       </div>
       <div className="relative overflow-hidden rounded-xl" style={{ height }}>
         <ReactFlow
+          key={`${activeAgent}-${prMode}`}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
