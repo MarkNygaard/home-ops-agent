@@ -304,115 +304,91 @@ function branchEdge(
 
 /* ── Flow definitions (no positions needed!) ─────────────── */
 
-function makePRReviewFlow(): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = [
-    {
-      id: 'agent',
-      type: 'agent',
-      position: { x: 0, y: 0 },
-      data: { label: 'PR Review' },
-    },
-    {
-      id: 's1',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Trigger', icon: 'IconGitPullRequest' },
-    },
-    {
-      id: 's2',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Check PR', icon: 'IconFileSearch' },
-    },
-    {
-      id: 's3',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Read Diff', icon: 'IconFileText' },
-    },
-    {
-      id: 's4',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Release Notes', icon: 'IconNotes' },
-    },
-    {
-      id: 's5',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: {
-        label: 'Decide',
-        icon: 'IconReport',
-        decision: true,
-      },
-    },
-    {
-      id: 'b1',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
-    },
-    {
-      id: 'b2a',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true },
-    },
-    {
-      id: 'b2b',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' },
-    },
-    {
-      id: 'b2c',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' },
-    },
-    {
-      id: 'b2d',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
-    },
-    {
-      id: 'b3',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Deep Review', icon: 'IconEye', size: 'sm', subagent: true, decision: true },
-    },
-    {
-      id: 'b3a',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' },
-    },
-    {
-      id: 'b3b',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' },
-    },
-  ];
+function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
+  const pos = { x: 0, y: 0 };
 
-  const edges: Edge[] = [
+  // Common review chain shared by all modes
+  const reviewNodes: Node[] = [
+    { id: 'agent', type: 'agent', position: pos, data: { label: 'PR Review' } },
+    { id: 's1', type: 'step', position: pos, data: { label: 'Trigger', icon: 'IconGitPullRequest' } },
+    { id: 's2', type: 'step', position: pos, data: { label: 'Check PR', icon: 'IconFileSearch' } },
+    { id: 's3', type: 'step', position: pos, data: { label: 'Read Diff', icon: 'IconFileText' } },
+    { id: 's4', type: 'step', position: pos, data: { label: 'Release Notes', icon: 'IconNotes' } },
+    { id: 's5', type: 'step', position: pos, data: { label: 'Decide', icon: 'IconReport', decision: true } },
+  ];
+  const reviewEdges: Edge[] = [
     mainEdge('e-a-s1', 'agent', 's1', true),
     mainEdge('e-s1-s2', 's1', 's2'),
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
-    branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
-    branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
-    mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
-    mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
-    mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
-    branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
-    branchEdge('e-b3-b3a', 'b3', 'b3a', false, 'OK'),
-    branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
   ];
 
-  return getLayoutedElements(nodes, edges);
+  // comment_only: review chain → Comment (no merge, no fix, no deep review)
+  if (prMode === 'comment_only') {
+    return getLayoutedElements(
+      [
+        ...reviewNodes,
+        { id: 'c1', type: 'step', position: pos, data: { label: 'Comment', icon: 'IconMessage', size: 'sm' } },
+        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell', size: 'sm' } },
+      ],
+      [
+        ...reviewEdges,
+        mainEdge('e-s5-c1', 's5', 'c1'),
+        mainEdge('e-c1-c2', 'c1', 'c2'),
+      ],
+    );
+  }
+
+  // auto_merge_all: full flow with deep review escalation
+  if (prMode === 'auto_merge_all') {
+    return getLayoutedElements(
+      [
+        ...reviewNodes,
+        { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+        { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
+        { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
+        { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
+        { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+        { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', size: 'sm', subagent: true, decision: true } },
+        { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+        { id: 'b3b', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' } },
+      ],
+      [
+        ...reviewEdges,
+        branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
+        branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
+        mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
+        mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
+        mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
+        branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
+        branchEdge('e-b3-b3a', 'b3', 'b3a', false, 'OK'),
+        branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
+      ],
+    );
+  }
+
+  // auto_merge / auto_merge_minor: merge + code fix, but no deep review
+  return getLayoutedElements(
+    [
+      ...reviewNodes,
+      { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+      { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
+      { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
+      { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
+      { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+      { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' } },
+    ],
+    [
+      ...reviewEdges,
+      branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
+      branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
+      mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
+      mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
+      mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
+      branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
+    ],
+  );
 }
 
 function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
@@ -513,14 +489,24 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
 }
 
 
-const FLOW_BUILDERS: Record<string, () => { nodes: Node[]; edges: Edge[] }> = {
-  pr_review: makePRReviewFlow,
-  alert: makeAlertFlow,
+const FLOW_BUILDERS: Record<string, (prMode?: string) => { nodes: Node[]; edges: Edge[] }> = {
+  pr_review: (prMode) => makePRReviewFlow(prMode ?? 'comment_only'),
+  alert: () => makeAlertFlow(),
+};
+
+const PR_MODE_DESCRIPTIONS: Record<string, string> = {
+  comment_only:
+    'Reviews Renovate PRs, checks CI, fetches release notes. Posts a comment with risk assessment — no automated merge or fix actions.',
+  auto_merge:
+    'Reviews PRs and auto-merges safe patch/digest updates. Escalates NEEDS_FIX to Code Fix agent. NEEDS_REVIEW notifies you.',
+  auto_merge_minor:
+    'Reviews PRs and auto-merges safe patch, digest, and minor updates. Escalates NEEDS_FIX to Code Fix agent. NEEDS_REVIEW notifies you.',
+  auto_merge_all:
+    'Fully autonomous: merges all safe PRs including critical components. NEEDS_FIX escalates to Code Fix agent. NEEDS_REVIEW escalates to Opus for Deep Review.',
 };
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {
-  pr_review:
-    'Reviews Renovate PRs, checks CI, fetches release notes. Auto-merges safe patches or escalates to Code Fix agent.',
+  pr_review: PR_MODE_DESCRIPTIONS.comment_only,
   alert:
     'Two-stage pipeline: Triage (Haiku) diagnoses severity, then Alert Fix (Sonnet) takes corrective action when needed.',
 };
@@ -544,18 +530,23 @@ const defaultEdgeOptions = {
 
 interface AgentFlowProps {
   activeAgent: string;
+  prMode?: string;
 }
 
-export function AgentFlow({ activeAgent }: AgentFlowProps) {
+export function AgentFlow({ activeAgent, prMode }: AgentFlowProps) {
   const builder = FLOW_BUILDERS[activeAgent];
   const { nodes, edges } = useMemo(
-    () => (builder ? builder() : { nodes: [], edges: [] }),
-    [builder]
+    () => (builder ? builder(prMode) : { nodes: [], edges: [] }),
+    [builder, prMode]
   );
 
   if (!builder) return null;
 
   const height = 450;
+  const description =
+    activeAgent === 'pr_review'
+      ? PR_MODE_DESCRIPTIONS[prMode ?? 'comment_only'] ?? AGENT_DESCRIPTIONS[activeAgent]
+      : AGENT_DESCRIPTIONS[activeAgent] ?? 'Autonomous cluster operator';
 
   return (
     <div className="flex flex-col gap-4">
@@ -569,7 +560,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           </TooltipTrigger>
           <TooltipContent side="right" className="max-w-xs">
             <p className="text-sm">
-              {AGENT_DESCRIPTIONS[activeAgent] ?? 'Autonomous cluster operator'}
+              {description}
             </p>
           </TooltipContent>
         </Tooltip>
