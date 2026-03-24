@@ -44,6 +44,7 @@ export function StatusBar() {
     { refreshInterval: 30000 }
   )
 
+  const [checking, setChecking] = useState(false)
   const agentEnabled = settings?.agent_enabled ?? true
   const prMode = settings?.pr_mode ?? "comment_only"
   const prInterval = settings?.pr_check_interval_seconds ?? 1800
@@ -107,12 +108,18 @@ export function StatusBar() {
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs"
+            disabled={checking}
             onClick={async () => {
-              await triggerPrCheck()
-              mutateStatus()
+              setChecking(true)
+              try {
+                await triggerPrCheck()
+                await mutateStatus()
+              } finally {
+                setChecking(false)
+              }
             }}
           >
-            Run now
+            {checking ? "Running..." : "Run now"}
           </Button>
         </>
       )}

@@ -1,6 +1,7 @@
 """REST endpoints for health, task history, and agent status."""
 
 import asyncio
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
@@ -9,6 +10,8 @@ from sqlalchemy import delete, desc, func, select
 from home_ops_agent.auth.oauth import get_auth_method, get_valid_token
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Memory, Message, async_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -77,15 +80,17 @@ async def trigger_pr_check():
     if _pr_check_running:
         return {"status": "already_running"}
 
-    # Reset timer immediately so the countdown restarts for the frontend
+    # Set flag and reset timer immediately (before task runs) to avoid race
+    _pr_check_running = True
     pr_monitor.last_pr_check_at = datetime.now(UTC)
 
     async def _run():
         global _pr_check_running
-        _pr_check_running = True
         try:
             await pr_monitor.check_prs()
             pr_monitor.last_pr_check_at = datetime.now(UTC)
+        except Exception:
+            logger.exception("Manual PR check failed")
         finally:
             _pr_check_running = False
 
