@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react"
 import useSWR from "swr"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { useWs } from "@/providers/websocket-provider"
 import { useSettings } from "@/hooks/use-settings"
-import { fetchStatus } from "@/lib/api"
+import { fetchStatus, triggerPrCheck } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
@@ -37,9 +38,11 @@ function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
 export function StatusBar() {
   const { status } = useWs()
   const { data: settings } = useSettings()
-  const { data: statusData } = useSWR("/api/status", fetchStatus, {
-    refreshInterval: 30000,
-  })
+  const { data: statusData, mutate: mutateStatus } = useSWR(
+    "/api/status",
+    fetchStatus,
+    { refreshInterval: 30000 }
+  )
 
   const agentEnabled = settings?.agent_enabled ?? true
   const prMode = settings?.pr_mode ?? "comment_only"
@@ -100,6 +103,17 @@ export function StatusBar() {
             Next PR check in{" "}
             <span className="font-mono text-foreground">{countdown}</span>
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs"
+            onClick={async () => {
+              await triggerPrCheck()
+              mutateStatus()
+            }}
+          >
+            Run now
+          </Button>
         </>
       )}
     </div>
