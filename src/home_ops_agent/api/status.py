@@ -1,5 +1,7 @@
 """REST endpoints for health, task history, and agent status."""
 
+import asyncio
+import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
@@ -9,7 +11,12 @@ from home_ops_agent.auth.oauth import get_auth_method, get_valid_token
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Memory, Message, async_session
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# Track whether a manual PR check is already running
+_pr_check_running = False
 
 
 @router.get("/health")
@@ -62,6 +69,33 @@ async def agent_status():
         if latest_task
         else None,
     }
+
+
+@router.post("/api/pr-check")
+async def trigger_pr_check():
+    """Trigger an immediate PR review cycle."""
+    import home_ops_agent.workers.pr_monitor as pr_monitor
+
+    global _pr_check_running
+    if _pr_check_running:
+        return {"status": "already_running"}
+
+    # Set flag and reset timer immediately (before task runs) to avoid race
+    _pr_check_running = True
+    pr_monitor.last_pr_check_at = datetime.now(UTC)
+
+    async def _run():
+        global _pr_check_running
+        try:
+            await pr_monitor.check_prs()
+            pr_monitor.last_pr_check_at = datetime.now(UTC)
+        except Exception:
+            logger.exception("Manual PR check failed")
+        finally:
+            _pr_check_running = False
+
+    asyncio.create_task(_run())
+    return {"status": "started"}
 
 
 @router.get("/api/history")

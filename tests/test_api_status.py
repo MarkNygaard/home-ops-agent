@@ -157,3 +157,31 @@ async def test_agent_status_endpoint(client, db_session, mock_settings):
         assert data["task_counts"] == {}
         assert data["latest_task"] is None
         assert data["github_repo"] == "test-owner/test-repo"
+
+
+async def test_trigger_pr_check_starts(client, mock_settings):
+    """POST /api/pr-check fires check_prs and returns started."""
+    import home_ops_agent.api.status as status_mod
+
+    status_mod._pr_check_running = False
+
+    with patch(
+        "home_ops_agent.workers.pr_monitor.check_prs",
+        new_callable=AsyncMock,
+    ):
+        response = await client.post("/api/pr-check")
+        assert response.status_code == 200
+        assert response.json()["status"] == "started"
+
+
+async def test_trigger_pr_check_already_running(client, mock_settings):
+    """POST /api/pr-check returns already_running when a check is in progress."""
+    import home_ops_agent.api.status as status_mod
+
+    status_mod._pr_check_running = True
+    try:
+        response = await client.post("/api/pr-check")
+        assert response.status_code == 200
+        assert response.json()["status"] == "already_running"
+    finally:
+        status_mod._pr_check_running = False

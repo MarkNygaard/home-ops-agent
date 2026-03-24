@@ -102,3 +102,8 @@ export function resetPrompt(name: string): Promise<void> {
 export function fetchStatus(): Promise<StatusResponse> {
   return fetchJson<StatusResponse>("/api/status")
 }
+
+// PR check
+export function triggerPrCheck(): Promise<{ status: string }> {
+  return fetchJson("/api/pr-check", { method: "POST" })
+}
