@@ -14,8 +14,18 @@ sys.modules.setdefault("kubernetes.client", _k8s_mock)
 sys.modules.setdefault("kubernetes.client.rest", _k8s_mock)
 sys.modules.setdefault("kubernetes.config", _k8s_mock)
 
-# Ensure ApiException is importable
-_k8s_mock.client.rest.ApiException = type("ApiException", (Exception,), {"reason": "mocked"})
+
+# Ensure ApiException is importable.
+# sys.modules["kubernetes.client.rest"] IS _k8s_mock, so
+# `from kubernetes.client.rest import ApiException` resolves to _k8s_mock.ApiException.
+class _ApiException(Exception):
+    def __init__(self, reason="mocked", **kwargs):
+        super().__init__(reason)
+        self.reason = reason
+
+
+_k8s_mock.ApiException = _ApiException
+_k8s_mock.client.rest.ApiException = _ApiException
 _k8s_mock.config.ConfigException = type("ConfigException", (Exception,), {})
 _k8s_mock.config.load_incluster_config = MagicMock()
 _k8s_mock.config.load_kube_config = MagicMock()
@@ -81,17 +91,34 @@ async def db_session(db_engine):
 
 
 class _SessionContext:
-    """Context manager that returns the existing session instead of creating a new one."""
+    """Context manager that returns the existing session instead of creating a new one.
+
+    Overrides commit() → flush() so data is visible within the session
+    but the outer transaction (managed by the fixture) stays open for rollback.
+    """
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
     async def __aenter__(self):
-        return self._session
+        return _CommitSafeSession(self._session)
 
     async def __aexit__(self, *args):
         # Don't close — the fixture manages lifecycle
         pass
+
+
+class _CommitSafeSession:
+    """Proxy that turns commit() into flush() to keep the test transaction open."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def commit(self):
+        await self._session.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
 
 
 def make_anthropic_response(text="Hello", tool_use_blocks=None):

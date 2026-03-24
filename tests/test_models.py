@@ -34,6 +34,8 @@ async def test_get_model_for_task_fallback_to_default(db_session):
 
 
 async def test_get_model_for_task_unknown_falls_to_chat(db_session):
+    from home_ops_agent.config import settings
+
     result = await get_model_for_task("nonexistent_task")
     # Falls back to settings.model_chat via _DEFAULTS.get(task, settings.model_chat)
-    assert result is not None
+    assert result == settings.model_chat

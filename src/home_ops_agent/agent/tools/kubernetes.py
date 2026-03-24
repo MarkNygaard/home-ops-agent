@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from kubernetes import client, config
@@ -208,7 +208,7 @@ async def restart_deployment(params: dict) -> str:
         "spec": {
             "template": {
                 "metadata": {
-                    "annotations": {"home-ops-agent/restartedAt": datetime.utcnow().isoformat()}
+                    "annotations": {"home-ops-agent/restartedAt": datetime.now(UTC).isoformat()}
                 }
             }
         }
