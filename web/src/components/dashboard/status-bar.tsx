@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import useSWR from "swr"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useWs } from "@/providers/websocket-provider"
@@ -38,11 +38,12 @@ function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
 export function StatusBar() {
   const { status } = useWs()
   const { data: settings } = useSettings()
-  const { data: statusData, mutate: mutateStatus } = useSWR(
-    "/api/status",
-    fetchStatus,
-    { refreshInterval: 30000 }
-  )
+  const queryClient = useQueryClient()
+  const { data: statusData } = useQuery({
+    queryKey: ["status"],
+    queryFn: fetchStatus,
+    refetchInterval: 30000,
+  })
 
   const [checking, setChecking] = useState(false)
   const agentEnabled = settings?.agent_enabled ?? true
@@ -113,7 +114,7 @@ export function StatusBar() {
               setChecking(true)
               try {
                 await triggerPrCheck()
-                await mutateStatus()
+                await queryClient.invalidateQueries({ queryKey: ["status"] })
               } finally {
                 setChecking(false)
               }
