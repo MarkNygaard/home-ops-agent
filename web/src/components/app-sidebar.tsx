@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
@@ -56,6 +57,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { status } = useWs()
   const isSettingsActive = pathname.startsWith("/settings")
+  const [settingsOpen, setSettingsOpen] = useState(isSettingsActive)
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -94,7 +96,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 )
               })}
 
-              <Collapsible defaultOpen={isSettingsActive} className="group/collapsible">
+              <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="group/collapsible">
                 <SidebarMenuItem>
                   <CollapsibleTrigger render={<SidebarMenuButton />}>
                     <IconSettings />
