@@ -66,6 +66,19 @@ def _format_alert_context(alert: dict) -> str:
     )
 
 
+def _parse_triage_action(response: str) -> str:
+    """Parse the action from a triage response.
+
+    Returns one of: "fix", "ignore", "notify" (default).
+    """
+    response_lower = response.lower()
+    if "action: fix" in response_lower:
+        return "fix"
+    elif "action: ignore" in response_lower:
+        return "ignore"
+    return "notify"
+
+
 async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
     """Stage 1: Quick triage with Haiku — diagnose severity and determine if fixable.
 
@@ -101,15 +114,7 @@ async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
     )
 
     response = result.response
-    response_lower = response.lower()
-
-    # Parse the action from the response
-    if "action: fix" in response_lower:
-        action = "fix"
-    elif "action: ignore" in response_lower:
-        action = "ignore"
-    else:
-        action = "notify"
+    action = _parse_triage_action(response)
 
     # Save triage task
     async with async_session() as session:
