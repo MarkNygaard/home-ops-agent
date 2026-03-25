@@ -83,6 +83,10 @@ async def get_settings():
         "pr_check_interval_seconds": int(
             db_settings.get("pr_check_interval_seconds", settings.pr_check_interval_seconds)
         ),
+        "chat_suggestions": db_settings.get(
+            "chat_suggestions",
+            "What pods are failing?|Show me recent alerts|List pending PRs|Check cluster health",
+        ),
         "models": {
             "pr_review": db_settings.get("model_pr_review", settings.model_pr_review),
             "alert_triage": db_settings.get("model_alert_triage", settings.model_alert_triage),
@@ -112,6 +116,7 @@ ALLOWED_SETTING_KEYS = {
     "model_code_fix",
     "model_deep_review",
     "model_chat",
+    "chat_suggestions",
 }
 
 

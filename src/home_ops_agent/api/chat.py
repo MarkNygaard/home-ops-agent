@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.core import Agent, AgentResult
 from home_ops_agent.agent.memory import extract_memories
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
@@ -125,12 +125,49 @@ async def websocket_chat(websocket: WebSocket):
             try:
                 chat_model = await get_model_for_task("chat")
                 chat_prompt = await get_prompt("chat")
-                result = await agent.run(
+
+                async def on_tool_start(name: str, idx: int):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "tool_start",
+                                "conversation_id": conversation_id,
+                                "tool": name,
+                                "tool_index": idx,
+                            }
+                        )
+                    )
+
+                async def on_tool_end(name: str, idx: int):
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "tool_end",
+                                "conversation_id": conversation_id,
+                                "tool": name,
+                                "tool_index": idx,
+                            }
+                        )
+                    )
+
+                result = None
+                async for item in agent.run_streaming(
                     system_prompt=chat_prompt,
                     messages=messages,
                     model=chat_model,
                     max_turns=15,
-                )
+                    on_tool_start=on_tool_start,
+                    on_tool_end=on_tool_end,
+                ):
+                    if isinstance(item, str):
+                        await websocket.send_text(
+                            json.dumps({"type": "stream_delta", "delta": item})
+                        )
+                    elif isinstance(item, AgentResult):
+                        result = item
+
+                if result is None:
+                    result = AgentResult(response="[No response from agent]")
 
                 # Save assistant response
                 async with async_session() as session:
@@ -149,7 +186,7 @@ async def websocket_chat(websocket: WebSocket):
                 await websocket.send_text(
                     json.dumps(
                         {
-                            "type": "message",
+                            "type": "stream_end",
                             "conversation_id": conversation_id,
                             "content": result.response,
                             "tool_calls": result.tool_calls,

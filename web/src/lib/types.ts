@@ -12,6 +12,7 @@ export interface Settings {
   alert_cooldown_seconds: number
   ntfy_topics: string
   pr_check_interval_seconds: number
+  chat_suggestions: string
 }
 
 export interface ConfigField {
@@ -79,11 +80,23 @@ export interface PromptsResponse {
 }
 
 export interface WsMessage {
-  type: "typing" | "message" | "error"
+  type:
+    | "typing"
+    | "message"
+    | "error"
+    | "tool_start"
+    | "tool_end"
+    | "stream_delta"
+    | "stream_end"
   conversation_id?: number
   content?: string
   message?: string
   tool_calls?: { tool: string }[]
+  tokens?: number
+  // Streaming fields
+  delta?: string
+  tool?: string
+  tool_index?: number
 }
 
 export interface HistoryItem {
