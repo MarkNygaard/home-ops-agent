@@ -14,6 +14,12 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from '@/components/ai-elements/conversation';
+import {
+  Message,
+  MessageContent,
+  MessageActions,
+  MessageAction,
+} from '@/components/ai-elements/message';
 import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import {
@@ -22,7 +28,7 @@ import {
   ChainOfThoughtContent,
   ChainOfThoughtStep,
 } from '@/components/ai-elements/chain-of-thought';
-import { BotIcon, WrenchIcon } from 'lucide-react';
+import { BotIcon, CopyIcon, CheckIcon, WrenchIcon } from 'lucide-react';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -216,12 +222,13 @@ export function ChatView() {
           ) : (
             <>
               {messages.map((msg, i) => (
-                <MessageBubble key={i} message={msg} />
+                <ChatMessage key={i} message={msg} />
               ))}
+
               {/* Active tool calls */}
               {activeTools.length > 0 && (
-                <div className="flex justify-start">
-                  <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2.5">
+                <Message from="assistant">
+                  <MessageContent>
                     <ChainOfThought defaultOpen={true}>
                       <ChainOfThoughtHeader>
                         Working... (
@@ -239,32 +246,28 @@ export function ChatView() {
                         ))}
                       </ChainOfThoughtContent>
                     </ChainOfThought>
-                  </div>
-                </div>
+                  </MessageContent>
+                </Message>
               )}
 
               {/* Streaming text response */}
               {isStreaming && deferredStreamingText && (
-                <div className="flex justify-start">
-                  <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2.5 text-sm text-foreground">
-                    <div className="max-w-none text-sm [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:bg-background/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-background [&_pre]:p-3 [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-medium [&_hr]:my-3 [&_hr]:border-border [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_a]:text-primary [&_a]:underline">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {deferredStreamingText}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                </div>
+                <Message from="assistant">
+                  <MessageContent>
+                    <MarkdownBody>{deferredStreamingText}</MarkdownBody>
+                  </MessageContent>
+                </Message>
               )}
 
               {/* Thinking indicator */}
               {isThinking && !isStreaming && activeTools.length === 0 && (
-                <div className="flex justify-start">
-                  <div className="max-w-[80%] rounded-lg bg-muted px-4 py-2.5">
+                <Message from="assistant">
+                  <MessageContent>
                     <Shimmer className="text-sm" duration={1.5}>
                       Thinking...
                     </Shimmer>
-                  </div>
-                </div>
+                  </MessageContent>
+                </Message>
               )}
             </>
           )}
@@ -277,50 +280,67 @@ export function ChatView() {
   );
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === 'user';
+const MARKDOWN_CLASSES =
+  'max-w-none text-sm [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:bg-background/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-background [&_pre]:p-3 [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-medium [&_hr]:my-3 [&_hr]:border-border [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_a]:text-primary [&_a]:underline';
+
+function MarkdownBody({ children }: { children: string }) {
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`max-w-[80%] rounded-lg px-4 py-2.5 text-sm ${
-          isUser
-            ? 'bg-primary text-primary-foreground whitespace-pre-wrap'
-            : 'bg-muted text-foreground'
-        }`}
-      >
-        {isUser ? (
-          message.content
-        ) : (
-          <div className="max-w-none text-sm [&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-border [&_th]:bg-background/50 [&_th]:px-3 [&_th]:py-1.5 [&_th]:text-left [&_th]:font-medium [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-1.5 [&_pre]:my-2 [&_pre]:rounded-md [&_pre]:bg-background [&_pre]:p-3 [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_p]:my-1.5 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:my-0.5 [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:mb-1 [&_h3]:text-sm [&_h3]:font-medium [&_hr]:my-3 [&_hr]:border-border [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_a]:text-primary [&_a]:underline">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content}
-            </ReactMarkdown>
-          </div>
-        )}
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <ToolCallsDisplay toolCalls={message.toolCalls} />
-        )}
-      </div>
+    <div className={MARKDOWN_CLASSES}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
     </div>
   );
 }
 
-function ToolCallsDisplay({ toolCalls }: { toolCalls: { tool: string }[] }) {
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [text]);
+
   return (
-    <ChainOfThought className="mt-3 border-t border-border/50 pt-2">
-      <ChainOfThoughtHeader>
-        Tools used ({toolCalls.length})
-      </ChainOfThoughtHeader>
-      <ChainOfThoughtContent>
-        {toolCalls.map((tc, i) => (
-          <ChainOfThoughtStep
-            key={i}
-            icon={WrenchIcon}
-            label={tc.tool}
-            status="complete"
-          />
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
+    <MessageAction tooltip="Copy" onClick={handleCopy}>
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+    </MessageAction>
+  );
+}
+
+function ChatMessage({ message }: { message: ChatMessage }) {
+  return (
+    <Message from={message.role}>
+      <MessageContent>
+        {message.role === 'user' ? (
+          <p className="whitespace-pre-wrap">{message.content}</p>
+        ) : (
+          <>
+            <MarkdownBody>{message.content}</MarkdownBody>
+            {message.toolCalls && message.toolCalls.length > 0 && (
+              <ChainOfThought className="mt-3 border-t border-border/50 pt-2">
+                <ChainOfThoughtHeader>
+                  Tools used ({message.toolCalls.length})
+                </ChainOfThoughtHeader>
+                <ChainOfThoughtContent>
+                  {message.toolCalls.map((tc, i) => (
+                    <ChainOfThoughtStep
+                      key={i}
+                      icon={WrenchIcon}
+                      label={tc.tool}
+                      status="complete"
+                    />
+                  ))}
+                </ChainOfThoughtContent>
+              </ChainOfThought>
+            )}
+          </>
+        )}
+      </MessageContent>
+      {message.role === 'assistant' && (
+        <MessageActions>
+          <CopyButton text={message.content} />
+        </MessageActions>
+      )}
+    </Message>
   );
 }
