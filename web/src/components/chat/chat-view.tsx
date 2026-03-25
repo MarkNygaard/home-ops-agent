@@ -30,7 +30,7 @@ import {
 } from '@/components/ai-elements/chain-of-thought';
 import { BotIcon, CopyIcon, CheckIcon, WrenchIcon } from 'lucide-react';
 
-interface ChatMessage {
+interface ChatMessageData {
   role: 'user' | 'assistant';
   content: string;
   toolCalls?: { tool: string }[];
@@ -48,7 +48,7 @@ export function ChatView() {
   const suggestions = settings?.chat_suggestions
     ? settings.chat_suggestions.split('|').map((s: string) => s.trim()).filter(Boolean)
     : [];
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
@@ -63,7 +63,7 @@ export function ChatView() {
     fetchMessages(conversationId)
       .then((msgs) => {
         if (cancelled) return;
-        const parsed: ChatMessage[] = [];
+        const parsed: ChatMessageData[] = [];
         for (const msg of msgs) {
           const content =
             typeof msg.content === 'string'
@@ -294,10 +294,14 @@ function MarkdownBody({ children }: { children: string }) {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
+  useEffect(() => {
+    if (!copied) return;
+    const id = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(id);
+  }, [copied]);
+
   const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    navigator.clipboard.writeText(text).then(() => setCopied(true));
   }, [text]);
 
   return (
@@ -307,7 +311,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ChatMessage({ message }: { message: ChatMessage }) {
+function ChatMessage({ message }: { message: ChatMessageData }) {
   return (
     <Message from={message.role}>
       <MessageContent>
