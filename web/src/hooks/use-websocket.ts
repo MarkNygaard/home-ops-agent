@@ -4,12 +4,13 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import type { WsMessage } from "@/lib/types"
 
 export type WsStatus = "connecting" | "connected" | "disconnected"
+export type WsMessageHandler = (message: WsMessage) => void
 
 export function useWebSocket() {
   const [status, setStatus] = useState<WsStatus>("disconnected")
-  const [lastMessage, setLastMessage] = useState<WsMessage | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const listenersRef = useRef<Set<WsMessageHandler>>(new Set())
 
   const connect = useCallback(() => {
     if (typeof window === "undefined") return
@@ -36,7 +37,9 @@ export function useWebSocket() {
     ws.onmessage = (event) => {
       try {
         const data: WsMessage = JSON.parse(event.data)
-        setLastMessage(data)
+        for (const handler of listenersRef.current) {
+          handler(data)
+        }
       } catch {
         // ignore malformed messages
       }
@@ -57,5 +60,10 @@ export function useWebSocket() {
     }
   }, [])
 
-  return { status, lastMessage, send }
+  const subscribe = useCallback((handler: WsMessageHandler) => {
+    listenersRef.current.add(handler)
+    return () => { listenersRef.current.delete(handler) }
+  }, [])
+
+  return { status, send, subscribe }
 }

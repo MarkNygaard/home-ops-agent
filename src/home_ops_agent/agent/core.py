@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -149,6 +150,116 @@ class Agent:
 
         # Hit max turns
         return AgentResult(
+            response="[Agent reached maximum tool-use turns]",
+            tool_calls=all_tool_calls,
+            total_tokens=total_tokens,
+        )
+
+    async def run_streaming(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str = "claude-sonnet-4-6",
+        max_turns: int = 20,
+        on_tool_start: Callable[..., Coroutine] | None = None,
+        on_tool_end: Callable[..., Coroutine] | None = None,
+    ) -> AsyncGenerator[str | AgentResult, None]:
+        """Run the agent with streaming for the final text response.
+
+        Tool-use loop is non-streaming. When the final text-only response is
+        detected, it is re-issued via messages.stream() for real-time delivery.
+
+        Yields str chunks (text deltas) followed by a final AgentResult.
+        """
+        tool_schemas = self._get_tool_schemas()
+        all_tool_calls: list[dict[str, Any]] = []
+        total_tokens = 0
+        tool_index = 0
+
+        for _turn in range(max_turns):
+            response = await self.client.messages.create(
+                model=model,
+                max_tokens=8192,
+                system=system_prompt,
+                messages=messages,
+                tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
+            )
+
+            total_tokens += response.usage.input_tokens + response.usage.output_tokens
+
+            tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+
+            if not tool_use_blocks:
+                # Final turn detected — re-issue as streaming
+                async with self.client.messages.stream(
+                    model=model,
+                    max_tokens=8192,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
+                ) as stream:
+                    full_text = ""
+                    async for text in stream.text_stream:
+                        full_text += text
+                        yield text
+
+                    final_msg = await stream.get_final_message()
+                    total_tokens += final_msg.usage.input_tokens + final_msg.usage.output_tokens
+
+                yield AgentResult(
+                    response=full_text,
+                    tool_calls=all_tool_calls,
+                    total_tokens=total_tokens,
+                )
+                return
+
+            # Intermediate turn: add assistant response, execute tools
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [_block_to_dict(b) for b in response.content],
+                }
+            )
+
+            tool_results = []
+            for tool_block in tool_use_blocks:
+                tool_name = tool_block.name
+                tool_input = tool_block.input
+
+                logger.info("Executing tool: %s", tool_name)
+                all_tool_calls.append({"tool": tool_name, "input": tool_input})
+
+                if on_tool_start:
+                    await on_tool_start(tool_name, tool_index)
+
+                tool_def = self.tools.get(tool_name)
+                if tool_def is None:
+                    result = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                else:
+                    try:
+                        result = await tool_def.handler(tool_input)
+                        if not isinstance(result, str):
+                            result = json.dumps(result, default=str)
+                    except Exception as e:
+                        logger.exception("Tool %s failed", tool_name)
+                        result = json.dumps({"error": str(e)})
+
+                if on_tool_end:
+                    await on_tool_end(tool_name, tool_index)
+
+                tool_index += 1
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_block.id,
+                        "content": result,
+                    }
+                )
+
+            messages.append({"role": "user", "content": tool_results})
+
+        # Hit max turns
+        yield AgentResult(
             response="[Agent reached maximum tool-use turns]",
             tool_calls=all_tool_calls,
             total_tokens=total_tokens,

@@ -5,15 +5,15 @@ import {
   useContext,
   useState,
   useEffect,
+  useCallback,
   type ReactNode,
 } from "react"
-import { useWebSocket, type WsStatus } from "@/hooks/use-websocket"
-import type { WsMessage } from "@/lib/types"
+import { useWebSocket, type WsStatus, type WsMessageHandler } from "@/hooks/use-websocket"
 
 interface WebSocketContextValue {
   status: WsStatus
-  lastMessage: WsMessage | null
   send: (data: unknown) => void
+  subscribe: (handler: WsMessageHandler) => () => void
   conversationId: number | null
   setConversationId: (id: number | null) => void
 }
@@ -21,7 +21,7 @@ interface WebSocketContextValue {
 const WebSocketContext = createContext<WebSocketContextValue | null>(null)
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
-  const { status, lastMessage, send } = useWebSocket()
+  const { status, send, subscribe } = useWebSocket()
   const [conversationId, setConversationIdState] = useState<number | null>(null)
 
   // Initialize from localStorage
@@ -32,27 +32,26 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   // Track conversation ID from incoming messages
   useEffect(() => {
-    if (lastMessage?.conversation_id) {
-      setConversationIdState(lastMessage.conversation_id)
-      localStorage.setItem(
-        "conversationId",
-        String(lastMessage.conversation_id)
-      )
-    }
-  }, [lastMessage])
+    return subscribe((msg) => {
+      if (msg.conversation_id) {
+        setConversationIdState(msg.conversation_id)
+        localStorage.setItem("conversationId", String(msg.conversation_id))
+      }
+    })
+  }, [subscribe])
 
-  function setConversationId(id: number | null) {
+  const setConversationId = useCallback((id: number | null) => {
     setConversationIdState(id)
     if (id === null) {
       localStorage.removeItem("conversationId")
     } else {
       localStorage.setItem("conversationId", String(id))
     }
-  }
+  }, [])
 
   return (
     <WebSocketContext.Provider
-      value={{ status, lastMessage, send, conversationId, setConversationId }}
+      value={{ status, send, subscribe, conversationId, setConversationId }}
     >
       {children}
     </WebSocketContext.Provider>

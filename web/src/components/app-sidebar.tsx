@@ -15,6 +15,7 @@ import {
   IconPuzzle,
   IconRobot,
   IconKey,
+  IconMessage,
 } from "@tabler/icons-react"
 
 import { useWs } from "@/providers/websocket-provider"
@@ -50,6 +51,7 @@ const SETTINGS_ITEMS = [
   { href: "/settings", label: "General", icon: IconShieldCog },
   { href: "/settings/skills", label: "Skills", icon: IconPuzzle },
   { href: "/settings/agents", label: "Agents", icon: IconRobot },
+  { href: "/settings/chat", label: "Chat", icon: IconMessage },
   { href: "/settings/auth", label: "Authentication", icon: IconKey },
 ] as const
 
