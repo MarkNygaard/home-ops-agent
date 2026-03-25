@@ -185,18 +185,16 @@ class Agent:
                 tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
             )
 
-            total_tokens += response.usage.input_tokens + response.usage.output_tokens
-
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
 
             if not tool_use_blocks:
-                # Final turn detected — re-issue as streaming
+                # Final turn detected — discard the non-streaming response
+                # and re-issue as streaming (don't count discarded tokens)
                 async with self.client.messages.stream(
                     model=model,
                     max_tokens=8192,
                     system=system_prompt,
                     messages=messages,
-                    tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
                 ) as stream:
                     full_text = ""
                     async for text in stream.text_stream:
@@ -212,6 +210,10 @@ class Agent:
                     total_tokens=total_tokens,
                 )
                 return
+
+            # Count tokens for intermediate turns only (final turn tokens
+            # come from the streaming re-issue above)
+            total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
             # Intermediate turn: add assistant response, execute tools
             messages.append(

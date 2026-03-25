@@ -85,7 +85,7 @@ async def get_settings():
         ),
         "chat_suggestions": db_settings.get(
             "chat_suggestions",
-            "What pods are failing?,Show me recent alerts,List pending PRs,Check cluster health",
+            "What pods are failing?|Show me recent alerts|List pending PRs|Check cluster health",
         ),
         "models": {
             "pr_review": db_settings.get("model_pr_review", settings.model_pr_review),

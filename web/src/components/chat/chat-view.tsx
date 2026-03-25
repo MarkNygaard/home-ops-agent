@@ -40,7 +40,7 @@ export function ChatView() {
   const { send, subscribe, conversationId, setConversationId } = useWs();
   const { data: settings } = useSettings();
   const suggestions = settings?.chat_suggestions
-    ? settings.chat_suggestions.split(',').map((s: string) => s.trim()).filter(Boolean)
+    ? settings.chat_suggestions.split('|').map((s: string) => s.trim()).filter(Boolean)
     : [];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isThinking, setIsThinking] = useState(false);
@@ -113,7 +113,7 @@ export function ChatView() {
         case 'stream_delta':
           setIsThinking(false);
           setIsStreaming(true);
-          setStreamingText((prev) => prev + (msg.delta ?? ''));
+          setStreamingText((prev) => prev + msg.delta);
           break;
 
         case 'stream_end':

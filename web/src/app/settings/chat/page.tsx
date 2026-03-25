@@ -1,13 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, X } from "lucide-react"
+import { Plus, X, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SiteHeader } from "@/components/site-header"
 import { useSettings } from "@/hooks/use-settings"
 import { updateSetting } from "@/lib/api"
-import { RotateCcw } from "lucide-react"
 
 const DEFAULT_SUGGESTIONS = [
   "What pods are failing?",
@@ -22,9 +21,9 @@ export default function SettingsChatPage() {
   const [statusMsg, setStatusMsg] = useState("")
   const [newSuggestion, setNewSuggestion] = useState("")
 
-  // Parse suggestions from settings (comma-separated)
+  // Parse suggestions from settings (pipe-separated to allow commas in text)
   const savedSuggestions = settings?.chat_suggestions
-    ? settings.chat_suggestions.split(",").map((s) => s.trim()).filter(Boolean)
+    ? settings.chat_suggestions.split("|").map((s) => s.trim()).filter(Boolean)
     : []
 
   const [suggestions, setSuggestions] = useState<string[] | null>(null)
@@ -51,7 +50,7 @@ export default function SettingsChatPage() {
   }
 
   async function handleSave() {
-    await updateSetting("chat_suggestions", current.join(","))
+    await updateSetting("chat_suggestions", current.join("|"))
     setDirty(false)
     setSuggestions(null)
     setStatusMsg("Saved")
