@@ -4,7 +4,9 @@ import { useState, useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import Link from "next/link"
 import { useWs } from "@/providers/websocket-provider"
+import { useCosts } from "@/hooks/use-costs"
 import { useSettings } from "@/hooks/use-settings"
 import { fetchStatus, triggerPrCheck } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -23,6 +25,26 @@ function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
   return `${mins}:${secs.toString().padStart(2, "0")}`
+}
+
+function CostBadge() {
+  const { data: costs } = useCosts(30)
+  if (!costs || costs.total_requests === 0) return null
+
+  const total = costs.total_cost_usd
+  const label = total < 0.01 ? `$${total.toFixed(4)}` : `$${total.toFixed(2)}`
+
+  return (
+    <>
+      <span className="ml-auto" />
+      <Link
+        href="/settings/costs"
+        className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        30d: <span className="font-mono text-foreground">{label}</span>
+      </Link>
+    </>
+  )
 }
 
 export function StatusBar() {
@@ -114,6 +136,8 @@ export function StatusBar() {
           </Button>
         </>
       )}
+
+      <CostBadge />
     </div>
   )
 }

@@ -6,7 +6,6 @@ import { StatusBar } from "@/components/dashboard/status-bar"
 import { AgentCards } from "@/components/dashboard/agent-cards"
 import { AgentFlow } from "@/components/dashboard/agent-flow"
 import { RecentActivity } from "@/components/dashboard/recent-activity"
-import { CostTracker } from "@/components/dashboard/cost-tracker"
 import { SkillsOverview } from "@/components/dashboard/skills-overview"
 
 export default function DashboardPage() {
@@ -21,7 +20,6 @@ export default function DashboardPage() {
           <AgentCards activeAgent={activeAgent} onSelect={setActiveAgent} />
           <AgentFlow activeAgent={activeAgent} />
           <RecentActivity />
-          <CostTracker />
           <SkillsOverview />
         </div>
       </div>
