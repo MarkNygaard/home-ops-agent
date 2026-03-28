@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent, AgentResult
+from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
@@ -305,6 +306,12 @@ async def check_prs():
         result = await _review_pr(pr, agent)
         if result:
             await _save_task(pr, result)
+            await record_usage(
+                model=result.model,
+                task_type="pr_review",
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+            )
             await _notify_review(pr, result)
             reviewed_count += 1
             logger.info(

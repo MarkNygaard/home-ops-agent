@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.database import AgentTask, Conversation, Message, async_session
@@ -86,6 +87,13 @@ async def attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
                 )
                 session.add(task)
                 await session.commit()
+
+            await record_usage(
+                model=result.model,
+                task_type="code_fix",
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+            )
 
             # Notify about the fix
             from home_ops_agent.agent.tools.ntfy import publish_notification

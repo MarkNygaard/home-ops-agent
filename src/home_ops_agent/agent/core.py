@@ -28,6 +28,9 @@ class AgentResult:
     response: str
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    model: str = ""
 
 
 class Agent:
@@ -78,6 +81,8 @@ class Agent:
         tool_schemas = self._get_tool_schemas()
         all_tool_calls: list[dict[str, Any]] = []
         total_tokens = 0
+        total_input = 0
+        total_output = 0
 
         for _turn in range(max_turns):
             response = await self.client.messages.create(
@@ -88,6 +93,8 @@ class Agent:
                 tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
             )
 
+            total_input += response.usage.input_tokens
+            total_output += response.usage.output_tokens
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
             # Check if the response contains tool use
@@ -101,6 +108,9 @@ class Agent:
                     response=final_text,
                     tool_calls=all_tool_calls,
                     total_tokens=total_tokens,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    model=model,
                 )
 
             # Append assistant message with all content blocks
@@ -153,6 +163,9 @@ class Agent:
             response="[Agent reached maximum tool-use turns]",
             tool_calls=all_tool_calls,
             total_tokens=total_tokens,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            model=model,
         )
 
     async def run_streaming(
@@ -174,6 +187,8 @@ class Agent:
         tool_schemas = self._get_tool_schemas()
         all_tool_calls: list[dict[str, Any]] = []
         total_tokens = 0
+        total_input = 0
+        total_output = 0
         tool_index = 0
 
         for _turn in range(max_turns):
@@ -202,17 +217,24 @@ class Agent:
                         yield text
 
                     final_msg = await stream.get_final_message()
+                    total_input += final_msg.usage.input_tokens
+                    total_output += final_msg.usage.output_tokens
                     total_tokens += final_msg.usage.input_tokens + final_msg.usage.output_tokens
 
                 yield AgentResult(
                     response=full_text,
                     tool_calls=all_tool_calls,
                     total_tokens=total_tokens,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    model=model,
                 )
                 return
 
             # Count tokens for intermediate turns only (final turn tokens
             # come from the streaming re-issue above)
+            total_input += response.usage.input_tokens
+            total_output += response.usage.output_tokens
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
             # Intermediate turn: add assistant response, execute tools
@@ -265,6 +287,9 @@ class Agent:
             response="[Agent reached maximum tool-use turns]",
             tool_calls=all_tool_calls,
             total_tokens=total_tokens,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            model=model,
         )
 
 

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from home_ops_agent.agent.skills import init_registry
 from home_ops_agent.api.chat import router as chat_router
 from home_ops_agent.api.chat import set_mcp_tools
+from home_ops_agent.api.costs import router as costs_router
 from home_ops_agent.api.settings import router as settings_router
 from home_ops_agent.api.skills import router as skills_router
 from home_ops_agent.api.status import router as status_router
@@ -94,6 +95,7 @@ app.include_router(status_router)
 app.include_router(chat_router)
 app.include_router(settings_router)
 app.include_router(skills_router)
+app.include_router(costs_router)
 
 # Static files (web UI) with catch-all for Next.js client-side routing
 static_dir = Path(__file__).parent / "static"

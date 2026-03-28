@@ -9,6 +9,7 @@ import httpx
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
@@ -149,6 +150,13 @@ async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
         session.add(task)
         await session.commit()
 
+    await record_usage(
+        model=result.model,
+        task_type="alert_triage",
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+
     return response, action
 
 
@@ -212,6 +220,13 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
         )
         session.add(task)
         await session.commit()
+
+    await record_usage(
+        model=result.model,
+        task_type="alert_fix",
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
 
     logger.info("Alert fix completed: %s", alert.get("title"))
 
