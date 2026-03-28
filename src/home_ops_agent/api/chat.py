@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from home_ops_agent.agent.core import Agent, AgentResult
+from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.memory import extract_memories
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
@@ -193,6 +194,14 @@ async def websocket_chat(websocket: WebSocket):
                             "tokens": result.total_tokens,
                         }
                     )
+                )
+
+                # Record API usage
+                await record_usage(
+                    model=result.model,
+                    task_type="chat",
+                    input_tokens=result.input_tokens,
+                    output_tokens=result.output_tokens,
                 )
 
                 # Extract memories in the background (don't block the chat)

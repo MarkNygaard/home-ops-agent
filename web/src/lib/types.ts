@@ -112,3 +112,28 @@ export interface StatusResponse {
   has_credentials: boolean
   last_pr_check_at: string | null
 }
+
+export interface CostByModel {
+  model: string
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
+  requests: number
+}
+
+export interface CostByTask {
+  task_type: string
+  cost_usd: number
+  requests: number
+}
+
+export interface CostsResponse {
+  days: number
+  total_cost_usd: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_requests: number
+  by_model: CostByModel[]
+  by_task: CostByTask[]
+  pricing: Record<string, { input: number; output: number }>
+}

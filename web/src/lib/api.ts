@@ -7,6 +7,7 @@ import type {
   AgentTask,
   PromptsResponse,
   StatusResponse,
+  CostsResponse,
 } from "./types"
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -106,4 +107,10 @@ export function fetchStatus(): Promise<StatusResponse> {
 // PR check
 export function triggerPrCheck(): Promise<{ status: string }> {
   return fetchJson("/api/pr-check", { method: "POST" })
+}
+
+// Costs
+export function fetchCosts(days?: number): Promise<CostsResponse> {
+  const url = days !== undefined ? `/api/costs?days=${days}` : "/api/costs"
+  return fetchJson<CostsResponse>(url)
 }
