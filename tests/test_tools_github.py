@@ -219,6 +219,93 @@ async def test_create_pr_comment_success(httpx_mock, mock_settings):
     assert result["comment_id"] == 999
 
 
+async def test_create_pr_comment_with_head_sha_creates_new(httpx_mock, mock_settings):
+    """First call with head_sha → list comments (none match), POST new with marker."""
+    # GET issue comments returns empty list
+    httpx_mock.add_response(method="GET", json=[])
+    # POST creates new comment
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 1001})
+
+    result = json.loads(
+        await create_pr_comment(
+            {"pr_number": 42, "body": "Initial review", "head_sha": "abc123def456"}
+        )
+    )
+    assert result["status"] == "ok"
+    assert result["comment_id"] == 1001
+    assert result["action"] == "created"
+
+
+async def test_create_pr_comment_with_head_sha_updates_existing(httpx_mock, mock_settings):
+    """Second call with same head_sha → finds existing marker, PATCHes it."""
+    marker = "<!-- home-ops-agent:review:sha=abc123d -->"
+    # GET returns a comment carrying the marker
+    httpx_mock.add_response(
+        method="GET",
+        json=[
+            {"id": 1001, "body": f"Initial review\n\n{marker}"},
+            {"id": 1002, "body": "Unrelated comment"},
+        ],
+    )
+    # PATCH updates that comment
+    httpx_mock.add_response(method="PATCH", status_code=200, json={"id": 1001})
+
+    result = json.loads(
+        await create_pr_comment(
+            {"pr_number": 42, "body": "Updated review", "head_sha": "abc123def456"}
+        )
+    )
+    assert result["status"] == "ok"
+    assert result["comment_id"] == 1001
+    assert result["action"] == "updated"
+
+
+async def test_create_pr_comment_with_different_sha_creates_new(httpx_mock, mock_settings):
+    """A new SHA → no matching marker → POST a new comment for the new SHA."""
+    old_marker = "<!-- home-ops-agent:review:sha=oldshaa -->"
+    # GET returns a comment for an older SHA
+    httpx_mock.add_response(
+        method="GET",
+        json=[{"id": 1001, "body": f"Old review\n\n{old_marker}"}],
+    )
+    # POST creates a new comment for the new SHA
+    httpx_mock.add_response(method="POST", status_code=201, json={"id": 2001})
+
+    result = json.loads(
+        await create_pr_comment(
+            {"pr_number": 42, "body": "New review", "head_sha": "newsha123"}
+        )
+    )
+    assert result["status"] == "ok"
+    assert result["comment_id"] == 2001
+    assert result["action"] == "created"
+
+
+async def test_pr_review_comment_exists_true(httpx_mock, mock_settings):
+    """pr_review_comment_exists returns True when marker for SHA is found."""
+    from home_ops_agent.agent.tools.github import pr_review_comment_exists
+
+    marker = "<!-- home-ops-agent:review:sha=abc123d -->"
+    httpx_mock.add_response(json=[{"id": 1, "body": f"prior review\n\n{marker}"}])
+    assert await pr_review_comment_exists(42, "abc123def") is True
+
+
+async def test_pr_review_comment_exists_false(httpx_mock, mock_settings):
+    """pr_review_comment_exists returns False when no matching marker present."""
+    from home_ops_agent.agent.tools.github import pr_review_comment_exists
+
+    httpx_mock.add_response(json=[{"id": 1, "body": "unrelated comment"}])
+    assert await pr_review_comment_exists(42, "abc123def") is False
+
+
+async def test_pr_review_comment_exists_no_sha(mock_settings):
+    """pr_review_comment_exists returns False (no GitHub call) when head_sha is empty."""
+    from home_ops_agent.agent.tools.github import pr_review_comment_exists
+
+    # No httpx_mock fixture means no HTTP calls allowed — proves we short-circuit
+    assert await pr_review_comment_exists(42, "") is False
+
+
 async def test_get_file_content_base64(httpx_mock, mock_settings):
     import base64
 

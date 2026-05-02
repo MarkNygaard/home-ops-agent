@@ -141,16 +141,87 @@ async def get_check_runs(params: dict) -> str:
         return json.dumps(checks)
 
 
+def _review_marker(head_sha: str) -> str:
+    """Marker embedded in agent review comments for idempotent updates."""
+    short_sha = head_sha[:7] if head_sha else "nosha"
+    return f"<!-- home-ops-agent:review:sha={short_sha} -->"
+
+
+async def _find_existing_review_comment(
+    client: httpx.AsyncClient, pr_number: int, marker: str
+) -> int | None:
+    """Find an existing agent review comment on this PR carrying the given marker.
+
+    Returns the comment_id if found, None otherwise.
+    """
+    url = f"{GITHUB_API}/repos/{settings.github_repo}/issues/{pr_number}/comments"
+    resp = await client.get(url, headers=_headers(), params={"per_page": 100})
+    resp.raise_for_status()
+    for comment in resp.json():
+        if marker in (comment.get("body") or ""):
+            return comment["id"]
+    return None
+
+
+async def pr_review_comment_exists(pr_number: int, head_sha: str) -> bool:
+    """Public helper: does an agent review comment already exist on this PR for this SHA?
+
+    Used by the PR monitor as a belt-and-suspenders dedup on top of the DB-backed
+    `_already_reviewed` check, so that worker restarts or DB issues don't cause
+    redundant review comments to be posted on the same PR/SHA.
+    """
+    if not head_sha:
+        return False
+    marker = _review_marker(head_sha)
+    try:
+        async with httpx.AsyncClient() as client:
+            return await _find_existing_review_comment(client, pr_number, marker) is not None
+    except Exception:
+        logger.exception("Failed to check existing review comment on PR #%s", pr_number)
+        return False
+
+
 async def create_pr_comment(params: dict) -> str:
-    """Post a comment on a PR."""
+    """Post (or upsert) a comment on a PR.
+
+    If `head_sha` is provided, the comment is treated as an idempotent agent
+    review for that SHA: an HTML marker is embedded in the body, and on a
+    second call with the same head_sha the existing comment is PATCHed
+    instead of a new one being posted. Without `head_sha`, behavior is the
+    legacy POST-only path (free-form comment, no dedup).
+    """
     pr_number = params["pr_number"]
     body = params["body"]
+    head_sha = params.get("head_sha", "")
 
     async with httpx.AsyncClient() as client:
+        if head_sha:
+            marker = _review_marker(head_sha)
+            existing_id = await _find_existing_review_comment(client, pr_number, marker)
+            full_body = f"{body}\n\n{marker}"
+
+            if existing_id is not None:
+                url = (
+                    f"{GITHUB_API}/repos/{settings.github_repo}"
+                    f"/issues/comments/{existing_id}"
+                )
+                resp = await client.patch(url, headers=_headers(), json={"body": full_body})
+                resp.raise_for_status()
+                return json.dumps(
+                    {"status": "ok", "comment_id": existing_id, "action": "updated"}
+                )
+
+            url = f"{GITHUB_API}/repos/{settings.github_repo}/issues/{pr_number}/comments"
+            resp = await client.post(url, headers=_headers(), json={"body": full_body})
+            resp.raise_for_status()
+            return json.dumps(
+                {"status": "ok", "comment_id": resp.json()["id"], "action": "created"}
+            )
+
+        # Legacy path — no head_sha, no marker, always create new
         url = f"{GITHUB_API}/repos/{settings.github_repo}/issues/{pr_number}/comments"
         resp = await client.post(url, headers=_headers(), json={"body": body})
         resp.raise_for_status()
-
         return json.dumps({"status": "ok", "comment_id": resp.json()["id"]})
 
 
@@ -416,12 +487,26 @@ def get_github_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="github_create_pr_comment",
-            description="Post a comment on a pull request with your review analysis.",
+            description=(
+                "Post (or upsert) a review comment on a pull request."
+                " If you pass head_sha, the comment is idempotent: a second call"
+                " with the same head_sha UPDATES the existing comment instead of"
+                " posting a duplicate. Use head_sha for standard PR reviews;"
+                " omit it only for free-form additional comments."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "pr_number": {"type": "integer", "description": "PR number"},
                     "body": {"type": "string", "description": "Comment body (markdown supported)"},
+                    "head_sha": {
+                        "type": "string",
+                        "description": (
+                            "If provided, the comment is upserted (created or"
+                            " updated) per-SHA. Pass the PR's head_sha to enable"
+                            " idempotent reviews and avoid duplicate comments."
+                        ),
+                    },
                 },
                 "required": ["pr_number", "body"],
             },
