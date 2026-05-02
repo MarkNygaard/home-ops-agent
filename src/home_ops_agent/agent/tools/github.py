@@ -201,15 +201,10 @@ async def create_pr_comment(params: dict) -> str:
             full_body = f"{body}\n\n{marker}"
 
             if existing_id is not None:
-                url = (
-                    f"{GITHUB_API}/repos/{settings.github_repo}"
-                    f"/issues/comments/{existing_id}"
-                )
+                url = f"{GITHUB_API}/repos/{settings.github_repo}/issues/comments/{existing_id}"
                 resp = await client.patch(url, headers=_headers(), json={"body": full_body})
                 resp.raise_for_status()
-                return json.dumps(
-                    {"status": "ok", "comment_id": existing_id, "action": "updated"}
-                )
+                return json.dumps({"status": "ok", "comment_id": existing_id, "action": "updated"})
 
             url = f"{GITHUB_API}/repos/{settings.github_repo}/issues/{pr_number}/comments"
             resp = await client.post(url, headers=_headers(), json={"body": full_body})
