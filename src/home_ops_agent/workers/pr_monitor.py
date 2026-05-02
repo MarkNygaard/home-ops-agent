@@ -128,11 +128,25 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
 
 async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
     """Run the agent to review a single PR."""
+    from home_ops_agent.agent.tools.github import pr_review_comment_exists
+
     pr_number = pr["number"]
     head_sha = pr.get("head_sha", "")
 
     if await _already_reviewed(pr_number, head_sha):
-        logger.debug("PR #%s already reviewed at SHA %s, skipping", pr_number, head_sha[:8])
+        logger.debug("PR #%s already reviewed at SHA %s (DB), skipping", pr_number, head_sha[:8])
+        return None
+
+    # Belt-and-suspenders: even if the DB lost track, if a previous run posted
+    # an agent review comment for this exact SHA, skip. Prevents the redundant-
+    # review comment storm seen on PR #294 where 5 reviews stacked up on the
+    # same SHA across worker cycles.
+    if head_sha and await pr_review_comment_exists(pr_number, head_sha):
+        logger.info(
+            "PR #%s has an existing agent review comment at SHA %s, skipping",
+            pr_number,
+            head_sha[:8],
+        )
         return None
 
     pr_mode = await _get_pr_mode()
