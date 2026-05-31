@@ -371,6 +371,8 @@ class Agent:
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
+                # The ChatGPT backend rejects stored responses — must be false.
+                store=False,
                 **({"tools": tools} if tools else {}),
             )
 
@@ -432,6 +434,8 @@ class Agent:
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
+                # The ChatGPT backend rejects stored responses — must be false.
+                store=False,
                 **({"tools": tools} if tools else {}),
             )
 
@@ -443,6 +447,7 @@ class Agent:
                     model=model,
                     instructions=system_prompt,
                     input=input_items,
+                    store=False,
                     **({"tools": tools} if tools else {}),
                 ) as stream:
                     full_text = ""
