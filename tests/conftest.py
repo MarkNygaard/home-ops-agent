@@ -48,7 +48,7 @@ _ASYNC_SESSION_PATCHES = [
     "home_ops_agent.workers.alert_subscriber.async_session",
     "home_ops_agent.api.status.async_session",
     "home_ops_agent.api.settings.async_session",
-    "home_ops_agent.auth.oauth.async_session",
+    "home_ops_agent.auth.credentials.async_session",
 ]
 
 
@@ -173,8 +173,7 @@ def mock_settings():
 
     test_settings = Settings(
         anthropic_api_key="test-api-key",
-        anthropic_client_id="",
-        anthropic_client_secret="",
+        kimi_api_key="",
         database_url="sqlite+aiosqlite:///:memory:",
         github_token="test-gh-token",
         github_repo="test-owner/test-repo",
@@ -192,7 +191,7 @@ def mock_settings():
         model_alert_triage="claude-haiku-4-5",
         model_alert_fix="claude-sonnet-4-6",
         model_code_fix="claude-sonnet-4-6",
-        model_deep_review="claude-opus-4-6",
+        model_deep_review="claude-opus-4-8",
         model_chat="claude-sonnet-4-6",
     )
 

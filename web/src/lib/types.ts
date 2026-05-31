@@ -1,13 +1,20 @@
 // --- API response types ---
 
+export interface ProviderStatus {
+  configured: boolean
+  hint?: string | null
+  account_id?: string | null
+  expires_at?: string | null
+}
+
 export interface Settings {
   agent_enabled: boolean
   pr_mode: string
-  auth_method: string
-  has_api_key: boolean
-  api_key_hint: string | null
-  oauth_status: string
-  oauth_token_expires: string | null
+  providers: {
+    anthropic: ProviderStatus
+    kimi: ProviderStatus
+    openai: ProviderStatus
+  }
   models: Record<string, string>
   alert_cooldown_seconds: number
   ntfy_topics: string

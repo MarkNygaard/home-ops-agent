@@ -29,6 +29,25 @@ export function updateSetting(key: string, value: string): Promise<void> {
   })
 }
 
+export function importOpenAITokens(body: {
+  access_token: string
+  refresh_token: string
+  account_id: string
+  expires_in?: number
+}): Promise<{ status: string; expires_at?: string; error?: string }> {
+  return fetchJson("/api/auth/openai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+}
+
+export function disconnectProvider(
+  provider: string
+): Promise<{ status: string; error?: string }> {
+  return fetchJson("/api/auth/" + provider, { method: "DELETE" })
+}
+
 // Skills
 export function fetchSkills(): Promise<Skill[]> {
   return fetchJson<Skill[]>("/api/skills")

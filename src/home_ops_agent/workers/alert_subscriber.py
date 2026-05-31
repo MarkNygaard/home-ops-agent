@@ -13,7 +13,7 @@ from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
-from home_ops_agent.auth.oauth import get_claude_credentials
+from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
 
@@ -245,12 +245,12 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
 
     _cooldowns[alert_key] = datetime.now(UTC)
 
-    api_key, oauth_token = await get_claude_credentials()
-    if not api_key and not oauth_token:
-        logger.warning("No Claude credentials, forwarding raw alert")
+    credentials = await build_credentials()
+    if not credentials.has_any():
+        logger.warning("No model credentials, forwarding raw alert")
         return
 
-    agent = Agent(api_key=api_key, oauth_token=oauth_token)
+    agent = Agent(credentials)
     skill_tools = await registry.get_all_enabled_tools()
     agent.register_tools(skill_tools)
     if mcp_tools:

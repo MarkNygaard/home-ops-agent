@@ -6,7 +6,7 @@ import {
 } from "@tabler/icons-react"
 import { Badge } from "@/components/ui/badge"
 import { useSettings } from "@/hooks/use-settings"
-import { MODEL_MIGRATION } from "@/lib/constants"
+import { MODEL_MIGRATION, MODEL_OPTIONS } from "@/lib/constants"
 import { cn } from "@/lib/utils"
 
 const FLOW_DEFS = [
@@ -38,8 +38,13 @@ export function AgentCards({ activeAgent, onSelect }: AgentCardsProps) {
     const raw = settings?.models?.[key]
     if (!raw) return "Sonnet 4.6"
     const migrated = MODEL_MIGRATION[raw] || raw
+    const option = MODEL_OPTIONS.find((o) => o.value === migrated)
+    if (option) return option.label
     if (migrated.includes("haiku")) return "Haiku 4.5"
-    if (migrated.includes("opus")) return "Opus 4.6"
+    if (migrated.includes("opus")) return "Opus 4.8"
+    if (migrated.includes("kimi")) return "Kimi for Coding"
+    if (migrated.includes("gpt")) return "GPT-5.5"
+    if (migrated.includes("codex")) return "Codex 5.3"
     return "Sonnet 4.6"
   }
 

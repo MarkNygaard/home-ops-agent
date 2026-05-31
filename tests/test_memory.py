@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from home_ops_agent.auth.credentials import Credentials
+
 # --- Pure logic tests ---
 
 
@@ -67,9 +69,9 @@ async def test_extract_memories_no_credentials():
     from home_ops_agent.agent.memory import extract_memories
 
     with patch(
-        "home_ops_agent.agent.memory.get_claude_credentials",
+        "home_ops_agent.agent.memory.build_credentials",
         new_callable=AsyncMock,
-        return_value=(None, None),
+        return_value=Credentials(),
     ):
         result = await extract_memories(
             1,
@@ -85,9 +87,9 @@ async def test_extract_memories_short_text():
     from home_ops_agent.agent.memory import extract_memories
 
     with patch(
-        "home_ops_agent.agent.memory.get_claude_credentials",
+        "home_ops_agent.agent.memory.build_credentials",
         new_callable=AsyncMock,
-        return_value=("sk-test", None),
+        return_value=Credentials(anthropic_api_key="sk-test"),
     ):
         result = await extract_memories(
             1,
@@ -117,9 +119,9 @@ async def test_extract_memories_parses_json(db_session):
 
     with (
         patch(
-            "home_ops_agent.agent.memory.get_claude_credentials",
+            "home_ops_agent.agent.memory.build_credentials",
             new_callable=AsyncMock,
-            return_value=("sk-test", None),
+            return_value=Credentials(anthropic_api_key="sk-test"),
         ),
         patch("home_ops_agent.agent.memory.anthropic.AsyncAnthropic", return_value=mock_client),
     ):
@@ -178,9 +180,9 @@ async def test_extract_memories_api_error():
 
     with (
         patch(
-            "home_ops_agent.agent.memory.get_claude_credentials",
+            "home_ops_agent.agent.memory.build_credentials",
             new_callable=AsyncMock,
-            return_value=("sk-test", None),
+            return_value=Credentials(anthropic_api_key="sk-test"),
         ),
         patch("home_ops_agent.agent.memory.anthropic.AsyncAnthropic", return_value=mock_client),
     ):

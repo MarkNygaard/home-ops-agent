@@ -130,10 +130,22 @@ In the ntfy mobile app, subscribe to the `home-ops-agent` topic on your ntfy ser
 | **Alert Triage** | Haiku 4.5 | First responder — checks pods, logs, metrics, determines severity |
 | **Alert Fix** | Sonnet 4.6 | Takes corrective action — restarts pods, reconciles Flux |
 | **Code Fix** | Sonnet 4.6 | Creates branches, commits fixes, opens PRs. Auto-merges after CI passes. |
-| **Deep Review** | Opus 4.6 | Escalation agent for critical PRs in Fully Autonomous mode |
+| **Deep Review** | Opus 4.8 | Escalation agent for critical PRs in Fully Autonomous mode |
 | **Chat** | Sonnet 4.6 | Interactive conversation about cluster state |
 
 All models and prompts are configurable via the Settings UI.
+
+### Providers
+
+Models from three providers can be configured at once — each agent's assigned model is routed to its provider automatically:
+
+| Provider | Auth | Example models |
+|----------|------|----------------|
+| **Anthropic** | API key | Haiku 4.5, Sonnet 4.6, Opus 4.8 |
+| **Kimi for Coding** | API key (Anthropic-compatible endpoint) | `kimi-for-coding` |
+| **OpenAI / ChatGPT** | Imported ChatGPT-subscription OAuth tokens (auto-refreshed) | `gpt-5.5`, `codex-5.3` |
+
+Configure each provider independently under Settings → Authentication. For OpenAI, authenticate locally (e.g. `codex login`) and paste the resulting access/refresh tokens and account ID.
 
 ## PR Modes
 

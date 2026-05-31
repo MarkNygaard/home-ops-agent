@@ -75,21 +75,29 @@ def test_agent_result_defaults():
 
 
 def test_agent_requires_credentials():
-    with pytest.raises(ValueError, match="api_key or oauth_token"):
+    with pytest.raises(ValueError, match="credentials"):
         Agent()
 
 
-@patch("home_ops_agent.agent.core.anthropic.AsyncAnthropic")
-def test_agent_with_api_key(mock_cls):
+def test_agent_with_api_key():
+    # The api_key convenience wraps into anthropic-only credentials.
     agent = Agent(api_key="sk-test")
-    assert agent.client is not None
-    mock_cls.assert_called_once_with(api_key="sk-test")
+    assert agent.credentials.anthropic_api_key == "sk-test"
+    assert agent.credentials.available_providers() == {"anthropic"}
 
 
-@patch("home_ops_agent.agent.core.anthropic.AsyncAnthropic")
-def test_agent_with_oauth_token(mock_cls):
-    Agent(oauth_token="oauth-token-123")
-    mock_cls.assert_called_once_with(auth_token="oauth-token-123")
+def test_agent_with_credentials_multiple_providers():
+    from home_ops_agent.auth.credentials import Credentials
+
+    agent = Agent(Credentials(anthropic_api_key="sk-a", kimi_api_key="sk-k"))
+    assert agent.credentials.available_providers() == {"anthropic", "kimi"}
+
+
+def test_agent_with_no_credentials_raises():
+    from home_ops_agent.auth.credentials import Credentials
+
+    with pytest.raises(ValueError, match="No provider credentials"):
+        Agent(Credentials())
 
 
 # --- Tool registration tests ---
@@ -124,14 +132,12 @@ def test_register_tools_multiple(mock_cls):
     assert len(agent.tools) == 3
 
 
-@patch("home_ops_agent.agent.core.anthropic.AsyncAnthropic")
-def test_get_tool_schemas_empty(mock_cls):
+def test_get_tool_schemas_empty():
     agent = Agent(api_key="sk-test")
-    assert agent._get_tool_schemas() == []
+    assert agent._anthropic_tool_schemas() == []
 
 
-@patch("home_ops_agent.agent.core.anthropic.AsyncAnthropic")
-def test_get_tool_schemas_format(mock_cls):
+def test_get_tool_schemas_format():
     agent = Agent(api_key="sk-test")
 
     async def h(p):
@@ -145,7 +151,7 @@ def test_get_tool_schemas_format(mock_cls):
             handler=h,
         )
     )
-    schemas = agent._get_tool_schemas()
+    schemas = agent._anthropic_tool_schemas()
     assert len(schemas) == 1
     assert schemas[0]["name"] == "my_tool"
     assert schemas[0]["description"] == "My tool"

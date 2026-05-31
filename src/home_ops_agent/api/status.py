@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Query
 from sqlalchemy import delete, desc, func, select
 
-from home_ops_agent.auth.oauth import get_auth_method, get_valid_token
+from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Memory, Message, async_session
 
@@ -30,14 +30,9 @@ async def agent_status():
     """Get agent status overview."""
     from home_ops_agent.workers.pr_monitor import last_pr_check_at
 
-    auth_method = await get_auth_method()
-    has_credentials = False
-
-    if auth_method == "oauth":
-        token = await get_valid_token()
-        has_credentials = token is not None
-    else:
-        has_credentials = bool(settings.anthropic_api_key)
+    credentials = await build_credentials()
+    available_providers = sorted(credentials.available_providers())
+    has_credentials = credentials.has_any()
 
     async with async_session() as session:
         # Count tasks by type
@@ -53,7 +48,7 @@ async def agent_status():
         latest_task = result.scalar_one_or_none()
 
     return {
-        "auth_method": auth_method,
+        "providers": available_providers,
         "has_credentials": has_credentials,
         "github_repo": settings.github_repo,
         "cluster_domain": settings.cluster_domain,

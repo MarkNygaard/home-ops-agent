@@ -13,7 +13,7 @@ from home_ops_agent.agent.memory import extract_memories
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
-from home_ops_agent.auth.oauth import get_claude_credentials
+from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.database import Conversation, Message, async_session
 
 logger = logging.getLogger(__name__)
@@ -103,22 +103,22 @@ async def websocket_chat(websocket: WebSocket):
                     messages.append({"role": "assistant", "content": m.content.get("text", "")})
 
             # Run agent
-            api_key, oauth_token = await get_claude_credentials()
-            if not api_key and not oauth_token:
+            credentials = await build_credentials()
+            if not credentials.has_any():
                 await websocket.send_text(
                     json.dumps(
                         {
                             "type": "error",
                             "message": (
-                                "No Claude credentials configured."
-                                " Please set up OAuth or an API key in Settings."
+                                "No model credentials configured."
+                                " Please add an API key or connect a provider in Settings."
                             ),
                         }
                     )
                 )
                 continue
 
-            agent = Agent(api_key=api_key, oauth_token=oauth_token)
+            agent = Agent(credentials)
             skill_tools = await registry.get_all_enabled_tools()
             agent.register_tools(skill_tools)
             agent.register_tools(_mcp_tools)
