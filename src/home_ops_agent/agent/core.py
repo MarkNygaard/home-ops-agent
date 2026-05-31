@@ -367,14 +367,19 @@ class Agent:
         total_tokens = total_input = total_output = 0
 
         for _turn in range(max_turns):
-            resp = await client.responses.create(
+            # The ChatGPT backend requires streaming (stream=true) and rejects
+            # stored responses (store=false); drain the stream for the final
+            # Response, which carries the tool calls and usage.
+            async with client.responses.stream(
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
-                # The ChatGPT backend rejects stored responses — must be false.
                 store=False,
                 **({"tools": tools} if tools else {}),
-            )
+            ) as stream:
+                async for _event in stream:
+                    pass
+                resp = await stream.get_final_response()
 
             total_input += resp.usage.input_tokens
             total_output += resp.usage.output_tokens
@@ -430,40 +435,32 @@ class Agent:
         tool_index = 0
 
         for _turn in range(max_turns):
-            resp = await client.responses.create(
+            # The ChatGPT backend requires streaming. Stream every turn,
+            # forwarding text deltas live; the final Response carries any tool
+            # calls and the usage totals.
+            full_text = ""
+            async with client.responses.stream(
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
-                # The ChatGPT backend rejects stored responses — must be false.
                 store=False,
                 **({"tools": tools} if tools else {}),
-            )
+            ) as stream:
+                async for event in stream:
+                    if event.type == "response.output_text.delta":
+                        full_text += event.delta
+                        yield event.delta
+                resp = await stream.get_final_response()
+
+            total_input += resp.usage.input_tokens
+            total_output += resp.usage.output_tokens
+            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
 
             func_calls = [o for o in resp.output if o.type == "function_call"]
 
             if not func_calls:
-                # Re-issue the final turn as a stream for real-time delivery.
-                async with client.responses.stream(
-                    model=model,
-                    instructions=system_prompt,
-                    input=input_items,
-                    store=False,
-                    **({"tools": tools} if tools else {}),
-                ) as stream:
-                    full_text = ""
-                    async for event in stream:
-                        if event.type == "response.output_text.delta":
-                            full_text += event.delta
-                            yield event.delta
-                    final = await stream.get_final_response()
-                    total_input += final.usage.input_tokens
-                    total_output += final.usage.output_tokens
-                    total_tokens += final.usage.input_tokens + final.usage.output_tokens
-                    if not full_text:
-                        full_text = _openai_output_text(final)
-
                 yield AgentResult(
-                    response=full_text,
+                    response=full_text or _openai_output_text(resp),
                     tool_calls=all_tool_calls,
                     total_tokens=total_tokens,
                     input_tokens=total_input,
@@ -471,10 +468,6 @@ class Agent:
                     model=model,
                 )
                 return
-
-            total_input += resp.usage.input_tokens
-            total_output += resp.usage.output_tokens
-            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
 
             for item in resp.output:
                 input_items.append(item.model_dump())
