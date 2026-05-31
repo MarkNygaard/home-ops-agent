@@ -353,6 +353,48 @@ class Agent:
 
     # --- OpenAI / Codex backend (Responses API) ---
 
+    async def _consume_openai_stream(self, stream, state) -> AsyncGenerator[str, None]:
+        """Iterate a Responses stream: yield text deltas, record items + usage.
+
+        Robust to the ChatGPT backend, whose final Response may leave
+        ``output``/``usage`` unset. Output items are collected from
+        ``response.output_item.done`` events and usage from
+        ``response.completed``; ``get_final_response()`` is only a fallback.
+        """
+        async for event in stream:
+            etype = getattr(event, "type", "")
+            if etype == "response.output_text.delta":
+                delta = getattr(event, "delta", "") or ""
+                if delta:
+                    state.text += delta
+                    yield delta
+            elif etype == "response.output_item.done":
+                item = getattr(event, "item", None)
+                if item is not None:
+                    state.output_items.append(item)
+            elif etype == "response.completed":
+                response = getattr(event, "response", None)
+                if response is not None:
+                    if getattr(response, "usage", None) is not None:
+                        state.usage = response.usage
+                    if getattr(response, "output", None):
+                        state.output_items = list(response.output)
+
+        # Fall back to the final response only if events didn't supply what we
+        # need (the ChatGPT backend doesn't always populate these on the stream).
+        if state.usage is None or not state.output_items:
+            try:
+                final = await stream.get_final_response()
+            except Exception:
+                final = None
+            if final is not None:
+                if state.usage is None:
+                    state.usage = getattr(final, "usage", None)
+                if not state.output_items and getattr(final, "output", None):
+                    state.output_items = list(final.output)
+                if not state.text:
+                    state.text = _text_from_items(getattr(final, "output", None))
+
     async def _run_openai(
         self,
         system_prompt: str,
@@ -367,9 +409,8 @@ class Agent:
         total_tokens = total_input = total_output = 0
 
         for _turn in range(max_turns):
-            # The ChatGPT backend requires streaming (stream=true) and rejects
-            # stored responses (store=false); drain the stream for the final
-            # Response, which carries the tool calls and usage.
+            # ChatGPT backend requires streaming (stream=true) + store=false.
+            state = _OpenAIStreamState()
             async with client.responses.stream(
                 model=model,
                 instructions=system_prompt,
@@ -377,18 +418,19 @@ class Agent:
                 store=False,
                 **({"tools": tools} if tools else {}),
             ) as stream:
-                async for _event in stream:
+                async for _delta in self._consume_openai_stream(stream, state):
                     pass
-                resp = await stream.get_final_response()
 
-            total_input += resp.usage.input_tokens
-            total_output += resp.usage.output_tokens
-            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+            total_input += _usage_int(state.usage, "input_tokens")
+            total_output += _usage_int(state.usage, "output_tokens")
+            total_tokens = total_input + total_output
 
-            func_calls = [o for o in resp.output if o.type == "function_call"]
+            func_calls = [
+                o for o in state.output_items if getattr(o, "type", None) == "function_call"
+            ]
             if not func_calls:
                 return AgentResult(
-                    response=_openai_output_text(resp),
+                    response=state.text or _text_from_items(state.output_items),
                     tool_calls=all_tool_calls,
                     total_tokens=total_tokens,
                     input_tokens=total_input,
@@ -397,11 +439,11 @@ class Agent:
                 )
 
             # Feed the model's own output back, then the tool outputs.
-            for item in resp.output:
+            for item in state.output_items:
                 input_items.append(item.model_dump())
 
             for fc in func_calls:
-                tool_input = json.loads(fc.arguments or "{}")
+                tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
                 logger.info("Executing tool: %s", fc.name)
                 all_tool_calls.append({"tool": fc.name, "input": tool_input})
                 result = await self._execute_tool(fc.name, tool_input)
@@ -435,10 +477,8 @@ class Agent:
         tool_index = 0
 
         for _turn in range(max_turns):
-            # The ChatGPT backend requires streaming. Stream every turn,
-            # forwarding text deltas live; the final Response carries any tool
-            # calls and the usage totals.
-            full_text = ""
+            # Stream every turn (backend requirement), forwarding text live.
+            state = _OpenAIStreamState()
             async with client.responses.stream(
                 model=model,
                 instructions=system_prompt,
@@ -446,21 +486,20 @@ class Agent:
                 store=False,
                 **({"tools": tools} if tools else {}),
             ) as stream:
-                async for event in stream:
-                    if event.type == "response.output_text.delta":
-                        full_text += event.delta
-                        yield event.delta
-                resp = await stream.get_final_response()
+                async for delta in self._consume_openai_stream(stream, state):
+                    yield delta
 
-            total_input += resp.usage.input_tokens
-            total_output += resp.usage.output_tokens
-            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+            total_input += _usage_int(state.usage, "input_tokens")
+            total_output += _usage_int(state.usage, "output_tokens")
+            total_tokens = total_input + total_output
 
-            func_calls = [o for o in resp.output if o.type == "function_call"]
+            func_calls = [
+                o for o in state.output_items if getattr(o, "type", None) == "function_call"
+            ]
 
             if not func_calls:
                 yield AgentResult(
-                    response=full_text or _openai_output_text(resp),
+                    response=state.text or _text_from_items(state.output_items),
                     tool_calls=all_tool_calls,
                     total_tokens=total_tokens,
                     input_tokens=total_input,
@@ -469,11 +508,11 @@ class Agent:
                 )
                 return
 
-            for item in resp.output:
+            for item in state.output_items:
                 input_items.append(item.model_dump())
 
             for fc in func_calls:
-                tool_input = json.loads(fc.arguments or "{}")
+                tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
                 logger.info("Executing tool: %s", fc.name)
                 all_tool_calls.append({"tool": fc.name, "input": tool_input})
                 if on_tool_start:
@@ -524,15 +563,28 @@ def _messages_to_openai_input(messages: list[dict[str, Any]]) -> list[dict[str, 
     return items
 
 
-def _openai_output_text(resp) -> str:
-    """Extract concatenated assistant text from a Responses API result."""
-    text = getattr(resp, "output_text", None)
-    if text:
-        return text
+@dataclass
+class _OpenAIStreamState:
+    """Mutable accumulator filled while consuming a Responses stream."""
+
+    text: str = ""
+    output_items: list = field(default_factory=list)
+    usage: Any = None
+
+
+def _usage_int(usage, attr: str) -> int:
+    """Safely read an int token count off a (possibly None) usage object."""
+    if usage is None:
+        return 0
+    return int(getattr(usage, attr, 0) or 0)
+
+
+def _text_from_items(items) -> str:
+    """Extract concatenated assistant text from Responses output items."""
     parts: list[str] = []
-    for item in getattr(resp, "output", []) or []:
+    for item in items or []:
         if getattr(item, "type", None) == "message":
-            for block in getattr(item, "content", []) or []:
+            for block in getattr(item, "content", None) or []:
                 if getattr(block, "type", None) == "output_text":
-                    parts.append(block.text)
-    return "\n".join(parts)
+                    parts.append(getattr(block, "text", "") or "")
+    return "\n".join(p for p in parts if p)

@@ -147,3 +147,35 @@ async def test_openai_run_executes_tool_then_returns_text():
     assert client.responses.stream.call_count == 2
     # Tokens summed across both streamed turns.
     assert result.total_tokens == 30
+
+
+async def test_openai_streaming_yields_deltas_from_events():
+    """The live event path: text deltas are forwarded and the completed event
+    supplies output + usage (no get_final_response fallback needed)."""
+    agent = Agent(_openai_creds())
+    events = [
+        SimpleNamespace(type="response.output_text.delta", delta="Hello "),
+        SimpleNamespace(type="response.output_text.delta", delta="world"),
+        SimpleNamespace(type="response.completed", response=_final_response(text="Hello world")),
+    ]
+    client = MagicMock()
+    client.responses.stream = MagicMock(return_value=_FakeStream(None, events))
+
+    deltas: list[str] = []
+    final = None
+    with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
+        async for chunk in agent.run_streaming(
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-5.5",
+        ):
+            if isinstance(chunk, str):
+                deltas.append(chunk)
+            else:
+                final = chunk
+
+    assert deltas == ["Hello ", "world"]
+    assert final is not None
+    assert final.response == "Hello world"
+    assert final.input_tokens == 10
+    assert final.output_tokens == 5
