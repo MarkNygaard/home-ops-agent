@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
+from home_ops_agent.agent import providers
 from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
 from home_ops_agent.auth import credentials as creds
 from home_ops_agent.config import settings
@@ -110,6 +111,19 @@ async def update_setting(key: str, body: UpdateSetting):
     if key not in ALLOWED_SETTING_KEYS:
         return {"error": f"Unknown setting: {key}"}
 
+    # Reject assigning a task model to a provider that has no credentials,
+    # which would otherwise fail silently at runtime when the task runs.
+    if key.startswith("model_"):
+        provider = providers.resolve_provider(body.value)
+        credentials = await creds.build_credentials()
+        if not credentials.has_provider(provider):
+            return {
+                "error": (
+                    f"Model '{body.value}' uses the '{provider}' provider, which has no "
+                    "credentials configured. Connect that provider in Settings first."
+                )
+            }
+
     async with async_session() as session:
         result = await session.execute(select(Setting).where(Setting.key == key))
         existing = result.scalar_one_or_none()
@@ -179,22 +193,14 @@ async def import_openai_tokens(body: OpenAITokens):
     expires_in = body.expires_in if body.expires_in is not None else 3600
     expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
-    values = {
-        creds.OPENAI_ACCESS_TOKEN_KEY: body.access_token.strip(),
-        creds.OPENAI_REFRESH_TOKEN_KEY: body.refresh_token.strip(),
-        creds.OPENAI_ACCOUNT_ID_KEY: body.account_id.strip(),
-        creds.OPENAI_EXPIRES_AT_KEY: expires_at.isoformat(),
-    }
-    async with async_session() as session:
-        for key, value in values.items():
-            result = await session.execute(select(Setting).where(Setting.key == key))
-            existing = result.scalar_one_or_none()
-            if existing:
-                existing.value = value
-                existing.updated_at = datetime.now(UTC)
-            else:
-                session.add(Setting(key=key, value=value))
-        await session.commit()
+    await creds.store_settings(
+        {
+            creds.OPENAI_ACCESS_TOKEN_KEY: body.access_token.strip(),
+            creds.OPENAI_REFRESH_TOKEN_KEY: body.refresh_token.strip(),
+            creds.OPENAI_ACCOUNT_ID_KEY: body.account_id.strip(),
+            creds.OPENAI_EXPIRES_AT_KEY: expires_at.isoformat(),
+        }
+    )
 
     return {"status": "ok", "provider": "openai", "expires_at": expires_at.isoformat()}
 

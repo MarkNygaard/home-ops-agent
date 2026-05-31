@@ -13,6 +13,7 @@ schema migration is required:
   / ``openai_expires_at`` (ISO-8601)
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -31,6 +32,10 @@ OPENAI_ACCESS_TOKEN_KEY = "openai_access_token"
 OPENAI_REFRESH_TOKEN_KEY = "openai_refresh_token"
 OPENAI_ACCOUNT_ID_KEY = "openai_account_id"
 OPENAI_EXPIRES_AT_KEY = "openai_expires_at"
+
+# Serializes OpenAI token refreshes within this process so concurrent workers
+# don't each refresh and rotate the refresh token out from under one another.
+_openai_refresh_lock = asyncio.Lock()
 
 
 @dataclass
@@ -88,7 +93,8 @@ async def build_credentials() -> Credentials:
     )
 
 
-async def _store_settings(values: dict[str, str]) -> None:
+async def store_settings(values: dict[str, str]) -> None:
+    """Upsert a batch of ``settings`` rows (shared persistence helper)."""
     async with async_session() as session:
         for key, value in values.items():
             result = await session.execute(select(Setting).where(Setting.key == key))
@@ -99,6 +105,24 @@ async def _store_settings(values: dict[str, str]) -> None:
             else:
                 session.add(Setting(key=key, value=value))
         await session.commit()
+
+
+async def _load_openai_tokens_from_db() -> dict[str, str | None]:
+    """Read the currently persisted OpenAI token rows."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(Setting).where(
+                Setting.key.in_(
+                    [OPENAI_ACCESS_TOKEN_KEY, OPENAI_REFRESH_TOKEN_KEY, OPENAI_EXPIRES_AT_KEY]
+                )
+            )
+        )
+        return {s.key: s.value for s in result.scalars().all()}
+
+
+def _needs_refresh(expires_at: datetime | None) -> bool:
+    """True when a known expiry is within the 5-minute proactive-refresh buffer."""
+    return bool(expires_at) and expires_at <= datetime.now(UTC) + timedelta(minutes=5)
 
 
 async def refresh_openai_token(creds: Credentials) -> str | None:
@@ -140,7 +164,7 @@ async def refresh_openai_token(creds: Credentials) -> str | None:
     creds.openai_refresh_token = refresh_token
     creds.openai_expires_at = expires_at
 
-    await _store_settings(
+    await store_settings(
         {
             OPENAI_ACCESS_TOKEN_KEY: access_token,
             OPENAI_REFRESH_TOKEN_KEY: refresh_token,
@@ -152,15 +176,36 @@ async def refresh_openai_token(creds: Credentials) -> str | None:
 
 
 async def ensure_openai_token(creds: Credentials) -> str | None:
-    """Return a valid OpenAI access token, refreshing if it is near expiry."""
+    """Return a valid OpenAI access token, refreshing if it is near expiry.
+
+    Refreshes are serialized by ``_openai_refresh_lock`` and the persisted token
+    is re-read after acquiring it, so concurrent callers adopt a token a peer
+    already refreshed instead of each issuing their own refresh (which would
+    rotate the refresh token and invalidate the others).
+    """
     if not creds.openai_access_token:
         return None
 
-    # Refresh proactively with a 5-minute buffer.
-    if creds.openai_expires_at and creds.openai_expires_at <= datetime.now(UTC) + timedelta(
-        minutes=5
-    ):
+    # Proactive refresh with a 5-minute buffer.
+    if not _needs_refresh(creds.openai_expires_at):
+        return creds.openai_access_token
+
+    async with _openai_refresh_lock:
+        # A peer may have refreshed while we waited for the lock — adopt the
+        # persisted token if it is now valid.
+        db = await _load_openai_tokens_from_db()
+        db_token = db.get(OPENAI_ACCESS_TOKEN_KEY)
+        db_expires = _parse_dt(db.get(OPENAI_EXPIRES_AT_KEY))
+        if db_token and not _needs_refresh(db_expires):
+            creds.openai_access_token = db_token
+            creds.openai_refresh_token = (
+                db.get(OPENAI_REFRESH_TOKEN_KEY) or creds.openai_refresh_token
+            )
+            creds.openai_expires_at = db_expires
+            return db_token
+
+        # Refresh using the freshest refresh token we know about.
+        if db.get(OPENAI_REFRESH_TOKEN_KEY):
+            creds.openai_refresh_token = db[OPENAI_REFRESH_TOKEN_KEY]
         refreshed = await refresh_openai_token(creds)
         return refreshed or creds.openai_access_token
-
-    return creds.openai_access_token

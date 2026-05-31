@@ -61,3 +61,33 @@ async def test_ensure_openai_token_still_valid():
     )
     # Far from expiry — returns existing token without refreshing.
     assert await ensure_openai_token(creds) == "tok"
+
+
+async def test_ensure_openai_token_adopts_peer_refreshed_token(db_session):
+    """When a near-expiry token is already refreshed in the DB by a peer,
+    adopt the persisted token instead of issuing a redundant refresh."""
+    from home_ops_agent.auth import credentials as creds_mod
+    from home_ops_agent.auth.credentials import ensure_openai_token
+
+    fresh_expiry = datetime.now(UTC) + timedelta(hours=1)
+    await creds_mod.store_settings(
+        {
+            creds_mod.OPENAI_ACCESS_TOKEN_KEY: "fresh-token",
+            creds_mod.OPENAI_REFRESH_TOKEN_KEY: "fresh-refresh",
+            creds_mod.OPENAI_EXPIRES_AT_KEY: fresh_expiry.isoformat(),
+        }
+    )
+
+    # This caller still holds a near-expiry token (a peer just refreshed).
+    creds = Credentials(
+        openai_access_token="stale-token",
+        openai_refresh_token="stale-refresh",
+        openai_expires_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+
+    # No httpx mock: if this tried to actually refresh it would hit the network,
+    # so a clean return proves it adopted the DB token instead.
+    token = await ensure_openai_token(creds)
+    assert token == "fresh-token"
+    assert creds.openai_access_token == "fresh-token"
+    assert creds.openai_refresh_token == "fresh-refresh"

@@ -179,6 +179,28 @@ def test_update_setting_overwrites_existing(client):
     assert response.json()["pr_mode"] == "auto_merge_all"
 
 
+def test_update_model_accepts_configured_provider(client):
+    """A model whose provider has credentials is accepted."""
+    # Seed an Anthropic key so the anthropic provider is configured.
+    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+
+    response = client.put("/api/settings/model_chat", json={"value": "claude-opus-4-8"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_update_model_rejects_unconfigured_provider(client):
+    """A model whose provider has no credentials is rejected up front."""
+    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+
+    # OpenAI is not configured in the test client → reject a gpt model.
+    response = client.put("/api/settings/model_chat", json={"value": "gpt-5.5"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "error" in data
+    assert "openai" in data["error"]
+
+
 def test_get_prompts_endpoint(client):
     """GET /api/prompts returns all prompt defaults."""
     response = client.get("/api/prompts")
