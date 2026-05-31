@@ -1,15 +1,18 @@
 """Tests for the OpenAI (ChatGPT backend) Responses path in agent/core.py.
 
-The ChatGPT backend requires streaming (stream=true) and store=false, so the
-backend must drive ``responses.stream`` — never the non-streaming
-``responses.create``. These tests guard that contract.
+The ChatGPT backend requires streaming (stream=true) and store=false. The
+backend must use the LOW-LEVEL ``responses.create(stream=True)`` event stream,
+never the high-level ``responses.stream`` helper — the helper's accumulator
+calls ``parse_response`` which crashes ('NoneType' is not iterable) when the
+backend emits a ``completed`` event with ``output=None``. These tests guard
+that contract and the None-output handling.
 """
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from home_ops_agent.agent.core import Agent
+from home_ops_agent.agent.core import Agent, ToolDefinition
 from home_ops_agent.auth.credentials import Credentials
 
 
@@ -44,43 +47,46 @@ def _final_response(text=None, tool_calls=None, input_tokens=10, output_tokens=5
         )
     return SimpleNamespace(
         output=output,
-        output_text=text or "",
         usage=SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens),
     )
 
 
-class _FakeStream:
-    """Mimics the async context manager returned by responses.stream()."""
+def _delta_event(text):
+    return SimpleNamespace(type="response.output_text.delta", delta=text)
 
-    def __init__(self, final, events=None):
-        self._final = final
-        self._events = events or []
 
-    async def __aenter__(self):
-        return self
+def _completed_event(text=None, tool_calls=None, input_tokens=10, output_tokens=5):
+    return SimpleNamespace(
+        type="response.completed",
+        response=_final_response(text, tool_calls, input_tokens, output_tokens),
+    )
 
-    async def __aexit__(self, *args):
-        return False
 
-    async def __aiter__(self):
+class _FakeEventStream:
+    """Async-iterable of raw Responses stream events (what create(stream=True) returns)."""
+
+    def __init__(self, events):
+        self._events = events
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
         for event in self._events:
             yield event
 
-    async def get_final_response(self):
-        return self._final
 
-
-def _fake_client(finals):
-    """Build a mock OpenAI client whose responses.stream returns each final in turn."""
-    streams = [_FakeStream(f) for f in finals]
+def _fake_client(events_per_turn):
+    """Mock OpenAI client whose responses.create returns one event stream per turn."""
+    streams = [_FakeEventStream(events) for events in events_per_turn]
     client = MagicMock()
-    client.responses.stream = MagicMock(side_effect=streams)
+    client.responses.create = AsyncMock(side_effect=streams)
     return client
 
 
-async def test_openai_run_uses_streaming_not_create():
+async def test_openai_run_uses_low_level_create_not_stream_helper():
     agent = Agent(_openai_creds())
-    client = _fake_client([_final_response(text="Hi from gpt")])
+    client = _fake_client([[_completed_event(text="Hi from gpt")]])
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
         result = await agent.run(
@@ -92,34 +98,33 @@ async def test_openai_run_uses_streaming_not_create():
     assert result.response == "Hi from gpt"
     assert result.input_tokens == 10
     assert result.output_tokens == 5
-    # Must go through streaming; the non-streaming create must never be called.
-    assert client.responses.stream.called
-    assert not client.responses.create.called
+    # Must use the low-level event stream; the crashing stream() helper must not be used.
+    assert client.responses.create.called
+    assert not client.responses.stream.called
 
 
-async def test_openai_run_stream_kwargs_store_false_and_tools_omitted():
+async def test_openai_create_kwargs_stream_and_store():
     agent = Agent(_openai_creds())
-    client = _fake_client([_final_response(text="ok")])
+    client = _fake_client([[_completed_event(text="ok")]])
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
         await agent.run(
             system_prompt="sys", messages=[{"role": "user", "content": "x"}], model="gpt-5.5"
         )
 
-    _, kwargs = client.responses.stream.call_args
+    _, kwargs = client.responses.create.call_args
+    assert kwargs["stream"] is True
     assert kwargs["store"] is False
     assert kwargs["model"] == "gpt-5.5"
     # No tools registered → the tools kwarg must be omitted entirely.
     assert "tools" not in kwargs
 
 
-async def test_openai_run_executes_tool_then_returns_text():
+async def test_openai_executes_tool_then_returns_text():
     agent = Agent(_openai_creds())
 
     async def handler(params):
         return "tool-result"
-
-    from home_ops_agent.agent.core import ToolDefinition
 
     agent.register_tool(
         ToolDefinition(
@@ -127,11 +132,10 @@ async def test_openai_run_executes_tool_then_returns_text():
         )
     )
 
-    # First turn: a tool call. Second turn: final text.
     client = _fake_client(
         [
-            _final_response(tool_calls=[{"name": "do_it", "arguments": "{}", "call_id": "c1"}]),
-            _final_response(text="done"),
+            [_completed_event(tool_calls=[{"name": "do_it", "arguments": "{}", "call_id": "c1"}])],
+            [_completed_event(text="done")],
         ]
     )
 
@@ -144,22 +148,14 @@ async def test_openai_run_executes_tool_then_returns_text():
 
     assert result.response == "done"
     assert result.tool_calls and result.tool_calls[0]["tool"] == "do_it"
-    assert client.responses.stream.call_count == 2
-    # Tokens summed across both streamed turns.
+    assert client.responses.create.call_count == 2
     assert result.total_tokens == 30
 
 
-async def test_openai_streaming_yields_deltas_from_events():
-    """The live event path: text deltas are forwarded and the completed event
-    supplies output + usage (no get_final_response fallback needed)."""
+async def test_openai_streaming_yields_deltas():
     agent = Agent(_openai_creds())
-    events = [
-        SimpleNamespace(type="response.output_text.delta", delta="Hello "),
-        SimpleNamespace(type="response.output_text.delta", delta="world"),
-        SimpleNamespace(type="response.completed", response=_final_response(text="Hello world")),
-    ]
-    client = MagicMock()
-    client.responses.stream = MagicMock(return_value=_FakeStream(None, events))
+    events = [_delta_event("Hello "), _delta_event("world"), _completed_event(text="Hello world")]
+    client = _fake_client([events])
 
     deltas: list[str] = []
     final = None
@@ -178,4 +174,28 @@ async def test_openai_streaming_yields_deltas_from_events():
     assert final is not None
     assert final.response == "Hello world"
     assert final.input_tokens == 10
-    assert final.output_tokens == 5
+
+
+async def test_openai_handles_none_output_without_crashing():
+    """The exact bug: a completed event with output=None must not crash; the
+    answer falls back to the text accumulated from deltas."""
+    agent = Agent(_openai_creds())
+    events = [
+        _delta_event("partial answer"),
+        SimpleNamespace(
+            type="response.completed",
+            response=SimpleNamespace(
+                output=None, usage=SimpleNamespace(input_tokens=2, output_tokens=1)
+            ),
+        ),
+    ]
+    client = _fake_client([events])
+
+    with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
+        result = await agent.run(
+            system_prompt="sys", messages=[{"role": "user", "content": "x"}], model="gpt-5.5"
+        )
+
+    assert result.response == "partial answer"
+    assert result.input_tokens == 2
+    assert result.output_tokens == 1

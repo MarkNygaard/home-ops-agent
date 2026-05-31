@@ -354,12 +354,15 @@ class Agent:
     # --- OpenAI / Codex backend (Responses API) ---
 
     async def _consume_openai_stream(self, stream, state) -> AsyncGenerator[str, None]:
-        """Iterate a Responses stream: yield text deltas, record items + usage.
+        """Iterate raw Responses stream events: yield text deltas, record state.
 
-        Robust to the ChatGPT backend, whose final Response may leave
-        ``output``/``usage`` unset. Output items are collected from
-        ``response.output_item.done`` events and usage from
-        ``response.completed``; ``get_final_response()`` is only a fallback.
+        Consumes the low-level ``responses.create(stream=True)`` event stream
+        directly. We deliberately avoid the SDK's high-level ``responses.stream``
+        helper: its accumulator calls ``parse_response``, which iterates
+        ``response.output`` and raises ``TypeError`` when the ChatGPT backend
+        emits a ``completed`` event with ``output=None`` (e.g. empty/filtered
+        completions). Accumulating from raw events sidesteps that parser, so a
+        missing ``output`` degrades to an empty answer instead of a crash.
         """
         async for event in stream:
             etype = getattr(event, "type", "")
@@ -377,23 +380,10 @@ class Agent:
                 if response is not None:
                     if getattr(response, "usage", None) is not None:
                         state.usage = response.usage
+                    # completed.output is authoritative when present; otherwise
+                    # keep whatever we gathered from output_item.done events.
                     if getattr(response, "output", None):
                         state.output_items = list(response.output)
-
-        # Fall back to the final response only if events didn't supply what we
-        # need (the ChatGPT backend doesn't always populate these on the stream).
-        if state.usage is None or not state.output_items:
-            try:
-                final = await stream.get_final_response()
-            except Exception:
-                final = None
-            if final is not None:
-                if state.usage is None:
-                    state.usage = getattr(final, "usage", None)
-                if not state.output_items and getattr(final, "output", None):
-                    state.output_items = list(final.output)
-                if not state.text:
-                    state.text = _text_from_items(getattr(final, "output", None))
 
     async def _run_openai(
         self,
@@ -410,16 +400,20 @@ class Agent:
 
         for _turn in range(max_turns):
             # ChatGPT backend requires streaming (stream=true) + store=false.
+            # Use the low-level event stream (not responses.stream) to avoid the
+            # SDK's response parser crashing on a None output. See
+            # _consume_openai_stream for details.
             state = _OpenAIStreamState()
-            async with client.responses.stream(
+            stream = await client.responses.create(
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
                 store=False,
+                stream=True,
                 **({"tools": tools} if tools else {}),
-            ) as stream:
-                async for _delta in self._consume_openai_stream(stream, state):
-                    pass
+            )
+            async for _delta in self._consume_openai_stream(stream, state):
+                pass
 
             total_input += _usage_int(state.usage, "input_tokens")
             total_output += _usage_int(state.usage, "output_tokens")
@@ -478,16 +472,18 @@ class Agent:
 
         for _turn in range(max_turns):
             # Stream every turn (backend requirement), forwarding text live.
+            # Low-level event stream avoids the SDK parser crash on None output.
             state = _OpenAIStreamState()
-            async with client.responses.stream(
+            stream = await client.responses.create(
                 model=model,
                 instructions=system_prompt,
                 input=input_items,
                 store=False,
+                stream=True,
                 **({"tools": tools} if tools else {}),
-            ) as stream:
-                async for delta in self._consume_openai_stream(stream, state):
-                    yield delta
+            )
+            async for delta in self._consume_openai_stream(stream, state):
+                yield delta
 
             total_input += _usage_int(state.usage, "input_tokens")
             total_output += _usage_int(state.usage, "output_tokens")
