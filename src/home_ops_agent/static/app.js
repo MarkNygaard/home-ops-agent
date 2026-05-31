@@ -414,9 +414,10 @@ async function loadSettings() {
     // Map old model IDs to current ones
     const MODEL_MIGRATION = {
       "claude-sonnet-4-20250514": "claude-sonnet-4-6",
-      "claude-opus-4-20250514": "claude-opus-4-6",
+      "claude-opus-4-20250514": "claude-opus-4-8",
       "claude-sonnet-4-6-20250514": "claude-sonnet-4-6",
-      "claude-opus-4-6-20250514": "claude-opus-4-6",
+      "claude-opus-4-6-20250514": "claude-opus-4-8",
+      "claude-opus-4-6": "claude-opus-4-8",
       "claude-haiku-4-5-20251001": "claude-haiku-4-5",
     };
     if (s.models) {
@@ -720,7 +721,7 @@ async function loadAgentCards() {
       ? `<select id="model-${agent.modelKey.replace("_", "-")}" class="model-select">
           <option value="claude-haiku-4-5">Haiku 4.5</option>
           <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-          <option value="claude-opus-4-6">Opus 4.6</option>
+          <option value="claude-opus-4-8">Opus 4.8</option>
         </select>`
       : "";
 

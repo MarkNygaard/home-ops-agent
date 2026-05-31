@@ -44,10 +44,19 @@ export const AGENTS = [
 ] as const
 
 export const MODEL_OPTIONS = [
-  { value: "claude-haiku-4-5", label: "Haiku 4.5" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { value: "claude-opus-4-6", label: "Opus 4.6" },
+  { value: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
+  { value: "claude-sonnet-4-6", label: "Sonnet 4.6", provider: "anthropic" },
+  { value: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic" },
+  { value: "kimi-for-coding", label: "Kimi for Coding", provider: "kimi" },
+  { value: "gpt-5.5", label: "GPT-5.5", provider: "openai" },
+  { value: "codex-5.3", label: "Codex 5.3", provider: "openai" },
 ] as const
+
+export const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  kimi: "Kimi",
+  openai: "OpenAI",
+}
 
 export const CATEGORY_COLORS: Record<string, string> = {
   issue: "destructive",
@@ -60,9 +69,10 @@ export const CATEGORY_COLORS: Record<string, string> = {
 
 export const MODEL_MIGRATION: Record<string, string> = {
   "claude-sonnet-4-20250514": "claude-sonnet-4-6",
-  "claude-opus-4-20250514": "claude-opus-4-6",
+  "claude-opus-4-20250514": "claude-opus-4-8",
   "claude-sonnet-4-6-20250514": "claude-sonnet-4-6",
-  "claude-opus-4-6-20250514": "claude-opus-4-6",
+  "claude-opus-4-6-20250514": "claude-opus-4-8",
+  "claude-opus-4-6": "claude-opus-4-8",
   "claude-haiku-4-5-20251001": "claude-haiku-4-5",
 }
 

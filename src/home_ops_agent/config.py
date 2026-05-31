@@ -5,9 +5,10 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Claude API
-    anthropic_client_id: str = ""
-    anthropic_client_secret: str = ""
     anthropic_api_key: str = ""
+
+    # Kimi for Coding (Anthropic-compatible endpoint, API key auth)
+    kimi_api_key: str = ""
 
     # Database
     database_url: str = "postgresql+asyncpg://home_ops_agent:password@localhost:5432/home_ops_agent"
@@ -37,7 +38,7 @@ class Settings(BaseSettings):
     model_alert_triage: str = "claude-haiku-4-5"
     model_alert_fix: str = "claude-sonnet-4-6"
     model_code_fix: str = "claude-sonnet-4-6"
-    model_deep_review: str = "claude-opus-4-6"
+    model_deep_review: str = "claude-opus-4-8"
     model_chat: str = "claude-sonnet-4-6"
 
     model_config = {"env_prefix": "", "case_sensitive": False}

@@ -272,9 +272,7 @@ async def test_create_pr_comment_with_different_sha_creates_new(httpx_mock, mock
     httpx_mock.add_response(method="POST", status_code=201, json={"id": 2001})
 
     result = json.loads(
-        await create_pr_comment(
-            {"pr_number": 42, "body": "New review", "head_sha": "newsha123"}
-        )
+        await create_pr_comment({"pr_number": 42, "body": "New review", "head_sha": "newsha123"})
     )
     assert result["status"] == "ok"
     assert result["comment_id"] == 2001

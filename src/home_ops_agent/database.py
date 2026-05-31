@@ -17,7 +17,7 @@ class Base(DeclarativeBase):
 
 
 class Setting(Base):
-    """Persistent agent settings (PR mode, auth method, etc.)."""
+    """Persistent agent settings (PR mode, provider credentials, etc.)."""
 
     __tablename__ = "settings"
 
@@ -26,18 +26,6 @@ class Setting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
-
-class OAuthToken(Base):
-    """Stored OAuth tokens for Anthropic API."""
-
-    __tablename__ = "oauth_tokens"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    access_token: Mapped[str] = mapped_column(Text, nullable=False)
-    refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Conversation(Base):

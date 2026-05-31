@@ -6,7 +6,8 @@ import logging
 import anthropic
 from sqlalchemy import select
 
-from home_ops_agent.auth.oauth import get_claude_credentials
+from home_ops_agent.agent import providers
+from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.database import Memory, async_session
 
 logger = logging.getLogger(__name__)
@@ -55,14 +56,20 @@ async def extract_memories(
     if len(messages) < 2:
         return []
 
-    api_key, oauth_token = await get_claude_credentials()
-    if not api_key and not oauth_token:
-        return []
-
-    if oauth_token:
-        client = anthropic.AsyncAnthropic(auth_token=oauth_token)
+    # Memory extraction uses a cheap Anthropic-protocol model. Prefer Anthropic;
+    # fall back to Kimi's Anthropic-compatible endpoint. (OpenAI uses a different
+    # API and is skipped — extraction is best-effort.)
+    credentials = await build_credentials()
+    if credentials.has_provider(providers.ANTHROPIC):
+        client = anthropic.AsyncAnthropic(api_key=credentials.anthropic_api_key)
+        model = "claude-haiku-4-5"
+    elif credentials.has_provider(providers.KIMI):
+        client = anthropic.AsyncAnthropic(
+            api_key=credentials.kimi_api_key, base_url=providers.KIMI_BASE_URL
+        )
+        model = "kimi-for-coding"
     else:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        return []
 
     # Build a summary of the conversation for extraction
     conv_text = ""
@@ -78,7 +85,7 @@ async def extract_memories(
 
     try:
         response = await client.messages.create(
-            model="claude-haiku-4-5",
+            model=model,
             max_tokens=1024,
             system=EXTRACTION_PROMPT,
             messages=[{"role": "user", "content": conv_text[:8000]}],

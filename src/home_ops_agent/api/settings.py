@@ -1,24 +1,16 @@
 """Settings API — manage agent configuration via web UI."""
 
-import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from home_ops_agent.agent import providers
 from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
-from home_ops_agent.auth.oauth import (
-    exchange_code,
-    generate_pkce_pair,
-    get_authorization_url,
-    get_valid_token,
-    store_tokens,
-)
-from home_ops_agent.auth.session import create_session, get_session
+from home_ops_agent.auth import credentials as creds
 from home_ops_agent.config import settings
-from home_ops_agent.database import OAuthToken, Setting, async_session
+from home_ops_agent.database import Setting, async_session
 
 router = APIRouter()
 
@@ -43,36 +35,29 @@ async def get_settings():
         result = await session.execute(select(Setting))
         db_settings = {s.key: s.value for s in result.scalars().all()}
 
-    # Check OAuth status
-    oauth_status = "not_configured"
-    token_expires = None
-    if db_settings.get("auth_method") == "oauth":
-        token = await get_valid_token()
-        if token:
-            oauth_status = "active"
-            async with async_session() as session:
-                result = await session.execute(
-                    select(OAuthToken).order_by(OAuthToken.created_at.desc()).limit(1)
-                )
-                token_record = result.scalar_one_or_none()
-                if token_record:
-                    token_expires = token_record.expires_at.isoformat()
-        else:
-            oauth_status = "expired"
+    anthropic_key = db_settings.get("anthropic_api_key") or settings.anthropic_api_key
+    kimi_key = db_settings.get("kimi_api_key") or settings.kimi_api_key
+    openai_token = db_settings.get(creds.OPENAI_ACCESS_TOKEN_KEY)
 
     return {
         "agent_enabled": db_settings.get("agent_enabled", "true").lower() in ("true", "1", "yes"),
         "pr_mode": db_settings.get("pr_mode", "comment_only"),
-        "auth_method": db_settings.get("auth_method", "api_key"),
-        "oauth_status": oauth_status,
-        "oauth_token_expires": token_expires,
-        "has_api_key": bool(db_settings.get("anthropic_api_key") or settings.anthropic_api_key),
-        "api_key_hint": _mask_key(
-            db_settings.get("anthropic_api_key") or settings.anthropic_api_key
-        ),
-        "has_oauth_credentials": bool(
-            settings.anthropic_client_id and settings.anthropic_client_secret
-        ),
+        # Per-provider auth status — all three can be configured simultaneously.
+        "providers": {
+            "anthropic": {
+                "configured": bool(anthropic_key),
+                "hint": _mask_key(anthropic_key),
+            },
+            "kimi": {
+                "configured": bool(kimi_key),
+                "hint": _mask_key(kimi_key),
+            },
+            "openai": {
+                "configured": bool(openai_token),
+                "account_id": db_settings.get(creds.OPENAI_ACCOUNT_ID_KEY) or None,
+                "expires_at": db_settings.get(creds.OPENAI_EXPIRES_AT_KEY) or None,
+            },
+        },
         "alert_cooldown_seconds": int(
             db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)
         ),
@@ -101,8 +86,8 @@ async def get_settings():
 ALLOWED_SETTING_KEYS = {
     "agent_enabled",
     "pr_mode",
-    "auth_method",
     "anthropic_api_key",
+    "kimi_api_key",
     "alert_cooldown_seconds",
     "ntfy_topics",
     "pr_check_interval_seconds",
@@ -125,6 +110,19 @@ async def update_setting(key: str, body: UpdateSetting):
     """Update a single setting."""
     if key not in ALLOWED_SETTING_KEYS:
         return {"error": f"Unknown setting: {key}"}
+
+    # Reject assigning a task model to a provider that has no credentials,
+    # which would otherwise fail silently at runtime when the task runs.
+    if key.startswith("model_"):
+        provider = providers.resolve_provider(body.value)
+        credentials = await creds.build_credentials()
+        if not credentials.has_provider(provider):
+            return {
+                "error": (
+                    f"Model '{body.value}' uses the '{provider}' provider, which has no "
+                    "credentials configured. Connect that provider in Settings first."
+                )
+            }
 
     async with async_session() as session:
         result = await session.execute(select(Setting).where(Setting.key == key))
@@ -174,59 +172,58 @@ async def reset_prompt(name: str):
     return {"status": "ok", "reset": name}
 
 
-# --- OAuth flow endpoints ---
+# --- OpenAI (ChatGPT subscription) credential import ---
+#
+# This app runs as a hosted server, so it cannot receive the Codex OAuth
+# localhost:1455 redirect. Instead the user authenticates locally (e.g. via the
+# Codex CLI), then imports the resulting tokens here; the server keeps them
+# alive via the refresh endpoint (refresh needs no redirect).
 
 
-@router.get("/auth/login")
-async def oauth_login():
-    """Start the OAuth authorization flow."""
-    state = secrets.token_urlsafe(32)
-    verifier, challenge = generate_pkce_pair()
-
-    # Store verifier in session
-    session_id = create_session({"state": state, "verifier": verifier})
-
-    url = get_authorization_url(state, challenge)
-
-    response = RedirectResponse(url=url)
-    response.set_cookie("oauth_session", session_id, httponly=True, samesite="lax", max_age=600)
-    return response
+class OpenAITokens(BaseModel):
+    access_token: str
+    refresh_token: str
+    account_id: str
+    expires_in: int | None = None
 
 
-@router.get("/auth/callback")
-async def oauth_callback(code: str, state: str, request: Request):
-    """Handle OAuth callback from Anthropic."""
-    session_id = request.cookies.get("oauth_session")
-    if not session_id:
-        return {"error": "No OAuth session found"}
+@router.post("/api/auth/openai")
+async def import_openai_tokens(body: OpenAITokens):
+    """Import ChatGPT-subscription OAuth tokens for the OpenAI provider."""
+    expires_in = body.expires_in if body.expires_in is not None else 3600
+    expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
 
-    session_data = get_session(session_id)
-    if not session_data:
-        return {"error": "OAuth session expired"}
+    await creds.store_settings(
+        {
+            creds.OPENAI_ACCESS_TOKEN_KEY: body.access_token.strip(),
+            creds.OPENAI_REFRESH_TOKEN_KEY: body.refresh_token.strip(),
+            creds.OPENAI_ACCOUNT_ID_KEY: body.account_id.strip(),
+            creds.OPENAI_EXPIRES_AT_KEY: expires_at.isoformat(),
+        }
+    )
 
-    if session_data.get("state") != state:
-        return {"error": "State mismatch — possible CSRF attack"}
+    return {"status": "ok", "provider": "openai", "expires_at": expires_at.isoformat()}
 
-    verifier = session_data["verifier"]
 
-    try:
-        tokens = await exchange_code(code, verifier)
-        await store_tokens(
-            tokens["access_token"],
-            tokens["refresh_token"],
-            tokens["expires_in"],
-        )
+@router.delete("/api/auth/{provider}")
+async def disconnect_provider(provider: str):
+    """Remove stored credentials for a provider."""
+    key_map = {
+        "anthropic": ["anthropic_api_key"],
+        "kimi": ["kimi_api_key"],
+        "openai": [
+            creds.OPENAI_ACCESS_TOKEN_KEY,
+            creds.OPENAI_REFRESH_TOKEN_KEY,
+            creds.OPENAI_ACCOUNT_ID_KEY,
+            creds.OPENAI_EXPIRES_AT_KEY,
+        ],
+    }
+    keys = key_map.get(provider)
+    if not keys:
+        return {"error": f"Unknown provider: {provider}"}
 
-        # Update auth method to oauth
-        async with async_session() as session:
-            result = await session.execute(select(Setting).where(Setting.key == "auth_method"))
-            existing = result.scalar_one_or_none()
-            if existing:
-                existing.value = "oauth"
-            else:
-                session.add(Setting(key="auth_method", value="oauth"))
-            await session.commit()
+    async with async_session() as session:
+        await session.execute(delete(Setting).where(Setting.key.in_(keys)))
+        await session.commit()
 
-        return RedirectResponse(url="/?auth=success")
-    except Exception as e:
-        return {"error": f"Token exchange failed: {e}"}
+    return {"status": "ok", "disconnected": provider}

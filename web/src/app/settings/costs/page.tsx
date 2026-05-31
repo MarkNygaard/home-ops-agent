@@ -17,6 +17,10 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-haiku-4-5": "Haiku 4.5",
   "claude-sonnet-4-6": "Sonnet 4.6",
   "claude-opus-4-6": "Opus 4.6",
+  "claude-opus-4-8": "Opus 4.8",
+  "kimi-for-coding": "Kimi for Coding",
+  "gpt-5.5": "GPT-5.5",
+  "codex-5.3": "Codex 5.3",
 }
 
 const TASK_LABELS: Record<string, string> = {

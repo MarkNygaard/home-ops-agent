@@ -135,16 +135,13 @@ async def test_conversations_with_source_filter(client, db_session):
 
 async def test_agent_status_endpoint(client, db_session, mock_settings):
     """Test the /api/status endpoint."""
+    from home_ops_agent.auth.credentials import Credentials
+
     with (
         patch(
-            "home_ops_agent.api.status.get_auth_method",
+            "home_ops_agent.api.status.build_credentials",
             new_callable=AsyncMock,
-            return_value="api_key",
-        ),
-        patch(
-            "home_ops_agent.api.status.get_valid_token",
-            new_callable=AsyncMock,
-            return_value=None,
+            return_value=Credentials(anthropic_api_key="sk-test"),
         ),
         patch("home_ops_agent.api.status.settings", mock_settings),
         patch("home_ops_agent.workers.pr_monitor.last_pr_check_at", None),
@@ -152,7 +149,7 @@ async def test_agent_status_endpoint(client, db_session, mock_settings):
         response = await client.get("/api/status")
         assert response.status_code == 200
         data = response.json()
-        assert data["auth_method"] == "api_key"
+        assert data["providers"] == ["anthropic"]
         assert data["has_credentials"] is True
         assert data["task_counts"] == {}
         assert data["latest_task"] is None

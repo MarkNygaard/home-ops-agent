@@ -9,7 +9,7 @@ def test_default_model_values():
     assert s.model_alert_triage == "claude-haiku-4-5"
     assert s.model_alert_fix == "claude-sonnet-4-6"
     assert s.model_code_fix == "claude-sonnet-4-6"
-    assert s.model_deep_review == "claude-opus-4-6"
+    assert s.model_deep_review == "claude-opus-4-8"
     assert s.model_chat == "claude-sonnet-4-6"
 
 

@@ -12,7 +12,7 @@ from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
-from home_ops_agent.auth.oauth import get_claude_credentials
+from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
 
@@ -282,12 +282,12 @@ async def check_prs():
         logger.debug("Agent is disabled, skipping PR review")
         return
 
-    api_key, oauth_token = await get_claude_credentials()
-    if not api_key and not oauth_token:
-        logger.warning("No Claude credentials configured, skipping PR review")
+    credentials = await build_credentials()
+    if not credentials.has_any():
+        logger.warning("No model credentials configured, skipping PR review")
         return
 
-    agent = Agent(api_key=api_key, oauth_token=oauth_token)
+    agent = Agent(credentials)
     skill_tools = await registry.get_all_enabled_tools()
     agent.register_tools(skill_tools)
 

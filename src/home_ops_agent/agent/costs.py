@@ -11,6 +11,13 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-6": {"input": 15.00, "output": 75.00},
+    "claude-opus-4-8": {"input": 15.00, "output": 75.00},
+    # Kimi for Coding and ChatGPT-subscription models are billed via their
+    # respective subscriptions, not per-token. Recorded at $0 so usage rows
+    # still appear without implying API pricing.
+    "kimi-for-coding": {"input": 0.00, "output": 0.00},
+    "gpt-5.5": {"input": 0.00, "output": 0.00},
+    "codex-5.3": {"input": 0.00, "output": 0.00},
 }
 
 # Fallback for unknown models (use Sonnet pricing as a reasonable default).

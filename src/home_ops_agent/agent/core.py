@@ -1,4 +1,13 @@
-"""Agent core — manages Claude API calls with tool use."""
+"""Agent core — provider-aware tool-use loop.
+
+A single ``Agent`` can route each ``run()`` to a different provider based on the
+model ID, so a worker can build one agent and use Claude, Kimi, and GPT/Codex
+models interchangeably (whichever has credentials):
+
+- Anthropic & Kimi share the Anthropic wire protocol (Kimi via its
+  Anthropic-compatible endpoint), handled by the same backend.
+- OpenAI / Codex models use the ChatGPT-backend Responses API.
+"""
 
 import json
 import logging
@@ -7,6 +16,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
+
+from home_ops_agent.agent import providers
+from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +46,23 @@ class AgentResult:
 
 
 class Agent:
-    """Claude-powered agent with tool use."""
+    """Provider-aware agent with tool use."""
 
-    def __init__(self, api_key: str | None = None, oauth_token: str | None = None):
-        if oauth_token:
-            self.client = anthropic.AsyncAnthropic(auth_token=oauth_token)
-        elif api_key:
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
-        else:
-            raise ValueError("Either api_key or oauth_token must be provided")
+    def __init__(self, credentials: Credentials | None = None, *, api_key: str | None = None):
+        # ``api_key`` is a convenience for Anthropic-only callers (and tests).
+        if credentials is None:
+            if api_key:
+                credentials = Credentials(anthropic_api_key=api_key)
+            else:
+                raise ValueError("credentials (or api_key) must be provided")
+        if not credentials.has_any():
+            raise ValueError("No provider credentials configured")
 
+        self.credentials = credentials
         self.tools: dict[str, ToolDefinition] = {}
+        self._anthropic_clients: dict[str, anthropic.AsyncAnthropic] = {}
+
+    # --- tool registration ---
 
     def register_tool(self, tool: ToolDefinition):
         """Register a tool for the agent to use."""
@@ -55,16 +73,77 @@ class Agent:
         for tool in tools:
             self.register_tool(tool)
 
-    def _get_tool_schemas(self) -> list[dict]:
-        """Get tool schemas in Anthropic API format."""
+    # --- client factories ---
+
+    def _anthropic_client(self, provider: str) -> anthropic.AsyncAnthropic:
+        if provider not in self._anthropic_clients:
+            if provider == providers.KIMI:
+                client = anthropic.AsyncAnthropic(
+                    api_key=self.credentials.kimi_api_key,
+                    base_url=providers.KIMI_BASE_URL,
+                )
+            else:
+                client = anthropic.AsyncAnthropic(api_key=self.credentials.anthropic_api_key)
+            self._anthropic_clients[provider] = client
+        return self._anthropic_clients[provider]
+
+    async def _openai_client(self):
+        from openai import AsyncOpenAI
+
+        token = await ensure_openai_token(self.credentials)
+        if not token:
+            raise ValueError("OpenAI credentials unavailable")
+        # Rebuilt per use so a refreshed token is always applied.
+        return AsyncOpenAI(
+            base_url=providers.OPENAI_BASE_URL,
+            api_key=token,
+            default_headers={
+                "chatgpt-account-id": self.credentials.openai_account_id or "",
+                "OpenAI-Beta": "responses=experimental",
+                "originator": "codex_cli_rs",
+            },
+        )
+
+    def _provider_for(self, model: str) -> str:
+        provider = providers.resolve_provider(model)
+        if not self.credentials.has_provider(provider):
+            raise ValueError(f"No credentials configured for provider '{provider}' (model {model})")
+        return provider
+
+    # --- tool schemas ---
+
+    def _anthropic_tool_schemas(self) -> list[dict]:
+        return [
+            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+            for t in self.tools.values()
+        ]
+
+    def _openai_tool_schemas(self) -> list[dict]:
         return [
             {
+                "type": "function",
                 "name": t.name,
                 "description": t.description,
-                "input_schema": t.input_schema,
+                "parameters": t.input_schema,
             }
             for t in self.tools.values()
         ]
+
+    async def _execute_tool(self, name: str, tool_input: Any) -> str:
+        """Execute a registered tool, returning a string result."""
+        tool_def = self.tools.get(name)
+        if tool_def is None:
+            return json.dumps({"error": f"Unknown tool: {name}"})
+        try:
+            result = await tool_def.handler(tool_input)
+            if not isinstance(result, str):
+                result = json.dumps(result, default=str)
+            return result
+        except Exception as e:
+            logger.exception("Tool %s failed", name)
+            return json.dumps({"error": str(e)})
+
+    # --- public entry points ---
 
     async def run(
         self,
@@ -73,19 +152,58 @@ class Agent:
         model: str = "claude-sonnet-4-6",
         max_turns: int = 20,
     ) -> AgentResult:
-        """Run the agent with a conversation and tools.
+        """Run the agent with a conversation and tools (provider auto-selected)."""
+        provider = self._provider_for(model)
+        if provider in providers.ANTHROPIC_PROTOCOL:
+            return await self._run_anthropic(
+                self._anthropic_client(provider), system_prompt, messages, model, max_turns
+            )
+        return await self._run_openai(system_prompt, messages, model, max_turns)
 
-        Implements the tool-use loop: send message → get tool_use response →
-        execute tool → send tool_result → repeat until text response.
-        """
-        tool_schemas = self._get_tool_schemas()
+    async def run_streaming(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str = "claude-sonnet-4-6",
+        max_turns: int = 20,
+        on_tool_start: Callable[..., Coroutine] | None = None,
+        on_tool_end: Callable[..., Coroutine] | None = None,
+    ) -> AsyncGenerator[str | AgentResult, None]:
+        """Streaming variant; yields text chunks then a final AgentResult."""
+        provider = self._provider_for(model)
+        if provider in providers.ANTHROPIC_PROTOCOL:
+            gen = self._run_anthropic_streaming(
+                self._anthropic_client(provider),
+                system_prompt,
+                messages,
+                model,
+                max_turns,
+                on_tool_start,
+                on_tool_end,
+            )
+        else:
+            gen = self._run_openai_streaming(
+                system_prompt, messages, model, max_turns, on_tool_start, on_tool_end
+            )
+        async for chunk in gen:
+            yield chunk
+
+    # --- Anthropic / Kimi backend ---
+
+    async def _run_anthropic(
+        self,
+        client: anthropic.AsyncAnthropic,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_turns: int,
+    ) -> AgentResult:
+        tool_schemas = self._anthropic_tool_schemas()
         all_tool_calls: list[dict[str, Any]] = []
-        total_tokens = 0
-        total_input = 0
-        total_output = 0
+        total_tokens = total_input = total_output = 0
 
         for _turn in range(max_turns):
-            response = await self.client.messages.create(
+            response = await client.messages.create(
                 model=model,
                 max_tokens=8192,
                 system=system_prompt,
@@ -97,12 +215,10 @@ class Agent:
             total_output += response.usage.output_tokens
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
-            # Check if the response contains tool use
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             text_blocks = [b for b in response.content if b.type == "text"]
 
             if not tool_use_blocks:
-                # No tool use — return the text response
                 final_text = "\n".join(b.text for b in text_blocks)
                 return AgentResult(
                     response=final_text,
@@ -113,40 +229,15 @@ class Agent:
                     model=model,
                 )
 
-            # Append assistant message with all content blocks
             messages.append(
-                {
-                    "role": "assistant",
-                    "content": [_block_to_dict(b) for b in response.content],
-                }
+                {"role": "assistant", "content": [_block_to_dict(b) for b in response.content]}
             )
 
-            # Execute each tool call and collect results
             tool_results = []
             for tool_block in tool_use_blocks:
-                tool_name = tool_block.name
-                tool_input = tool_block.input
-
-                logger.info("Executing tool: %s", tool_name)
-                all_tool_calls.append(
-                    {
-                        "tool": tool_name,
-                        "input": tool_input,
-                    }
-                )
-
-                tool_def = self.tools.get(tool_name)
-                if tool_def is None:
-                    result = json.dumps({"error": f"Unknown tool: {tool_name}"})
-                else:
-                    try:
-                        result = await tool_def.handler(tool_input)
-                        if not isinstance(result, str):
-                            result = json.dumps(result, default=str)
-                    except Exception as e:
-                        logger.exception("Tool %s failed", tool_name)
-                        result = json.dumps({"error": str(e)})
-
+                logger.info("Executing tool: %s", tool_block.name)
+                all_tool_calls.append({"tool": tool_block.name, "input": tool_block.input})
+                result = await self._execute_tool(tool_block.name, tool_block.input)
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -155,10 +246,8 @@ class Agent:
                     }
                 )
 
-            # Add tool results to the conversation
             messages.append({"role": "user", "content": tool_results})
 
-        # Hit max turns
         return AgentResult(
             response="[Agent reached maximum tool-use turns]",
             tool_calls=all_tool_calls,
@@ -168,31 +257,23 @@ class Agent:
             model=model,
         )
 
-    async def run_streaming(
+    async def _run_anthropic_streaming(
         self,
+        client: anthropic.AsyncAnthropic,
         system_prompt: str,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-6",
-        max_turns: int = 20,
-        on_tool_start: Callable[..., Coroutine] | None = None,
-        on_tool_end: Callable[..., Coroutine] | None = None,
+        model: str,
+        max_turns: int,
+        on_tool_start: Callable[..., Coroutine] | None,
+        on_tool_end: Callable[..., Coroutine] | None,
     ) -> AsyncGenerator[str | AgentResult, None]:
-        """Run the agent with streaming for the final text response.
-
-        Tool-use loop is non-streaming. When the final text-only response is
-        detected, it is re-issued via messages.stream() for real-time delivery.
-
-        Yields str chunks (text deltas) followed by a final AgentResult.
-        """
-        tool_schemas = self._get_tool_schemas()
+        tool_schemas = self._anthropic_tool_schemas()
         all_tool_calls: list[dict[str, Any]] = []
-        total_tokens = 0
-        total_input = 0
-        total_output = 0
+        total_tokens = total_input = total_output = 0
         tool_index = 0
 
         for _turn in range(max_turns):
-            response = await self.client.messages.create(
+            response = await client.messages.create(
                 model=model,
                 max_tokens=8192,
                 system=system_prompt,
@@ -203,9 +284,7 @@ class Agent:
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
 
             if not tool_use_blocks:
-                # Final turn detected — discard the non-streaming response
-                # and re-issue as streaming (don't count discarded tokens)
-                async with self.client.messages.stream(
+                async with client.messages.stream(
                     model=model,
                     max_tokens=8192,
                     system=system_prompt,
@@ -231,45 +310,26 @@ class Agent:
                 )
                 return
 
-            # Count tokens for intermediate turns only (final turn tokens
-            # come from the streaming re-issue above)
             total_input += response.usage.input_tokens
             total_output += response.usage.output_tokens
             total_tokens += response.usage.input_tokens + response.usage.output_tokens
 
-            # Intermediate turn: add assistant response, execute tools
             messages.append(
-                {
-                    "role": "assistant",
-                    "content": [_block_to_dict(b) for b in response.content],
-                }
+                {"role": "assistant", "content": [_block_to_dict(b) for b in response.content]}
             )
 
             tool_results = []
             for tool_block in tool_use_blocks:
-                tool_name = tool_block.name
-                tool_input = tool_block.input
-
-                logger.info("Executing tool: %s", tool_name)
-                all_tool_calls.append({"tool": tool_name, "input": tool_input})
+                logger.info("Executing tool: %s", tool_block.name)
+                all_tool_calls.append({"tool": tool_block.name, "input": tool_block.input})
 
                 if on_tool_start:
-                    await on_tool_start(tool_name, tool_index)
+                    await on_tool_start(tool_block.name, tool_index)
 
-                tool_def = self.tools.get(tool_name)
-                if tool_def is None:
-                    result = json.dumps({"error": f"Unknown tool: {tool_name}"})
-                else:
-                    try:
-                        result = await tool_def.handler(tool_input)
-                        if not isinstance(result, str):
-                            result = json.dumps(result, default=str)
-                    except Exception as e:
-                        logger.exception("Tool %s failed", tool_name)
-                        result = json.dumps({"error": str(e)})
+                result = await self._execute_tool(tool_block.name, tool_block.input)
 
                 if on_tool_end:
-                    await on_tool_end(tool_name, tool_index)
+                    await on_tool_end(tool_block.name, tool_index)
 
                 tool_index += 1
                 tool_results.append(
@@ -282,7 +342,152 @@ class Agent:
 
             messages.append({"role": "user", "content": tool_results})
 
-        # Hit max turns
+        yield AgentResult(
+            response="[Agent reached maximum tool-use turns]",
+            tool_calls=all_tool_calls,
+            total_tokens=total_tokens,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            model=model,
+        )
+
+    # --- OpenAI / Codex backend (Responses API) ---
+
+    async def _run_openai(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_turns: int,
+    ) -> AgentResult:
+        client = await self._openai_client()
+        tools = self._openai_tool_schemas()
+        input_items = _messages_to_openai_input(messages)
+        all_tool_calls: list[dict[str, Any]] = []
+        total_tokens = total_input = total_output = 0
+
+        for _turn in range(max_turns):
+            resp = await client.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=input_items,
+                **({"tools": tools} if tools else {}),
+            )
+
+            total_input += resp.usage.input_tokens
+            total_output += resp.usage.output_tokens
+            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+
+            func_calls = [o for o in resp.output if o.type == "function_call"]
+            if not func_calls:
+                return AgentResult(
+                    response=_openai_output_text(resp),
+                    tool_calls=all_tool_calls,
+                    total_tokens=total_tokens,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    model=model,
+                )
+
+            # Feed the model's own output back, then the tool outputs.
+            for item in resp.output:
+                input_items.append(item.model_dump())
+
+            for fc in func_calls:
+                tool_input = json.loads(fc.arguments or "{}")
+                logger.info("Executing tool: %s", fc.name)
+                all_tool_calls.append({"tool": fc.name, "input": tool_input})
+                result = await self._execute_tool(fc.name, tool_input)
+                input_items.append(
+                    {"type": "function_call_output", "call_id": fc.call_id, "output": result}
+                )
+
+        return AgentResult(
+            response="[Agent reached maximum tool-use turns]",
+            tool_calls=all_tool_calls,
+            total_tokens=total_tokens,
+            input_tokens=total_input,
+            output_tokens=total_output,
+            model=model,
+        )
+
+    async def _run_openai_streaming(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        model: str,
+        max_turns: int,
+        on_tool_start: Callable[..., Coroutine] | None,
+        on_tool_end: Callable[..., Coroutine] | None,
+    ) -> AsyncGenerator[str | AgentResult, None]:
+        client = await self._openai_client()
+        tools = self._openai_tool_schemas()
+        input_items = _messages_to_openai_input(messages)
+        all_tool_calls: list[dict[str, Any]] = []
+        total_tokens = total_input = total_output = 0
+        tool_index = 0
+
+        for _turn in range(max_turns):
+            resp = await client.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=input_items,
+                **({"tools": tools} if tools else {}),
+            )
+
+            func_calls = [o for o in resp.output if o.type == "function_call"]
+
+            if not func_calls:
+                # Re-issue the final turn as a stream for real-time delivery.
+                async with client.responses.stream(
+                    model=model,
+                    instructions=system_prompt,
+                    input=input_items,
+                    **({"tools": tools} if tools else {}),
+                ) as stream:
+                    full_text = ""
+                    async for event in stream:
+                        if event.type == "response.output_text.delta":
+                            full_text += event.delta
+                            yield event.delta
+                    final = await stream.get_final_response()
+                    total_input += final.usage.input_tokens
+                    total_output += final.usage.output_tokens
+                    total_tokens += final.usage.input_tokens + final.usage.output_tokens
+                    if not full_text:
+                        full_text = _openai_output_text(final)
+
+                yield AgentResult(
+                    response=full_text,
+                    tool_calls=all_tool_calls,
+                    total_tokens=total_tokens,
+                    input_tokens=total_input,
+                    output_tokens=total_output,
+                    model=model,
+                )
+                return
+
+            total_input += resp.usage.input_tokens
+            total_output += resp.usage.output_tokens
+            total_tokens += resp.usage.input_tokens + resp.usage.output_tokens
+
+            for item in resp.output:
+                input_items.append(item.model_dump())
+
+            for fc in func_calls:
+                tool_input = json.loads(fc.arguments or "{}")
+                logger.info("Executing tool: %s", fc.name)
+                all_tool_calls.append({"tool": fc.name, "input": tool_input})
+                if on_tool_start:
+                    await on_tool_start(fc.name, tool_index)
+                result = await self._execute_tool(fc.name, tool_input)
+                if on_tool_end:
+                    await on_tool_end(fc.name, tool_index)
+                tool_index += 1
+                input_items.append(
+                    {"type": "function_call_output", "call_id": fc.call_id, "output": result}
+                )
+
         yield AgentResult(
             response="[Agent reached maximum tool-use turns]",
             tool_calls=all_tool_calls,
@@ -305,3 +510,31 @@ def _block_to_dict(block) -> dict:
             "input": block.input,
         }
     return {"type": block.type}
+
+
+def _messages_to_openai_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert simple {role, content} messages into Responses API input items."""
+    items: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if isinstance(content, str):
+            ctype = "output_text" if role == "assistant" else "input_text"
+            items.append({"role": role, "content": [{"type": ctype, "text": content}]})
+        else:
+            items.append({"role": role, "content": content})
+    return items
+
+
+def _openai_output_text(resp) -> str:
+    """Extract concatenated assistant text from a Responses API result."""
+    text = getattr(resp, "output_text", None)
+    if text:
+        return text
+    parts: list[str] = []
+    for item in getattr(resp, "output", []) or []:
+        if getattr(item, "type", None) == "message":
+            for block in getattr(item, "content", []) or []:
+                if getattr(block, "type", None) == "output_text":
+                    parts.append(block.text)
+    return "\n".join(parts)

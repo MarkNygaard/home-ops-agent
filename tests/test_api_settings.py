@@ -1,7 +1,5 @@
 """Tests for api/settings.py — settings management and API key masking."""
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -88,7 +86,7 @@ def test_prompt_defaults_available():
 
 @pytest.fixture
 def client(db_session, mock_settings):
-    """Create a test client for the settings router with get_valid_token mocked."""
+    """Create a test client for the settings router."""
     from fastapi import FastAPI
 
     from home_ops_agent.api.settings import router
@@ -96,12 +94,7 @@ def client(db_session, mock_settings):
     app = FastAPI()
     app.include_router(router)
 
-    with patch(
-        "home_ops_agent.api.settings.get_valid_token",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        yield TestClient(app)
+    yield TestClient(app)
 
 
 def test_get_settings_endpoint(client):
@@ -116,6 +109,43 @@ def test_get_settings_endpoint(client):
     assert data["agent_enabled"] is True
     assert "pr_review" in data["models"]
     assert "chat" in data["models"]
+    # Per-provider auth status block
+    assert set(data["providers"]) == {"anthropic", "kimi", "openai"}
+    assert data["providers"]["openai"]["configured"] is False
+
+
+def test_allowed_keys_includes_kimi():
+    assert "kimi_api_key" in ALLOWED_SETTING_KEYS
+
+
+def test_import_and_disconnect_openai_tokens(client):
+    """OpenAI tokens can be imported and then disconnected."""
+    resp = client.post(
+        "/api/auth/openai",
+        json={
+            "access_token": "acc",
+            "refresh_token": "ref",
+            "account_id": "acct-123",
+            "expires_in": 3600,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+    data = client.get("/api/settings").json()
+    assert data["providers"]["openai"]["configured"] is True
+    assert data["providers"]["openai"]["account_id"] == "acct-123"
+
+    resp = client.delete("/api/auth/openai")
+    assert resp.json()["disconnected"] == "openai"
+
+    data = client.get("/api/settings").json()
+    assert data["providers"]["openai"]["configured"] is False
+
+
+def test_disconnect_unknown_provider(client):
+    resp = client.delete("/api/auth/bogus")
+    assert "error" in resp.json()
 
 
 def test_update_setting_allowed_key(client):
@@ -147,6 +177,28 @@ def test_update_setting_overwrites_existing(client):
 
     response = client.get("/api/settings")
     assert response.json()["pr_mode"] == "auto_merge_all"
+
+
+def test_update_model_accepts_configured_provider(client):
+    """A model whose provider has credentials is accepted."""
+    # Seed an Anthropic key so the anthropic provider is configured.
+    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+
+    response = client.put("/api/settings/model_chat", json={"value": "claude-opus-4-8"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_update_model_rejects_unconfigured_provider(client):
+    """A model whose provider has no credentials is rejected up front."""
+    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+
+    # OpenAI is not configured in the test client → reject a gpt model.
+    response = client.put("/api/settings/model_chat", json={"value": "gpt-5.5"})
+    assert response.status_code == 200
+    data = response.json()
+    assert "error" in data
+    assert "openai" in data["error"]
 
 
 def test_get_prompts_endpoint(client):
