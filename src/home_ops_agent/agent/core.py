@@ -434,7 +434,7 @@ class Agent:
 
             # Feed the model's own output back, then the tool outputs.
             for item in state.output_items:
-                input_items.append(item.model_dump())
+                input_items.append(_to_input_item(item))
 
             for fc in func_calls:
                 tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
@@ -505,7 +505,7 @@ class Agent:
                 return
 
             for item in state.output_items:
-                input_items.append(item.model_dump())
+                input_items.append(_to_input_item(item))
 
             for fc in func_calls:
                 tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
@@ -573,6 +573,26 @@ def _usage_int(usage, attr: str) -> int:
     if usage is None:
         return 0
     return int(getattr(usage, attr, 0) or 0)
+
+
+def _strip_keys(obj, keys: set[str]):
+    """Recursively drop the given keys from nested dicts/lists."""
+    if isinstance(obj, dict):
+        return {k: _strip_keys(v, keys) for k, v in obj.items() if k not in keys}
+    if isinstance(obj, list):
+        return [_strip_keys(v, keys) for v in obj]
+    return obj
+
+
+def _to_input_item(item) -> dict:
+    """Serialize a Responses output item for re-feeding as an input item.
+
+    ``model_dump()`` includes output-only annotations — notably ``status`` —
+    that the Responses API rejects on input items
+    ("Unknown parameter: 'input[N].status'"). Strip them before re-sending.
+    """
+    data = item.model_dump() if hasattr(item, "model_dump") else dict(item)
+    return _strip_keys(data, {"status"})
 
 
 def _text_from_items(items) -> str:

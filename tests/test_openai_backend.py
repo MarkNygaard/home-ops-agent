@@ -34,7 +34,13 @@ def _final_response(text=None, tool_calls=None, input_tokens=10, output_tokens=5
                 name=tc["name"],
                 arguments=tc.get("arguments", "{}"),
                 call_id=tc.get("call_id", "call_1"),
-                model_dump=lambda tc=tc: {"type": "function_call", **tc},
+                # model_dump includes the output-only `status` field that must
+                # be stripped before re-feeding as an input item.
+                model_dump=lambda tc=tc: {
+                    "type": "function_call",
+                    "status": "completed",
+                    **tc,
+                },
             )
         )
     if text is not None:
@@ -150,6 +156,15 @@ async def test_openai_executes_tool_then_returns_text():
     assert result.tool_calls and result.tool_calls[0]["tool"] == "do_it"
     assert client.responses.create.call_count == 2
     assert result.total_tokens == 30
+
+    # The 2nd turn re-feeds the 1st turn's function_call as an input item; the
+    # output-only `status` field must be stripped (the API rejects it on input).
+    second_call_input = client.responses.create.call_args_list[1].kwargs["input"]
+    fed_back = [
+        i for i in second_call_input if isinstance(i, dict) and i.get("type") == "function_call"
+    ]
+    assert fed_back, "expected the function_call to be re-fed as input"
+    assert all("status" not in i for i in fed_back)
 
 
 async def test_openai_streaming_yields_deltas():
