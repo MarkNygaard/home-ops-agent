@@ -433,8 +433,7 @@ class Agent:
                 )
 
             # Feed the model's own output back, then the tool outputs.
-            for item in state.output_items:
-                input_items.append(_to_input_item(item))
+            input_items.extend(_output_items_to_input(state.output_items))
 
             for fc in func_calls:
                 tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
@@ -504,8 +503,7 @@ class Agent:
                 )
                 return
 
-            for item in state.output_items:
-                input_items.append(_to_input_item(item))
+            input_items.extend(_output_items_to_input(state.output_items))
 
             for fc in func_calls:
                 tool_input = json.loads(getattr(fc, "arguments", "") or "{}")
@@ -587,12 +585,31 @@ def _strip_keys(obj, keys: set[str]):
 def _to_input_item(item) -> dict:
     """Serialize a Responses output item for re-feeding as an input item.
 
-    ``model_dump()`` includes output-only annotations — notably ``status`` —
-    that the Responses API rejects on input items
-    ("Unknown parameter: 'input[N].status'"). Strip them before re-sending.
+    Under ``store=false`` the backend persists nothing, so output annotations
+    that reference server state break on input:
+    - ``status`` → "Unknown parameter: 'input[N].status'"
+    - ``id`` (e.g. ``rs_*``/``fc_*``) → 404 "Item with id ... not found"
+    Strip both so the item is sent inline rather than as a server reference.
     """
     data = item.model_dump() if hasattr(item, "model_dump") else dict(item)
-    return _strip_keys(data, {"status"})
+    return _strip_keys(data, {"status", "id"})
+
+
+def _output_items_to_input(items) -> list[dict]:
+    """Convert output items into input items for the next turn (store=false).
+
+    Reasoning items (``rs_*``) are dropped: under ``store=false`` they 404 when
+    referenced by id, and re-feeding one without its required following item is
+    itself an error. (Preserving reasoning across turns would need
+    ``include=["reasoning.encrypted_content"]`` and the encrypted payload — not
+    worth it for the tool loop.) Everything else is sanitized and kept.
+    """
+    result: list[dict] = []
+    for item in items or []:
+        if getattr(item, "type", None) == "reasoning":
+            continue
+        result.append(_to_input_item(item))
+    return result
 
 
 def _text_from_items(items) -> str:

@@ -25,8 +25,25 @@ def _openai_creds():
     )
 
 
-def _final_response(text=None, tool_calls=None, input_tokens=10, output_tokens=5):
+def _final_response(
+    text=None, tool_calls=None, reasoning_id=None, input_tokens=10, output_tokens=5
+):
     output = []
+    if reasoning_id:
+        # Reasoning items carry a server-reference id (rs_*) and must be dropped
+        # when re-feeding under store=false.
+        output.append(
+            SimpleNamespace(
+                type="reasoning",
+                id=reasoning_id,
+                model_dump=lambda rid=reasoning_id: {
+                    "type": "reasoning",
+                    "id": rid,
+                    "status": "completed",
+                    "summary": [],
+                },
+            )
+        )
     for tc in tool_calls or []:
         output.append(
             SimpleNamespace(
@@ -34,10 +51,11 @@ def _final_response(text=None, tool_calls=None, input_tokens=10, output_tokens=5
                 name=tc["name"],
                 arguments=tc.get("arguments", "{}"),
                 call_id=tc.get("call_id", "call_1"),
-                # model_dump includes the output-only `status` field that must
+                # model_dump includes output-only `id`/`status` fields that must
                 # be stripped before re-feeding as an input item.
                 model_dump=lambda tc=tc: {
                     "type": "function_call",
+                    "id": "fc_" + tc.get("call_id", "call_1"),
                     "status": "completed",
                     **tc,
                 },
@@ -61,10 +79,12 @@ def _delta_event(text):
     return SimpleNamespace(type="response.output_text.delta", delta=text)
 
 
-def _completed_event(text=None, tool_calls=None, input_tokens=10, output_tokens=5):
+def _completed_event(
+    text=None, tool_calls=None, reasoning_id=None, input_tokens=10, output_tokens=5
+):
     return SimpleNamespace(
         type="response.completed",
-        response=_final_response(text, tool_calls, input_tokens, output_tokens),
+        response=_final_response(text, tool_calls, reasoning_id, input_tokens, output_tokens),
     )
 
 
@@ -140,7 +160,12 @@ async def test_openai_executes_tool_then_returns_text():
 
     client = _fake_client(
         [
-            [_completed_event(tool_calls=[{"name": "do_it", "arguments": "{}", "call_id": "c1"}])],
+            [
+                _completed_event(
+                    tool_calls=[{"name": "do_it", "arguments": "{}", "call_id": "c1"}],
+                    reasoning_id="rs_abc",
+                )
+            ],
             [_completed_event(text="done")],
         ]
     )
@@ -157,14 +182,16 @@ async def test_openai_executes_tool_then_returns_text():
     assert client.responses.create.call_count == 2
     assert result.total_tokens == 30
 
-    # The 2nd turn re-feeds the 1st turn's function_call as an input item; the
-    # output-only `status` field must be stripped (the API rejects it on input).
+    # The 2nd turn re-feeds the 1st turn's output as input. Under store=false:
+    #   - reasoning items (rs_*) must be dropped (would 404),
+    #   - output-only `status`/`id` must be stripped from what remains.
     second_call_input = client.responses.create.call_args_list[1].kwargs["input"]
+    assert all(i.get("type") != "reasoning" for i in second_call_input if isinstance(i, dict))
     fed_back = [
         i for i in second_call_input if isinstance(i, dict) and i.get("type") == "function_call"
     ]
     assert fed_back, "expected the function_call to be re-fed as input"
-    assert all("status" not in i for i in fed_back)
+    assert all("status" not in i and "id" not in i for i in fed_back)
 
 
 async def test_openai_streaming_yields_deltas():
