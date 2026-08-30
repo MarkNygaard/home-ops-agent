@@ -260,12 +260,30 @@ async def get_file_content(params: dict) -> str:
         else:
             content = data.get("content", "")
 
+        # Truncation must be visible: this content is what the agent hands back
+        # to github_create_commit, which replaces the whole file. Silently
+        # clipping it there would delete the tail of the file in the repo.
+        limit = 10000
+        truncated = len(content) > limit
         return json.dumps(
             {
                 "path": data["path"],
                 "size": data["size"],
                 "sha": data["sha"],
-                "content": content[:10000],  # Truncate very large files
+                "content": content[:limit],
+                "truncated": truncated,
+                **(
+                    {
+                        "warning": (
+                            f"Content truncated at {limit} characters "
+                            f"(file is {len(content)}). Do NOT pass this back to "
+                            "github_create_commit — it would delete everything past "
+                            "the cut."
+                        )
+                    }
+                    if truncated
+                    else {}
+                ),
             }
         )
 
