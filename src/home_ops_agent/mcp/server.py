@@ -7,11 +7,19 @@ diagnose why a PR review went wrong you want the tool-call trace, not a
 screenshot of a summary.
 
 This exposes that record over MCP-over-HTTP, as a thin layer on the same
-queries the REST API already serves. It is mounted at ``/mcp`` and is
-**deliberately read-only** — nothing here triggers a run, edits a setting, or
-writes a memory. A read tool is safe to hand to any session; a write tool means
-an outside session can act on the cluster's operator, which is a separate
-decision.
+queries the REST API already serves, mounted at ``/mcp``.
+
+Everything here is read-only **except** ``create_memory`` and
+``delete_memory``. That exception is deliberate and narrow. Memories are
+injected into every future system prompt, including those of agents that can
+commit to the repo and restart pods, and they are instruction-shaped ("a
+blocked drain during an upgrade is expected, not a new fault") — so a memory
+tool is a persistent influence on the operator's behaviour, not just a note.
+It earns its place because curating memories by hand is the one recurring
+chore here, and because the damage is visible in the UI and reversible with a
+single delete. Nothing else mutates: no settings, no models, no prompts, no
+triggering runs. Adding a third write tool should be a deliberate act, which is
+why ``test_write_surface_is_exactly_two_tools`` pins the list.
 
 **Disabled unless ``MCP_API_TOKEN`` is set.** With no token the endpoint is not
 mounted at all, so it cannot be reached by accident. When set, every request
@@ -64,6 +72,29 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n... [truncated, {len(text)} chars total]"
+
+
+def _render_message(message: Message) -> dict[str, Any]:
+    """One message, with its tool calls, capped so a huge result cannot swamp
+    the caller's context."""
+    content = message.content or {}
+    entry: dict[str, Any] = {"role": message.role, "at": _iso(message.created_at)}
+    text = content.get("text")
+    if text:
+        entry["text"] = _truncate(str(text), MAX_MESSAGE_TEXT_CHARS)
+    calls = content.get("tool_calls")
+    if calls:
+        entry["tool_calls"] = [
+            {
+                "tool": c.get("tool"),
+                "input": c.get("input"),
+                "result": _truncate(str(c["result"]), MAX_TOOL_RESULT_CHARS)
+                if c.get("result") is not None
+                else None,
+            }
+            for c in calls
+        ]
+    return entry
 
 
 # --- queries -----------------------------------------------------------------
@@ -128,26 +159,7 @@ async def _task_detail(task_id: int) -> dict[str, Any]:
             )
             messages = list(result.scalars().all())
 
-    rendered = []
-    for message in messages:
-        content = message.content or {}
-        entry: dict[str, Any] = {"role": message.role, "at": _iso(message.created_at)}
-        text = content.get("text")
-        if text:
-            entry["text"] = _truncate(str(text), MAX_MESSAGE_TEXT_CHARS)
-        calls = content.get("tool_calls")
-        if calls:
-            entry["tool_calls"] = [
-                {
-                    "tool": c.get("tool"),
-                    "input": c.get("input"),
-                    "result": _truncate(str(c["result"]), MAX_TOOL_RESULT_CHARS)
-                    if c.get("result") is not None
-                    else None,
-                }
-                for c in calls
-            ]
-        rendered.append(entry)
+    rendered = [_render_message(m) for m in messages]
 
     return {
         "id": task.id,
@@ -199,6 +211,103 @@ async def _memories(category: str | None, limit: int) -> dict[str, Any]:
             for m in memories
         ],
     }
+
+
+async def _conversations(source: str | None, limit: int) -> dict[str, Any]:
+    async with async_session() as session:
+        query = select(Conversation).order_by(desc(Conversation.created_at))
+        if source:
+            query = query.where(Conversation.source == source)
+        result = await session.execute(query.limit(limit))
+        conversations = list(result.scalars().all())
+
+        counts = {}
+        if conversations:
+            result = await session.execute(
+                select(Message.conversation_id, func.count(Message.id))
+                .where(Message.conversation_id.in_([c.id for c in conversations]))
+                .group_by(Message.conversation_id)
+            )
+            counts = {row[0]: row[1] for row in result.all()}
+
+    return {
+        "count": len(conversations),
+        "conversations": [
+            {
+                "id": c.id,
+                "title": c.title,
+                "source": c.source,
+                "status": c.status,
+                "messages": counts.get(c.id, 0),
+                "created_at": _iso(c.created_at),
+            }
+            for c in conversations
+        ],
+    }
+
+
+async def _conversation_detail(conversation_id: int) -> dict[str, Any]:
+    async with async_session() as session:
+        result = await session.execute(
+            select(Conversation).where(Conversation.id == conversation_id)
+        )
+        conversation = result.scalar_one_or_none()
+        if conversation is None:
+            return {"error": f"No conversation with id {conversation_id}"}
+        result = await session.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+        )
+        messages = list(result.scalars().all())
+
+    return {
+        "id": conversation.id,
+        "title": conversation.title,
+        "source": conversation.source,
+        "status": conversation.status,
+        "created_at": _iso(conversation.created_at),
+        "messages": [_render_message(m) for m in messages],
+    }
+
+
+async def _create_memory(content: str, category: str) -> dict[str, Any]:
+    from home_ops_agent.agent.memory import MEMORY_CATEGORIES
+
+    content = content.strip()
+    if not content:
+        return {"error": "content must not be empty"}
+    if category not in MEMORY_CATEGORIES:
+        return {"error": f"category must be one of: {', '.join(sorted(MEMORY_CATEGORIES))}"}
+
+    async with async_session() as session:
+        existing = await session.execute(select(Memory).where(Memory.content == content))
+        if existing.scalar_one_or_none():
+            return {"error": "A memory with this exact content already exists"}
+        memory = Memory(content=content, category=category)
+        session.add(memory)
+        await session.commit()
+        await session.refresh(memory)
+        return {
+            "status": "created",
+            "id": memory.id,
+            "content": memory.content,
+            "category": memory.category,
+        }
+
+
+async def _delete_memory(memory_id: int) -> dict[str, Any]:
+    async with async_session() as session:
+        result = await session.execute(select(Memory).where(Memory.id == memory_id))
+        memory = result.scalar_one_or_none()
+        if memory is None:
+            return {"error": f"No memory with id {memory_id}"}
+        # Echo the content back: deleting from a prompt-shaping store should
+        # leave a record of what was removed, not just an id.
+        removed = {"id": memory.id, "content": memory.content, "category": memory.category}
+        await session.delete(memory)
+        await session.commit()
+    return {"status": "deleted", "removed": removed}
 
 
 async def _agent_status() -> dict[str, Any]:
@@ -312,10 +421,11 @@ def build_server():
     mcp = FastMCP(
         name="home-ops-agent",
         instructions=(
-            "Read-only access to the home-ops-agent operator: what it has run, the "
-            "conversations and tool calls behind each run, what it remembers, how it "
-            "is configured, and what it has cost. Nothing here changes cluster or "
-            "agent state."
+            "Access to the home-ops-agent operator: what it has run, the conversations "
+            "and tool calls behind each run, what it remembers, how it is configured, "
+            "and what it has cost. Everything is read-only except create_memory and "
+            "delete_memory, which change what the agent carries into every future "
+            "prompt. Nothing here touches cluster state or triggers a run."
         ),
         stateless_http=True,
         json_response=True,
@@ -375,6 +485,50 @@ def build_server():
         skills are enabled, PR mode, and the last PR check's outcome.
         """
         return json.dumps(await _agent_status(), default=str)
+
+    @mcp.tool()
+    async def conversations(source: str | None = None, limit: int = 20) -> str:
+        """List conversation threads, most recent first.
+
+        source is one of chat, pr_review, pr_deep_review, alert, alert_triage,
+        alert_fix, code_fix. Note that chats produce a conversation but no
+        agent_tasks row, so they are only visible here — agent_tasks alone
+        misses every chat.
+        """
+        return json.dumps(await _conversations(source, min(limit, 100)), default=str)
+
+    @mcp.tool()
+    async def conversation_detail(conversation_id: int) -> str:
+        """Every message in one conversation, including tool calls and results."""
+        return json.dumps(await _conversation_detail(conversation_id), default=str)
+
+    @mcp.tool()
+    async def create_memory(content: str, category: str = "knowledge") -> str:
+        """Store a durable fact the agent should carry into every future prompt.
+
+        Use this for something learned outside the agent's own chats — an
+        investigation in the infrastructure repo, a decision and its reasoning.
+
+        Write a permanent property, never a snapshot. "whichever node hosts the
+        primary cannot be drained" is durable; "k8s-1 is cordoned" is a fact
+        about right now that will read as present tense forever and can
+        contradict what the agent's live tools report.
+
+        category: knowledge (how things are built), config (a setting and why),
+        fix (a change that resolved something), preference (how the user wants
+        things done), issue (a RECURRING problem — dropped from prompts after 7
+        days), general.
+        """
+        return json.dumps(await _create_memory(content, category), default=str)
+
+    @mcp.tool()
+    async def delete_memory(memory_id: int) -> str:
+        """Remove one memory by id, e.g. one that has become wrong or misleading.
+
+        Deletes a single memory only; get ids from the `memories` tool. The
+        removed content is echoed back so the deletion is auditable.
+        """
+        return json.dumps(await _delete_memory(memory_id), default=str)
 
     @mcp.tool()
     async def costs(days: int = 30) -> str:
