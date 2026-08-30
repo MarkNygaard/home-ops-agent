@@ -6,6 +6,7 @@ that its write surface stays exactly the two memory tools it is meant to have.
 """
 
 import json
+import pathlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -520,3 +521,61 @@ async def test_delete_memory_echoes_what_it_removed(db_session):
 
 async def test_delete_memory_handles_a_missing_id(db_session):
     assert "error" in await mcp_server._delete_memory(999999)
+
+
+# --- the crash that took the operator offline ---
+
+
+def test_mcp_major_version_is_pinned():
+    """An unpinned `mcp` let the image ship 2.x while tests ran 1.26.
+
+    mcp 2.x removed `mcp.server.fastmcp` and dropped the MCPServer kwargs this
+    module depends on (stateless_http, json_response, streamable_http_path,
+    transport_security), so a bump is a migration, not a version change.
+    """
+    import tomllib
+
+    pyproject = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+    mcp_dep = next(d for d in pyproject["project"]["dependencies"] if d.startswith("mcp"))
+
+    assert "<2" in mcp_dep, f"mcp must stay below 2.x until migrated (found {mcp_dep!r})"
+
+
+def test_image_builds_from_the_lock_file():
+    """The image resolved dependencies fresh, so it could ship what tests never ran.
+
+    Copying uv.lock and installing the exported set is what makes the image and
+    the test environment the same.
+    """
+    dockerfile = pathlib.Path("Dockerfile").read_text(encoding="utf-8")
+
+    assert "uv.lock" in dockerfile
+    assert "--frozen" in dockerfile
+
+
+def test_a_broken_mcp_sdk_does_not_take_the_app_down(monkeypatch):
+    """The operator must survive a broken optional endpoint.
+
+    When mcp 2.x landed in the image, build_server() raised at startup and the
+    whole pod entered CrashLoopBackOff -- PR reviews and alert handling went
+    down with an inspection endpoint.
+    """
+    monkeypatch.setattr(mcp_server.settings, "mcp_api_token", "secret")
+    monkeypatch.setattr(mcp_server, "_server", None)
+
+    def _boom():
+        raise ModuleNotFoundError("No module named 'mcp.server.fastmcp'")
+
+    monkeypatch.setattr(mcp_server, "build_server", _boom)
+    app = FastAPI()
+
+    # Must not raise, and must report that it did not mount.
+    assert mcp_server.mount(app) is False
+    assert not [r for r in app.routes if getattr(r, "path", "") == "/mcp"]
+
+
+async def test_lifespan_is_a_noop_when_mounting_failed(monkeypatch):
+    """A failed mount leaves no server, so the lifespan must still start cleanly."""
+    monkeypatch.setattr(mcp_server, "_server", None)
+    async with mcp_server.lifespan():
+        pass
