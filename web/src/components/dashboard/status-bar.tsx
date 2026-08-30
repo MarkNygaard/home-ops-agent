@@ -9,6 +9,7 @@ import { useWs } from "@/providers/websocket-provider"
 import { useCosts } from "@/hooks/use-costs"
 import { useSettings } from "@/hooks/use-settings"
 import { fetchStatus, triggerPrCheck } from "@/lib/api"
+import type { PrCheckResult } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
@@ -25,6 +26,32 @@ function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
   const mins = Math.floor(remaining / 60)
   const secs = remaining % 60
   return `${mins}:${secs.toString().padStart(2, "0")}`
+}
+
+// A PR check that reviews nothing is indistinguishable from one that never ran
+// unless the reason is spelled out. Every branch of check_prs reports itself.
+function describeCheck(result: PrCheckResult | null | undefined): string | null {
+  if (!result) return null
+  switch (result.status) {
+    case "disabled":
+      return "Agent is disabled"
+    case "no_credentials":
+      return "No model credentials"
+    case "no_open_prs":
+      return "No open PRs"
+    case "cancelled":
+      return "Check cancelled"
+    case "error":
+      return `Check failed: ${result.error ?? "unknown error"}`
+    case "completed": {
+      const parts = [`${result.reviewed ?? 0} reviewed`]
+      if (result.failed) parts.push(`${result.failed} failed`)
+      if (result.rate_limited) parts.push("rate limited")
+      return parts.join(", ")
+    }
+    default:
+      return result.status
+  }
 }
 
 function CostBadge() {
@@ -55,6 +82,9 @@ export function StatusBar() {
   })
 
   const [checking, setChecking] = useState(false)
+  // Set only for outcomes the trigger reports directly (already running,
+  // failed to start); otherwise the last cycle's result is shown.
+  const [lastRun, setLastRun] = useState<string | null>(null)
   const agentEnabled = settings?.agent_enabled ?? true
   const prMode = settings?.pr_mode ?? "comment_only"
   const prInterval = settings?.pr_check_interval_seconds ?? 1800
@@ -119,19 +149,30 @@ export function StatusBar() {
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
-              disabled={checking}
+              disabled={checking || statusData?.pr_check_running}
               onClick={async () => {
                 setChecking(true)
+                setLastRun(null)
                 try {
-                  await triggerPrCheck()
+                  const res = await triggerPrCheck()
+                  if (res.status === "already_running") {
+                    setLastRun("Already running")
+                  }
                   await queryClient.invalidateQueries({ queryKey: ["status"] })
+                } catch {
+                  setLastRun("Could not start check")
                 } finally {
                   setChecking(false)
                 }
               }}
             >
-              {checking ? "Running..." : "Run now"}
+              {checking || statusData?.pr_check_running ? "Running..." : "Run now"}
             </Button>
+            {(lastRun ?? describeCheck(statusData?.last_pr_check_result)) && (
+              <span className="text-xs text-muted-foreground">
+                {lastRun ?? describeCheck(statusData?.last_pr_check_result)}
+              </span>
+            )}
           </>
         )}
       </div>

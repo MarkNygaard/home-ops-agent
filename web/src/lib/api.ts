@@ -135,7 +135,10 @@ export function fetchStatus(): Promise<StatusResponse> {
 }
 
 // PR check
-export function triggerPrCheck(): Promise<{ status: string }> {
+export function triggerPrCheck(): Promise<{
+  status: string
+  running_for_seconds?: number
+}> {
   return fetchJson("/api/pr-check", { method: "POST" })
 }
 

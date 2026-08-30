@@ -145,3 +145,73 @@ async def test_is_safe_to_auto_merge_digest_label():
     ):
         pr = {"author": "renovate[bot]", "labels": ["type/digest"]}
         assert await _is_safe_to_auto_merge(pr, "safe to merge") is True
+
+
+# --- cycle summaries (so a no-op is distinguishable from a failure) ---
+
+
+async def test_check_prs_reports_disabled(monkeypatch):
+    """A switched-off agent must not look like a successful empty run."""
+    from home_ops_agent.workers import pr_monitor
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=False))
+
+    assert (await pr_monitor.check_prs())["status"] == "disabled"
+
+
+async def test_check_prs_reports_missing_credentials(monkeypatch):
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import pr_monitor
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(pr_monitor, "build_credentials", AsyncMock(return_value=Credentials()))
+
+    assert (await pr_monitor.check_prs())["status"] == "no_credentials"
+
+
+async def test_check_prs_reports_no_open_prs(monkeypatch):
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import pr_monitor
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        pr_monitor,
+        "build_credentials",
+        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+    )
+    monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr("home_ops_agent.agent.tools.github.list_prs", AsyncMock(return_value="[]"))
+
+    result = await pr_monitor.check_prs()
+    assert result["status"] == "no_open_prs"
+    assert result["open_prs"] == 0
+
+
+async def test_check_prs_counts_failed_reviews(monkeypatch):
+    """A model with no credentials fails every review; the count must show it."""
+    import json as _json
+
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import pr_monitor
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        pr_monitor,
+        "build_credentials",
+        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+    )
+    monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(pr_monitor, "_get_pr_mode", AsyncMock(return_value="comment_only"))
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.list_prs",
+        AsyncMock(return_value=_json.dumps([{"number": 1, "title": "t", "author": "a"}])),
+    )
+    # _review_pr swallows its own exceptions and returns None.
+    monkeypatch.setattr(pr_monitor, "_review_pr", AsyncMock(return_value=None))
+
+    result = await pr_monitor.check_prs()
+
+    assert result["status"] == "completed"
+    assert result["open_prs"] == 1
+    assert result["reviewed"] == 0
+    assert result["failed"] == 1

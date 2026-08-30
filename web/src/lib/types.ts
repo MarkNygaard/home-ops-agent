@@ -116,9 +116,21 @@ export interface HistoryItem {
   is_conversation: boolean
 }
 
+export interface PrCheckResult {
+  status: string
+  at?: string
+  open_prs?: number
+  reviewed?: number
+  failed?: number
+  rate_limited?: boolean
+  error?: string
+}
+
 export interface StatusResponse {
   has_credentials: boolean
   last_pr_check_at: string | null
+  pr_check_running?: boolean
+  last_pr_check_result?: PrCheckResult | null
 }
 
 export interface CostByModel {
