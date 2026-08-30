@@ -19,11 +19,17 @@ FROM base AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY pyproject.toml ./
+# uv.lock is copied on purpose: without it `uv pip install .` re-resolves every
+# dependency at build time, so the image can ship versions the test suite never
+# ran against. That is exactly how an unpinned `mcp>=1.0.0` put 2.x in the image
+# while tests passed on 1.26, and crashed the pod on startup.
+COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 
-# Install dependencies only (not the package itself, we'll use PYTHONPATH)
-RUN uv pip install --system --no-cache-dir .
+# Install the locked dependency set (not the package itself, we use PYTHONPATH).
+RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && uv pip install --system --no-cache-dir -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Stage 3: Runtime
 FROM base AS runtime

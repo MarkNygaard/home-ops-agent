@@ -139,6 +139,10 @@ Read-only MCP-over-HTTP for inspecting what the agent has done from a coding ses
   - Starlette does not run a mounted sub-app's lifespan, so `main.py` enters `mcp.server.lifespan()` to start the session manager. Without it every request returns "Task group is not initialized".
   - The MCP SDK enables DNS-rebinding protection with an *empty* host allowlist, which rejects everything. `allowed_hosts()` derives the public host from `base_url`, plus localhost and anything in `MCP_ALLOWED_HOSTS`.
 - Mounted before the static catch-all in `main.py`, which would otherwise swallow `/mcp`.
+- **`mcp` is pinned `<2`** — 2.x removed `mcp.server.fastmcp` and dropped the `MCPServer` kwargs this module needs (`stateless_http`, `json_response`, `streamable_http_path`, `transport_security`), so a bump is a migration, not a version change.
+- **`mount()` never raises.** A broken or incompatible SDK degrades to "no `/mcp`" and a logged exception. This endpoint inspects the agent; it must not be able to stop it. It once did: an unpinned `mcp` put 2.x in the image, `build_server()` raised at startup, and PR reviews and alert handling went down with it.
+
+**The image builds from `uv.lock`.** The Dockerfile previously ran `uv pip install .` against `pyproject.toml` alone, so every build re-resolved dependencies and could ship versions the test suite had never run. It now copies `uv.lock` and installs `uv export --frozen`, which is what keeps the image and the tests on the same versions.
 
 ## Database
 

@@ -591,9 +591,18 @@ def mount(app) -> bool:
         return False
 
     global _server
-    server = build_server()
-    # streamable_http_app() must be called before session_manager exists.
-    http_app = server.streamable_http_app()
+    try:
+        server = build_server()
+        # streamable_http_app() must be called before session_manager exists.
+        http_app = server.streamable_http_app()
+    except Exception:
+        # This endpoint is for inspecting the agent, not for running it. A
+        # broken or incompatible MCP SDK must degrade to "no /mcp", never take
+        # the operator offline — an unpinned `mcp` major bump did exactly that
+        # once, and the PR reviews and alert handling went down with it.
+        logger.exception("Failed to build the MCP server — continuing without /mcp")
+        return False
+
     app.mount(MCP_PATH, BearerTokenMiddleware(http_app, token))
     _server = server
     logger.info(
