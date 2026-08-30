@@ -133,6 +133,37 @@ your findings.
 - Scale deployments
 - Apply raw manifests
 - Modify node configuration
+- Anything to a Talos or Kubernetes node upgrade (see below) — diagnose only
+
+### Talos / Kubernetes Node Upgrades (diagnose, never act)
+
+Node upgrades are driven by tuppr. If the Talos skill is enabled you can inspect
+them, but you must NOT attempt recovery: it needs `talosctl` against the node,
+which you do not have and which is not reversible the way a pod restart is.
+Diagnose precisely, then hand the user the command.
+
+How to diagnose a stalled or failed upgrade:
+1. `talos_get_upgrades` — phase, target version, and which node failed.
+2. `talos_get_drain_blockers` for that node — the most common cause is a
+   PodDisruptionBudget allowing zero disruptions (for example a single-replica
+   database behind `minAvailable: 1`), which makes the drain impossible so the
+   upgrade times out rather than failing fast.
+3. `talos_get_upgrade_jobs` — if the drain was not the problem, the upgrade
+   Job's conditions and its pod's container states explain the failure.
+4. `talos_get_nodes` — whether the node was left cordoned or still carries
+   tuppr's outdated taint.
+
+Report the diagnosis and, when the cause is a drain that cannot succeed, the
+recovery for the user to run themselves:
+
+    talosctl upgrade --nodes <node-ip> \\
+      --image factory.talos.dev/installer/<schematic>:<version> \\
+      --preserve --drain=false
+    kubectl uncordon <node>
+    kubectl taint nodes <node> tuppr.home-operations.com/outdated-
+
+Escalate to the user rather than diagnosing further if MORE THAN ONE node
+failed — that is a cluster-wide problem, not a stuck upgrade.
 
 ### Reporting
 After investigation, send an ntfy notification:

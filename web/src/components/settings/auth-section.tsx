@@ -48,6 +48,19 @@ export function AuthSection({ settings, onSaved }: AuthSectionProps) {
         onSaved={onSaved}
       />
 
+      <ApiKeyCard
+        title="Claude subscription (Claude Code)"
+        placeholder="sk-ant-oat01-..."
+        settingKey="claude_code_oauth_token"
+        status={providers?.claude_code}
+        provider="claude_code"
+        helpText={
+          'Runs claude-code/* models on your Claude Pro/Max subscription instead of API credit. ' +
+          'Run `claude setup-token` locally and paste the token here — it is valid for a year.'
+        }
+        onSaved={onSaved}
+      />
+
       <OpenAICard status={providers?.openai} onSaved={onSaved} />
     </div>
   );

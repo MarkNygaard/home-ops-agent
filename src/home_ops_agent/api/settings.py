@@ -38,6 +38,9 @@ async def get_settings():
     anthropic_key = db_settings.get("anthropic_api_key") or settings.anthropic_api_key
     kimi_key = db_settings.get("kimi_api_key") or settings.kimi_api_key
     openai_token = db_settings.get(creds.OPENAI_ACCESS_TOKEN_KEY)
+    claude_code_token = (
+        db_settings.get(creds.CLAUDE_CODE_TOKEN_KEY) or settings.claude_code_oauth_token
+    )
 
     return {
         "agent_enabled": db_settings.get("agent_enabled", "true").lower() in ("true", "1", "yes"),
@@ -56,6 +59,10 @@ async def get_settings():
                 "configured": bool(openai_token),
                 "account_id": db_settings.get(creds.OPENAI_ACCOUNT_ID_KEY) or None,
                 "expires_at": db_settings.get(creds.OPENAI_EXPIRES_AT_KEY) or None,
+            },
+            "claude_code": {
+                "configured": bool(claude_code_token),
+                "hint": _mask_key(claude_code_token),
             },
         },
         "alert_cooldown_seconds": int(
@@ -88,6 +95,7 @@ ALLOWED_SETTING_KEYS = {
     "pr_mode",
     "anthropic_api_key",
     "kimi_api_key",
+    "claude_code_oauth_token",
     "alert_cooldown_seconds",
     "ntfy_topics",
     "pr_check_interval_seconds",
@@ -217,6 +225,8 @@ async def disconnect_provider(provider: str):
             creds.OPENAI_ACCOUNT_ID_KEY,
             creds.OPENAI_EXPIRES_AT_KEY,
         ],
+        "claude_code": [creds.CLAUDE_CODE_TOKEN_KEY],
+        "claude-code": [creds.CLAUDE_CODE_TOKEN_KEY],
     }
     keys = key_map.get(provider)
     if not keys:

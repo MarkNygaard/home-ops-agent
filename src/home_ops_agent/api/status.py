@@ -5,8 +5,10 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy import delete, desc, func, select
 
+from home_ops_agent.agent.memory import MEMORY_CATEGORIES
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Memory, Message, async_session
@@ -243,6 +245,45 @@ async def list_memories(
             }
             for m in result.scalars().all()
         ]
+
+
+class NewMemory(BaseModel):
+    content: str
+    category: str = "knowledge"
+
+
+@router.post("/api/memories")
+async def create_memory(body: NewMemory):
+    """Write a memory by hand.
+
+    The extractor only runs on chat conversations, so a fact learned anywhere
+    else — an alert investigation, a PR review, or work done outside this agent
+    entirely — has no other way in. It is also the only way to correct a fact
+    the extractor got wrong, since memories are otherwise append-only-by-robot.
+    """
+    content = body.content.strip()
+    if not content:
+        return {"error": "content must not be empty"}
+    if body.category not in MEMORY_CATEGORIES:
+        return {"error": f"category must be one of: {', '.join(sorted(MEMORY_CATEGORIES))}"}
+
+    async with async_session() as session:
+        existing = await session.execute(select(Memory).where(Memory.content == content))
+        if existing.scalar_one_or_none():
+            return {"error": "A memory with this exact content already exists"}
+
+        memory = Memory(content=content, category=body.category)
+        session.add(memory)
+        await session.commit()
+        await session.refresh(memory)
+
+        return {
+            "id": memory.id,
+            "content": memory.content,
+            "category": memory.category,
+            "source_conversation_id": None,
+            "created_at": memory.created_at.isoformat() if memory.created_at else None,
+        }
 
 
 @router.delete("/api/memories/{memory_id}")

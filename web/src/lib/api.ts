@@ -109,6 +109,17 @@ export function deleteMemory(id: number): Promise<void> {
   return fetch(`/api/memories/${id}`, { method: "DELETE" }).then(() => {})
 }
 
+export function createMemory(
+  content: string,
+  category: string,
+): Promise<Memory & { error?: string }> {
+  return fetch("/api/memories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, category }),
+  }).then((r) => r.json())
+}
+
 // Prompts
 export function fetchPrompts(): Promise<PromptsResponse> {
   return fetchJson<PromptsResponse>("/api/prompts")

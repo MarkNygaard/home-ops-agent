@@ -1,21 +1,56 @@
 "use client"
 
-import { Trash2 } from "lucide-react"
+import { useState } from "react"
+import { Plus, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  Select,
+  SelectTrigger,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { SiteHeader } from "@/components/site-header"
 import { useMemories } from "@/hooks/use-memories"
-import { deleteMemory } from "@/lib/api"
+import { createMemory, deleteMemory } from "@/lib/api"
 import { formatDate } from "@/lib/utils"
-import { CATEGORY_COLORS } from "@/lib/constants"
+import { CATEGORY_COLORS, MEMORY_CATEGORIES } from "@/lib/constants"
 
 export default function MemoriesPage() {
   const { data: memories, mutate } = useMemories()
+  const [adding, setAdding] = useState(false)
+  const [content, setContent] = useState("")
+  const [category, setCategory] = useState("knowledge")
+  const [error, setError] = useState("")
+  const [saving, setSaving] = useState(false)
 
   async function handleDelete(id: number) {
     await deleteMemory(id)
     mutate()
+  }
+
+  async function handleAdd() {
+    if (!content.trim()) return
+    setSaving(true)
+    const res = await createMemory(content.trim(), category)
+    setSaving(false)
+    if (res?.error) {
+      setError(res.error)
+      return
+    }
+    setContent("")
+    setCategory("knowledge")
+    setError("")
+    setAdding(false)
+    mutate()
+  }
+
+  function cancelAdd() {
+    setAdding(false)
+    setContent("")
+    setError("")
   }
 
   function categoryVariant(category: string) {
@@ -31,10 +66,69 @@ export default function MemoriesPage() {
       <SiteHeader title="Memories" />
       <div className="flex-1 overflow-y-auto px-4 py-6 lg:px-8 lg:py-8">
         <div className="mx-auto max-w-6xl">
-          <p className="mb-4 text-sm text-muted-foreground">
-            Facts the agent remembers from previous conversations. These are
-            included in the system prompt for all future interactions.
-          </p>
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <p className="text-sm text-muted-foreground">
+              Facts the agent remembers from previous conversations. These are
+              included in the system prompt for all future interactions. The
+              agent only extracts memories from chats, so add anything it
+              learned elsewhere yourself.
+            </p>
+            {!adding && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setAdding(true)}
+              >
+                <Plus className="size-3.5" />
+                Add memory
+              </Button>
+            )}
+          </div>
+
+          {adding && (
+            <Card className="mb-4">
+              <CardContent className="flex flex-col gap-3">
+                <Textarea
+                  autoFocus
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder="A durable fact about how the cluster is built — not what is broken right now."
+                  rows={3}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-64">
+                    <Select
+                      value={category}
+                      onValueChange={(val) => setCategory(val as string)}
+                    >
+                      <SelectTrigger>
+                        {MEMORY_CATEGORIES.find((c) => c.value === category)
+                          ?.label ?? "Select category"}
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MEMORY_CATEGORIES.map((c) => (
+                          <SelectItem key={c.value} value={c.value}>
+                            {c.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button onClick={handleAdd} disabled={saving || !content.trim()}>
+                    {saving ? "Saving..." : "Save"}
+                  </Button>
+                  <Button variant="ghost" onClick={cancelAdd}>
+                    Cancel
+                  </Button>
+                </div>
+                {error && (
+                  <span className="text-xs text-destructive">{error}</span>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {!memories || memories.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               No memories yet. The agent will extract key facts from conversations

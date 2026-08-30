@@ -110,7 +110,7 @@ def test_get_settings_endpoint(client):
     assert "pr_review" in data["models"]
     assert "chat" in data["models"]
     # Per-provider auth status block
-    assert set(data["providers"]) == {"anthropic", "kimi", "openai"}
+    assert set(data["providers"]) == {"anthropic", "kimi", "openai", "claude_code"}
     assert data["providers"]["openai"]["configured"] is False
 
 

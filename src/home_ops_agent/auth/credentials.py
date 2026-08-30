@@ -11,6 +11,7 @@ schema migration is required:
 - ``kimi_api_key``
 - ``openai_access_token`` / ``openai_refresh_token`` / ``openai_account_id``
   / ``openai_expires_at`` (ISO-8601)
+- ``claude_code_oauth_token``
 """
 
 import asyncio
@@ -33,6 +34,11 @@ OPENAI_REFRESH_TOKEN_KEY = "openai_refresh_token"
 OPENAI_ACCOUNT_ID_KEY = "openai_account_id"
 OPENAI_EXPIRES_AT_KEY = "openai_expires_at"
 
+# Claude Code (Claude Pro/Max subscription) credential setting key. Holds the
+# long-lived token minted by ``claude setup-token`` — valid for a year and not
+# refreshable, so unlike the OpenAI tokens there is no refresh machinery here.
+CLAUDE_CODE_TOKEN_KEY = "claude_code_oauth_token"
+
 # Serializes OpenAI token refreshes within this process so concurrent workers
 # don't each refresh and rotate the refresh token out from under one another.
 _openai_refresh_lock = asyncio.Lock()
@@ -48,6 +54,7 @@ class Credentials:
     openai_refresh_token: str | None = None
     openai_account_id: str | None = None
     openai_expires_at: datetime | None = None
+    claude_code_oauth_token: str | None = None
 
     def available_providers(self) -> set[str]:
         """Return the set of providers that have usable credentials."""
@@ -58,6 +65,8 @@ class Credentials:
             available.add(providers.KIMI)
         if self.openai_access_token:
             available.add(providers.OPENAI)
+        if self.claude_code_oauth_token:
+            available.add(providers.CLAUDE_CODE)
         return available
 
     def has_provider(self, provider: str) -> bool:
@@ -90,6 +99,9 @@ async def build_credentials() -> Credentials:
         openai_refresh_token=db.get(OPENAI_REFRESH_TOKEN_KEY) or None,
         openai_account_id=db.get(OPENAI_ACCOUNT_ID_KEY) or None,
         openai_expires_at=_parse_dt(db.get(OPENAI_EXPIRES_AT_KEY)),
+        claude_code_oauth_token=db.get(CLAUDE_CODE_TOKEN_KEY)
+        or settings.claude_code_oauth_token
+        or None,
     )
 
 
