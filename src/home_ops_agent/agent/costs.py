@@ -2,6 +2,7 @@
 
 import logging
 
+from home_ops_agent.agent import providers
 from home_ops_agent.database import ApiUsage, async_session
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,12 @@ _DEFAULT_PRICING = {"input": 3.00, "output": 15.00}
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Calculate USD cost for a given model and token counts."""
+    # `claude-code/*` runs bill a Claude subscription, not API credit. The
+    # suffix is a free-form CLI model name, so match the prefix rather than
+    # adding table entries — otherwise the Sonnet fallback below would invent
+    # an API price for a request that was never metered.
+    if providers.resolve_provider(model) == providers.CLAUDE_CODE:
+        return 0.0
     pricing = MODEL_PRICING.get(model, _DEFAULT_PRICING)
     return (input_tokens * pricing["input"] + output_tokens * pricing["output"]) / 1_000_000
 

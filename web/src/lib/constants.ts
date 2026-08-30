@@ -50,13 +50,31 @@ export const MODEL_OPTIONS = [
   { value: "kimi-for-coding", label: "Kimi for Coding", provider: "kimi" },
   { value: "gpt-5.5", label: "GPT-5.5", provider: "openai" },
   { value: "codex-5.3", label: "Codex 5.3", provider: "openai" },
+  // Same Claude models, run through the Claude Code CLI so they bill the
+  // Claude subscription instead of API credit.
+  { value: "claude-code/haiku", label: "Haiku (subscription)", provider: "claude_code" },
+  { value: "claude-code/sonnet", label: "Sonnet (subscription)", provider: "claude_code" },
+  { value: "claude-code/opus", label: "Opus (subscription)", provider: "claude_code" },
 ] as const
 
 export const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   kimi: "Kimi",
   openai: "OpenAI",
+  claude_code: "Claude subscription",
 }
+
+// Categories the agent's extractor uses, and that a hand-written memory may
+// pick from. "issue" means a *recurring* pattern — entries in it are dropped
+// from the system prompt after a week, because a one-off incident goes stale.
+export const MEMORY_CATEGORIES = [
+  { value: "knowledge", label: "Knowledge — how the cluster is built" },
+  { value: "config", label: "Config — a setting and why" },
+  { value: "fix", label: "Fix — a change that resolved something" },
+  { value: "preference", label: "Preference — how the user wants things done" },
+  { value: "issue", label: "Issue — a recurring problem (expires after 7 days)" },
+  { value: "general", label: "General" },
+] as const
 
 export const CATEGORY_COLORS: Record<string, string> = {
   issue: "destructive",

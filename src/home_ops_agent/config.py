@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     # Kimi for Coding (Anthropic-compatible endpoint, API key auth)
     kimi_api_key: str = ""
 
+    # Claude Code CLI (Claude Pro/Max subscription) — long-lived token from
+    # `claude setup-token`. Used for `claude-code/*` models.
+    claude_code_oauth_token: str = ""
+
     # Database
     database_url: str = "postgresql+asyncpg://home_ops_agent:password@localhost:5432/home_ops_agent"
 

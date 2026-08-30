@@ -7,18 +7,24 @@ models interchangeably (whichever has credentials):
 - Anthropic & Kimi share the Anthropic wire protocol (Kimi via its
   Anthropic-compatible endpoint), handled by the same backend.
 - OpenAI / Codex models use the ChatGPT-backend Responses API.
+- ``claude-code/*`` models run through the local Claude Code CLI, billing a
+  Claude Pro/Max subscription instead of API credit. The registered tools are
+  handed to the CLI as an in-process MCP server, so handlers are unchanged.
 """
 
 import json
 import logging
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 
-from home_ops_agent.agent import providers
+from home_ops_agent.agent import claude_code, providers
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
+
+if TYPE_CHECKING:
+    from home_ops_agent.agent.workspace import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -151,12 +157,38 @@ class Agent:
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-6",
         max_turns: int = 20,
+        workspace: "Workspace | None" = None,
     ) -> AgentResult:
-        """Run the agent with a conversation and tools (provider auto-selected)."""
+        """Run the agent with a conversation and tools (provider auto-selected).
+
+        ``workspace`` attaches a git worktree the agent can edit directly. Only
+        the Claude Code backend can use one — it is the only provider whose CLI
+        already has file and shell tools. On any other provider it is ignored
+        with a warning and the agent falls back to the GitHub API tools, rather
+        than failing a run over a capability difference.
+        """
         provider = self._provider_for(model)
+        if workspace is not None and provider != providers.CLAUDE_CODE:
+            logger.warning(
+                "Workspace requested but model %s uses the '%s' provider; "
+                "falling back to GitHub API edits.",
+                model,
+                provider,
+            )
+            workspace = None
         if provider in providers.ANTHROPIC_PROTOCOL:
             return await self._run_anthropic(
                 self._anthropic_client(provider), system_prompt, messages, model, max_turns
+            )
+        if provider == providers.CLAUDE_CODE:
+            return await claude_code.run(
+                list(self.tools.values()),
+                system_prompt,
+                messages,
+                model,
+                max_turns,
+                self.credentials.claude_code_oauth_token or "",
+                workspace=workspace,
             )
         return await self._run_openai(system_prompt, messages, model, max_turns)
 
@@ -178,6 +210,17 @@ class Agent:
                 messages,
                 model,
                 max_turns,
+                on_tool_start,
+                on_tool_end,
+            )
+        elif provider == providers.CLAUDE_CODE:
+            gen = claude_code.stream(
+                list(self.tools.values()),
+                system_prompt,
+                messages,
+                model,
+                max_turns,
+                self.credentials.claude_code_oauth_token or "",
                 on_tool_start,
                 on_tool_end,
             )

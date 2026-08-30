@@ -14,6 +14,7 @@ export interface Settings {
     anthropic: ProviderStatus
     kimi: ProviderStatus
     openai: ProviderStatus
+    claude_code: ProviderStatus
   }
   models: Record<string, string>
   alert_cooldown_seconds: number
