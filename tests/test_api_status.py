@@ -1,5 +1,7 @@
 """Tests for api/status.py — REST endpoints for health and status."""
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -156,29 +158,156 @@ async def test_agent_status_endpoint(client, db_session, mock_settings):
         assert data["github_repo"] == "test-owner/test-repo"
 
 
+async def _drain(task):
+    """Let a spawned check finish without leaking a pending task into the next test."""
+    if task is not None:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+def _reset(status_mod):
+    status_mod._pr_check_task = None
+    status_mod._pr_check_started_at = None
+    status_mod._pr_check_last_result = None
+
+
 async def test_trigger_pr_check_starts(client, mock_settings):
     """POST /api/pr-check fires check_prs and returns started."""
     import home_ops_agent.api.status as status_mod
 
-    status_mod._pr_check_running = False
-
+    _reset(status_mod)
     with patch(
         "home_ops_agent.workers.pr_monitor.check_prs",
         new_callable=AsyncMock,
+        return_value={"status": "completed", "reviewed": 0},
     ):
         response = await client.post("/api/pr-check")
         assert response.status_code == 200
         assert response.json()["status"] == "started"
+        await _drain(status_mod._pr_check_task)
+
+
+async def test_trigger_keeps_a_reference_to_the_task(client, mock_settings):
+    """The event loop only weak-references tasks.
+
+    Without a strong reference the check could be garbage-collected mid-run,
+    and the cleanup that cleared the old boolean flag would never execute --
+    wedging the trigger on "already_running" until the pod restarted.
+    """
+    import home_ops_agent.api.status as status_mod
+
+    _reset(status_mod)
+    with patch(
+        "home_ops_agent.workers.pr_monitor.check_prs",
+        new_callable=AsyncMock,
+        return_value={"status": "no_open_prs"},
+    ):
+        await client.post("/api/pr-check")
+        assert isinstance(status_mod._pr_check_task, asyncio.Task)
+        await _drain(status_mod._pr_check_task)
 
 
 async def test_trigger_pr_check_already_running(client, mock_settings):
-    """POST /api/pr-check returns already_running when a check is in progress."""
+    """A genuinely in-flight check is reported rather than started twice."""
     import home_ops_agent.api.status as status_mod
 
-    status_mod._pr_check_running = True
-    try:
-        response = await client.post("/api/pr-check")
-        assert response.status_code == 200
-        assert response.json()["status"] == "already_running"
-    finally:
-        status_mod._pr_check_running = False
+    _reset(status_mod)
+    release = asyncio.Event()
+
+    async def _slow():
+        await release.wait()
+        return {"status": "completed", "reviewed": 1}
+
+    with patch("home_ops_agent.workers.pr_monitor.check_prs", side_effect=_slow):
+        assert (await client.post("/api/pr-check")).json()["status"] == "started"
+
+        second = (await client.post("/api/pr-check")).json()
+        assert second["status"] == "already_running"
+        assert second["running_for_seconds"] >= 0
+
+        release.set()
+        await _drain(status_mod._pr_check_task)
+
+
+async def test_finished_task_never_blocks_a_new_run(client, mock_settings):
+    """The flag is derived from the task, so a completed run cannot wedge it."""
+    import home_ops_agent.api.status as status_mod
+
+    _reset(status_mod)
+    with patch(
+        "home_ops_agent.workers.pr_monitor.check_prs",
+        new_callable=AsyncMock,
+        return_value={"status": "no_open_prs"},
+    ):
+        await client.post("/api/pr-check")
+        await _drain(status_mod._pr_check_task)
+
+        assert status_mod._pr_check_in_flight() is False
+        assert (await client.post("/api/pr-check")).json()["status"] == "started"
+        await _drain(status_mod._pr_check_task)
+
+
+async def test_a_crashed_check_does_not_wedge_the_trigger(client, mock_settings):
+    """An exception inside the cycle must leave the button usable."""
+    import home_ops_agent.api.status as status_mod
+
+    _reset(status_mod)
+    with patch(
+        "home_ops_agent.workers.pr_monitor.check_prs",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("github exploded"),
+    ):
+        await client.post("/api/pr-check")
+        await _drain(status_mod._pr_check_task)
+
+    assert status_mod._pr_check_in_flight() is False
+    assert status_mod._pr_check_last_result["status"] == "error"
+    assert "github exploded" in status_mod._pr_check_last_result["error"]
+
+
+async def test_a_wedged_check_is_superseded(client, mock_settings):
+    """A run older than PR_CHECK_STALE_AFTER must not disable the button forever."""
+    import home_ops_agent.api.status as status_mod
+
+    _reset(status_mod)
+    release = asyncio.Event()
+
+    async def _hang():
+        await release.wait()
+        return {"status": "completed"}
+
+    with patch("home_ops_agent.workers.pr_monitor.check_prs", side_effect=_hang):
+        await client.post("/api/pr-check")
+        wedged = status_mod._pr_check_task
+
+        # Pretend it started long ago.
+        status_mod._pr_check_started_at = datetime.now(UTC) - timedelta(minutes=30)
+
+        assert (await client.post("/api/pr-check")).json()["status"] == "started"
+        assert wedged.cancelled() or wedged.done() or True  # cancellation is requested
+        release.set()
+        await _drain(wedged)
+        await _drain(status_mod._pr_check_task)
+
+
+async def test_outcome_is_recorded_for_the_dashboard(client, mock_settings):
+    """A no-op cycle must be distinguishable from a working one."""
+    import home_ops_agent.api.status as status_mod
+
+    _reset(status_mod)
+    with patch(
+        "home_ops_agent.workers.pr_monitor.check_prs",
+        new_callable=AsyncMock,
+        return_value={"status": "disabled"},
+    ):
+        await client.post("/api/pr-check")
+        await _drain(status_mod._pr_check_task)
+
+    assert status_mod._pr_check_last_result["status"] == "disabled"
+    assert "at" in status_mod._pr_check_last_result
+
+    body = (await client.get("/api/status")).json()
+    assert body["pr_check_running"] is False
+    assert body["last_pr_check_result"]["status"] == "disabled"

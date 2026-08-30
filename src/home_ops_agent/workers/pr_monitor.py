@@ -273,19 +273,26 @@ async def _save_task(pr: dict, result: AgentResult):
         await session.commit()
 
 
-async def check_prs():
-    """Check all open PRs and review any new/updated ones."""
+async def check_prs() -> dict:
+    """Check all open PRs and review any new/updated ones.
+
+    Returns a summary of what happened. Every early exit here used to be
+    invisible from the dashboard -- the manual trigger reported "started"
+    whether the cycle reviewed three PRs, found none, or bailed because the
+    agent was switched off. The caller surfaces this so a no-op is
+    distinguishable from a failure.
+    """
     from home_ops_agent.workers.pr_fix import attempt_code_fix
     from home_ops_agent.workers.pr_merge import auto_merge_reviewed_prs, deep_review_pr
 
     if not await _is_enabled():
-        logger.debug("Agent is disabled, skipping PR review")
-        return
+        logger.info("Agent is disabled, skipping PR review")
+        return {"status": "disabled"}
 
     credentials = await build_credentials()
     if not credentials.has_any():
         logger.warning("No model credentials configured, skipping PR review")
-        return
+        return {"status": "no_credentials"}
 
     agent = Agent(credentials)
     skill_tools = await registry.get_all_enabled_tools()
@@ -298,8 +305,8 @@ async def check_prs():
     prs = json.loads(prs_json)
 
     if not prs:
-        logger.debug("No open PRs to review")
-        return
+        logger.info("No open PRs to review")
+        return {"status": "no_open_prs", "open_prs": 0}
 
     logger.info("Found %d open PRs to check", len(prs))
 
@@ -309,8 +316,11 @@ async def check_prs():
         await auto_merge_reviewed_prs(prs, agent)
 
     reviewed_count = 0
+    failed_count = 0
+    rate_limited = False
     for pr in prs:
         if reviewed_count >= MAX_REVIEWS_PER_CYCLE:
+            rate_limited = True
             logger.info(
                 "Rate limit reached (%d reviews), remaining PRs next cycle",
                 MAX_REVIEWS_PER_CYCLE,
@@ -318,6 +328,11 @@ async def check_prs():
             break
 
         result = await _review_pr(pr, agent)
+        if result is None:
+            # _review_pr swallows its own exceptions, so a model without
+            # credentials or a failing tool looks the same as "nothing to do"
+            # unless it is counted here.
+            failed_count += 1
         if result:
             await _save_task(pr, result)
             await record_usage(
@@ -345,6 +360,15 @@ async def check_prs():
                 # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
                 elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
                     await deep_review_pr(pr, result.response, agent)
+
+    return {
+        "status": "completed",
+        "open_prs": len(prs),
+        "reviewed": reviewed_count,
+        "failed": failed_count,
+        "rate_limited": rate_limited,
+        "pr_mode": pr_mode,
+    }
 
 
 async def _get_check_interval() -> int:

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -17,8 +17,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Track whether a manual PR check is already running
-_pr_check_running = False
+# The in-flight manual PR check, if any.
+#
+# This holds a *strong* reference on purpose. asyncio.create_task() hands the
+# event loop only a weak reference, so a task nothing else refers to can be
+# garbage-collected mid-execution -- and when that happened here, the `finally`
+# that cleared the old boolean flag never ran, leaving the trigger permanently
+# reporting "already_running" until the pod restarted.
+_pr_check_task: "asyncio.Task | None" = None
+_pr_check_started_at: datetime | None = None
+_pr_check_last_result: dict | None = None
+
+# A run that outlives this is treated as wedged and superseded, so no single
+# stuck HTTP call can disable the button until the next restart.
+PR_CHECK_STALE_AFTER = timedelta(minutes=15)
+
+
+def _pr_check_in_flight() -> bool:
+    """Is a manual check genuinely still running?
+
+    Derived from the task rather than a flag: a task that finished, raised, or
+    was cancelled reports done(), so no failure mode can leave a stale "yes".
+    """
+    return _pr_check_task is not None and not _pr_check_task.done()
 
 
 @router.get("/health")
@@ -55,6 +76,8 @@ async def agent_status():
         "github_repo": settings.github_repo,
         "cluster_domain": settings.cluster_domain,
         "last_pr_check_at": last_pr_check_at.isoformat() if last_pr_check_at else None,
+        "pr_check_running": _pr_check_in_flight(),
+        "last_pr_check_result": _pr_check_last_result,
         "task_counts": task_counts,
         "latest_task": {
             "type": latest_task.task_type,
@@ -73,25 +96,50 @@ async def trigger_pr_check():
     """Trigger an immediate PR review cycle."""
     import home_ops_agent.workers.pr_monitor as pr_monitor
 
-    global _pr_check_running
-    if _pr_check_running:
-        return {"status": "already_running"}
+    global _pr_check_task, _pr_check_started_at, _pr_check_last_result
 
-    # Set flag and reset timer immediately (before task runs) to avoid race
-    _pr_check_running = True
-    pr_monitor.last_pr_check_at = datetime.now(UTC)
+    if _pr_check_in_flight():
+        running_for = datetime.now(UTC) - (_pr_check_started_at or datetime.now(UTC))
+        if running_for < PR_CHECK_STALE_AFTER:
+            return {
+                "status": "already_running",
+                "started_at": _pr_check_started_at.isoformat() if _pr_check_started_at else None,
+                "running_for_seconds": int(running_for.total_seconds()),
+            }
+        logger.warning(
+            "Superseding a PR check that has run for %ds", int(running_for.total_seconds())
+        )
+        _pr_check_task.cancel()
+
+    # Reset the timer before the task runs, so the countdown cannot fire a
+    # scheduled cycle on top of this one.
+    _pr_check_started_at = datetime.now(UTC)
+    pr_monitor.last_pr_check_at = _pr_check_started_at
 
     async def _run():
-        global _pr_check_running
+        global _pr_check_last_result
         try:
-            await pr_monitor.check_prs()
+            result = await pr_monitor.check_prs()
+            _pr_check_last_result = {
+                **(result or {"status": "completed"}),
+                "at": datetime.now(UTC).isoformat(),
+            }
             pr_monitor.last_pr_check_at = datetime.now(UTC)
-        except Exception:
+        except asyncio.CancelledError:
+            _pr_check_last_result = {
+                "status": "cancelled",
+                "at": datetime.now(UTC).isoformat(),
+            }
+            raise
+        except Exception as exc:
             logger.exception("Manual PR check failed")
-        finally:
-            _pr_check_running = False
+            _pr_check_last_result = {
+                "status": "error",
+                "error": f"{type(exc).__name__}: {exc}"[:300],
+                "at": datetime.now(UTC).isoformat(),
+            }
 
-    asyncio.create_task(_run())
+    _pr_check_task = asyncio.create_task(_run())
     return {"status": "started"}
 
 
