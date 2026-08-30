@@ -200,20 +200,26 @@ async def test_get_nodes_calls_out_upgrade_taints_and_cordon(monkeypatch):
 # --- drain blockers: the failure that actually bit ---
 
 
-def _pdb(name, ns, match_labels, disruptions_allowed, min_available=None, expressions=None):
-    selector = {}
-    if match_labels:
-        selector["matchLabels"] = match_labels
-    if expressions:
-        selector["matchExpressions"] = expressions
+def _selector(match_labels=None, expressions=None):
+    """A stand-in for V1LabelSelector.
+
+    Deliberately snake_case attributes, because that is what the Kubernetes
+    Python client actually exposes. The first version of these tests invented
+    camelCase keys, which is why a selector bug that made EVERY PodDisruptionBudget
+    look non-matching passed the whole suite and reached the cluster.
+    """
+    return _ns(match_labels=match_labels, match_expressions=expressions)
+
+
+def _pdb(name, ns, selector, disruptions_allowed, min_available=None, current_healthy=1):
     return _ns(
         metadata=_ns(name=name, namespace=ns),
-        spec=_ns(
-            selector=_ns(to_dict=lambda s=selector: s),
-            min_available=min_available,
-            max_unavailable=None,
+        spec=_ns(selector=selector, min_available=min_available, max_unavailable=None),
+        status=_ns(
+            disruptions_allowed=disruptions_allowed,
+            current_healthy=current_healthy,
+            desired_healthy=1,
         ),
-        status=_ns(disruptions_allowed=disruptions_allowed, current_healthy=1, desired_healthy=1),
     )
 
 
@@ -222,19 +228,36 @@ def _pod(name, ns, labels, owner_kind="ReplicaSet"):
     return _ns(metadata=_ns(name=name, namespace=ns, labels=labels, owner_references=owners))
 
 
-async def test_drain_blockers_finds_the_cnpg_pdb(monkeypatch):
-    """The exact shape of failure 1: minAvailable:1 in front of one replica."""
-    pod = _pod("postgres-1", "database", {"cnpg.io/cluster": "postgres", "role": "primary"})
-    pdb = _pdb("postgres-primary", "database", {"role": "primary"}, 0, min_available=1)
-
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
-    )
+def _drain_env(monkeypatch, pods, pdbs):
+    monkeypatch.setattr(talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=pods))
     monkeypatch.setattr(
         talos.policy_api,
         "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[pdb]),
+        lambda **kw: _ns(items=pdbs),
     )
+
+
+async def test_drain_blockers_finds_the_cnpg_primary_pdb(monkeypatch):
+    """Regression: the exact production case this tool got wrong.
+
+    CNPG runs one replica behind a minAvailable:1 PDB that selects the primary
+    by label. The tool reported the node as drainable because it read the
+    selector under the wrong key spelling, so no PDB ever matched — a false
+    "nothing is blocking", which is the worst answer a drain check can give.
+    """
+    pod = _pod(
+        "postgres-1",
+        "database",
+        {"cnpg.io/cluster": "postgres", "cnpg.io/instanceRole": "primary"},
+    )
+    pdb = _pdb(
+        "postgres-primary",
+        "database",
+        _selector({"cnpg.io/cluster": "postgres", "cnpg.io/instanceRole": "primary"}),
+        0,
+        min_available=1,
+    )
+    _drain_env(monkeypatch, [pod], [pdb])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
 
@@ -246,16 +269,8 @@ async def test_drain_blockers_finds_the_cnpg_pdb(monkeypatch):
 
 async def test_drain_blockers_ignores_healthy_pdbs(monkeypatch):
     pod = _pod("web-1", "default", {"app": "web"})
-    pdb = _pdb("web", "default", {"app": "web"}, 2, min_available=1)
-
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
-    )
-    monkeypatch.setattr(
-        talos.policy_api,
-        "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[pdb]),
-    )
+    pdb = _pdb("web", "default", _selector({"app": "web"}), 2, min_available=1)
+    _drain_env(monkeypatch, [pod], [pdb])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
     assert result["drainable"] is True
@@ -265,16 +280,8 @@ async def test_drain_blockers_ignores_healthy_pdbs(monkeypatch):
 async def test_drain_blockers_ignores_other_namespaces(monkeypatch):
     """A same-labelled PDB in another namespace must not be attributed."""
     pod = _pod("web-1", "default", {"app": "web"})
-    pdb = _pdb("web", "other", {"app": "web"}, 0, min_available=1)
-
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
-    )
-    monkeypatch.setattr(
-        talos.policy_api,
-        "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[pdb]),
-    )
+    pdb = _pdb("web", "other", _selector({"app": "web"}), 0, min_available=1)
+    _drain_env(monkeypatch, [pod], [pdb])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
     assert result["blocking_pdbs"] == []
@@ -283,71 +290,112 @@ async def test_drain_blockers_ignores_other_namespaces(monkeypatch):
 async def test_drain_blockers_skips_daemonset_pods(monkeypatch):
     """DaemonSet pods are never drained, so they cannot block one."""
     pod = _pod("csi-node-1", "kube-system", {"app": "csi"}, owner_kind="DaemonSet")
-    pdb = _pdb("csi", "kube-system", {"app": "csi"}, 0, min_available=1)
-
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
-    )
-    monkeypatch.setattr(
-        talos.policy_api,
-        "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[pdb]),
-    )
+    pdb = _pdb("csi", "kube-system", _selector({"app": "csi"}), 0, min_available=1)
+    _drain_env(monkeypatch, [pod], [pdb])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
     assert result["blocking_pdbs"] == []
     assert result["drainable"] is True
 
 
-async def test_drain_blockers_reports_unevaluated_selectors(monkeypatch):
-    """A matchExpressions PDB must never be silently read as 'no blocker'."""
-    pod = _pod("app-1", "default", {"app": "x"})
+async def test_drain_blockers_evaluates_match_expressions(monkeypatch):
+    pod = _pod("app-1", "default", {"tier": "db"})
     pdb = _pdb(
         "expr",
         "default",
-        None,
+        _selector(expressions=[_ns(key="tier", operator="In", values=["db", "cache"])]),
         0,
-        expressions=[{"key": "app", "operator": "In", "values": ["x"]}],
+        min_available=1,
     )
+    _drain_env(monkeypatch, [pod], [pdb])
 
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
+    result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
+    assert result["blocking_pdbs"][0]["pdb"] == "default/expr"
+    assert result["undetermined_pdbs"] == []
+
+
+async def test_drain_blockers_reports_unknown_operators(monkeypatch):
+    """An operator we cannot evaluate must never read as 'no blocker'."""
+    pod = _pod("app-1", "default", {"tier": "db"})
+    pdb = _pdb(
+        "weird",
+        "default",
+        _selector(expressions=[_ns(key="tier", operator="GreaterThan", values=["1"])]),
+        0,
+        min_available=1,
     )
-    monkeypatch.setattr(
-        talos.policy_api,
-        "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[pdb]),
-    )
+    _drain_env(monkeypatch, [pod], [pdb])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
 
     assert result["drainable"] is False
-    assert result["undetermined_pdbs"][0]["pdb"] == "default/expr"
+    assert result["undetermined_pdbs"][0]["pdb"] == "default/weird"
 
 
 async def test_drain_blockers_flags_uncontrolled_pods(monkeypatch):
     pod = _pod("bare", "default", {"app": "x"}, owner_kind=None)
-
-    monkeypatch.setattr(
-        talos.core_api, "list_pod_for_all_namespaces", lambda **kw: _ns(items=[pod])
-    )
-    monkeypatch.setattr(
-        talos.policy_api,
-        "list_pod_disruption_budget_for_all_namespaces",
-        lambda **kw: _ns(items=[]),
-    )
+    _drain_env(monkeypatch, [pod], [])
 
     result = json.loads(await talos.talos_get_drain_blockers({"node": "k8s-1"}))
     assert result["pods_without_a_controller"] == ["default/bare"]
 
 
-def test_selector_matching_rules():
-    assert talos._selector_matches({"matchLabels": {"a": "1"}}, {"a": "1", "b": "2"}) is True
-    assert talos._selector_matches({"matchLabels": {"a": "1"}}, {"a": "2"}) is False
-    assert talos._selector_matches({"matchLabels": {"a": "1"}}, None) is False
+# --- selector matching ---
+
+
+def test_selector_reads_the_client_attribute_shape():
+    """The real V1LabelSelector exposes snake_case attributes."""
+    sel = _selector({"a": "1"})
+    assert talos._selector_matches(sel, {"a": "1", "b": "2"}) is True
+    assert talos._selector_matches(sel, {"a": "2"}) is False
+
+
+def test_selector_reads_both_dict_spellings():
+    """to_dict() gives snake_case; raw API JSON gives camelCase. Both must work."""
+    assert talos._selector_matches({"match_labels": {"a": "1"}}, {"a": "1"}) is True
+    assert talos._selector_matches({"matchLabels": {"a": "1"}}, {"a": "1"}) is True
+    assert talos._selector_matches({"match_labels": {"a": "1"}}, {"a": "2"}) is False
+
+
+def test_null_selector_selects_nothing_but_empty_selector_selects_everything():
+    """PodDisruptionBudget API semantics — the two cases are opposites."""
     assert talos._selector_matches(None, {"a": "1"}) is False
-    # Unevaluated rather than guessed.
-    assert talos._selector_matches({"matchExpressions": [{"key": "a"}]}, {"a": "1"}) is None
+    assert talos._selector_matches(_selector(), {"a": "1"}) is True
+
+
+def test_match_expression_operators():
+    labels = {"tier": "db"}
+    assert talos._expression_matches(_ns(key="tier", operator="In", values=["db"]), labels) is True
+    assert (
+        talos._expression_matches(_ns(key="tier", operator="In", values=["web"]), labels) is False
+    )
+    assert (
+        talos._expression_matches(_ns(key="tier", operator="NotIn", values=["web"]), labels) is True
+    )
+    assert (
+        talos._expression_matches(_ns(key="tier", operator="Exists", values=None), labels) is True
+    )
+    assert (
+        talos._expression_matches(_ns(key="tier", operator="DoesNotExist", values=None), labels)
+        is False
+    )
+    # Negative operators also match objects that lack the label entirely.
+    assert (
+        talos._expression_matches(_ns(key="gone", operator="NotIn", values=["x"]), labels) is True
+    )
+    assert (
+        talos._expression_matches(_ns(key="gone", operator="DoesNotExist", values=None), labels)
+        is True
+    )
+    # Unknown operator: undetermined, never a silent False.
+    assert talos._expression_matches(_ns(key="tier", operator="Wat", values=[]), labels) is None
+
+
+def test_labels_and_expressions_must_both_match():
+    sel = _selector({"app": "db"}, expressions=[_ns(key="tier", operator="In", values=["primary"])])
+    assert talos._selector_matches(sel, {"app": "db", "tier": "primary"}) is True
+    assert talos._selector_matches(sel, {"app": "db", "tier": "replica"}) is False
+    assert talos._selector_matches(sel, {"app": "web", "tier": "primary"}) is False
 
 
 # --- skill wiring ---

@@ -252,22 +252,89 @@ async def talos_get_nodes(params: dict) -> str:
 # --- the drain question ---
 
 
-def _selector_matches(selector: dict | None, labels: dict | None) -> bool | None:
+def _field(obj: Any, *names: str, default: Any = None) -> Any:
+    """Read a field that may be an attribute or a dict key, under either spelling.
+
+    The Kubernetes Python client exposes ``V1LabelSelector.match_labels``, and
+    its ``to_dict()`` emits snake_case, while the raw API JSON uses camelCase
+    ``matchLabels``. Accepting all three is what stops a selector silently
+    reading as empty.
+    """
+    for name in names:
+        if isinstance(obj, dict):
+            value = obj.get(name)
+        else:
+            value = getattr(obj, name, None)
+        if value is not None:
+            return value
+    return default
+
+
+def _selector_parts(selector: Any) -> tuple[dict, list]:
+    """Extract ``(match_labels, match_expressions)`` from a label selector."""
+    if selector is None:
+        return {}, []
+    labels = _field(selector, "match_labels", "matchLabels", default={}) or {}
+    expressions = _field(selector, "match_expressions", "matchExpressions", default=[]) or []
+    return labels, expressions
+
+
+def _expression_matches(expression: Any, pod_labels: dict) -> bool | None:
+    """Evaluate one matchExpressions requirement. ``None`` = unknown operator.
+
+    Note the Kubernetes semantics for the negative operators: ``NotIn`` and
+    ``DoesNotExist`` also match objects that do not carry the label at all.
+    """
+    key = _field(expression, "key")
+    operator = _field(expression, "operator")
+    values = _field(expression, "values", default=[]) or []
+    if not key or not operator:
+        return None
+
+    present = key in pod_labels
+    value = pod_labels.get(key)
+    if operator == "In":
+        return present and value in values
+    if operator == "NotIn":
+        return not present or value not in values
+    if operator == "Exists":
+        return present
+    if operator == "DoesNotExist":
+        return not present
+    return None
+
+
+def _selector_matches(selector: Any, labels: dict | None) -> bool | None:
     """Does a PDB label selector match these pod labels?
 
-    Returns ``None`` when the selector uses ``matchExpressions``, which is not
-    evaluated here — reported as "undetermined" rather than guessed, so a missed
-    match never reads as "no blocker".
+    ``None`` means undetermined — a requirement used an operator we do not
+    understand. Undetermined is reported to the caller rather than folded into
+    "no match", because a missed match reads as "nothing is blocking the
+    drain", which is a confidently wrong answer.
+
+    Selector semantics follow the PodDisruptionBudget API: a *null* selector
+    selects no pods, while an *empty* selector selects every pod in the
+    namespace.
     """
-    if not selector:
+    if selector is None:
         return False
-    if selector.get("matchExpressions"):
-        return None
-    match_labels = selector.get("matchLabels") or {}
-    if not match_labels:
-        return False
+
+    match_labels, expressions = _selector_parts(selector)
+    if not match_labels and not expressions:
+        return True
+
     pod_labels = labels or {}
-    return all(pod_labels.get(k) == v for k, v in match_labels.items())
+    if not all(pod_labels.get(k) == v for k, v in match_labels.items()):
+        return False
+
+    undetermined = False
+    for expression in expressions:
+        result = _expression_matches(expression, pod_labels)
+        if result is None:
+            undetermined = True
+        elif result is False:
+            return False
+    return None if undetermined else True
 
 
 async def talos_get_drain_blockers(params: dict) -> str:
@@ -305,8 +372,7 @@ async def talos_get_drain_blockers(params: dict) -> str:
         for pdb in pdbs:
             if pdb.metadata.namespace != ns:
                 continue
-            selector = pdb.spec.selector.to_dict() if pdb.spec.selector else None
-            matched = _selector_matches(selector, pod.metadata.labels)
+            matched = _selector_matches(pdb.spec.selector, pod.metadata.labels)
             entry = {
                 "pdb": f"{ns}/{pdb.metadata.name}",
                 "pod": f"{ns}/{pod.metadata.name}",
