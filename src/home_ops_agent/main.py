@@ -18,6 +18,8 @@ from home_ops_agent.api.status import router as status_router
 from home_ops_agent.database import init_db
 from home_ops_agent.mcp.bridge import mcp_tools_to_agent_tools
 from home_ops_agent.mcp.client import MCPClient
+from home_ops_agent.mcp.server import lifespan as mcp_server_lifespan
+from home_ops_agent.mcp.server import mount as mount_mcp_server
 from home_ops_agent.workers.alert_subscriber import run_alert_subscriber
 from home_ops_agent.workers.pr_monitor import run_pr_monitor
 
@@ -74,7 +76,10 @@ async def lifespan(app: FastAPI):
     alert_task = asyncio.create_task(run_alert_subscriber(mcp_tools))
     logger.info("Background workers started")
 
-    yield
+    # Starlette does not run a mounted app's lifespan, so the MCP session
+    # manager is started here. No-op when the endpoint is disabled.
+    async with mcp_server_lifespan():
+        yield
 
     # Shutdown
     pr_task.cancel()
@@ -96,6 +101,10 @@ app.include_router(chat_router)
 app.include_router(settings_router)
 app.include_router(skills_router)
 app.include_router(costs_router)
+
+# Read-only MCP endpoint. Mounted before the static catch-all below, which would
+# otherwise swallow /mcp. No-op unless MCP_API_TOKEN is set.
+mount_mcp_server(app)
 
 # Static files (web UI) with catch-all for Next.js client-side routing
 static_dir = Path(__file__).parent / "static"

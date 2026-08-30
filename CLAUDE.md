@@ -36,7 +36,8 @@ src/home_ops_agent/
 │   └── session.py          # Simple in-memory session store (legacy)
 ├── mcp/
 │   ├── client.py           # MCP stdio client for sidecar servers
-│   └── bridge.py           # Converts MCP tools to Claude tool definitions
+│   ├── bridge.py           # Converts MCP tools to Claude tool definitions
+│   └── server.py           # Read-only MCP-over-HTTP endpoint (/mcp) exposing the agent's own record
 ├── api/
 │   ├── chat.py             # WebSocket chat endpoint with memory extraction
 │   ├── status.py           # REST: health, history, conversations, memories
@@ -126,6 +127,17 @@ Four providers can be configured simultaneously (any subset). The model assigned
 
 Credentials are stored as `settings` rows; disconnect a provider with `DELETE /api/auth/{provider}`.
 
+## MCP server (`/mcp`)
+
+Read-only MCP-over-HTTP for inspecting what the agent has done from a coding session — the record was previously only reachable by clicking through the web UI.
+
+- **Five tools, all read-only**: `agent_tasks`, `task_detail` (the full conversation and every tool call — the one that actually diagnoses a bad run), `memories`, `agent_status`, `costs`. Nothing triggers a run, edits a setting, or writes a memory: a read tool is safe to hand any session, a write tool lets an outside session act on the cluster's operator.
+- **Disabled unless `MCP_API_TOKEN` is set** — with no token the endpoint is never mounted, so it cannot be exposed by accident. When set, every request needs `Authorization: Bearer <token>`.
+- **Two mounting subtleties**, both of which fail at runtime rather than at import:
+  - Starlette does not run a mounted sub-app's lifespan, so `main.py` enters `mcp.server.lifespan()` to start the session manager. Without it every request returns "Task group is not initialized".
+  - The MCP SDK enables DNS-rebinding protection with an *empty* host allowlist, which rejects everything. `allowed_hosts()` derives the public host from `base_url`, plus localhost and anything in `MCP_ALLOWED_HOSTS`.
+- Mounted before the static catch-all in `main.py`, which would otherwise swallow `/mcp`.
+
 ## Database
 
 PostgreSQL via CloudNativePG. Tables auto-created by SQLAlchemy on startup (`init_db`).
@@ -139,7 +151,7 @@ Key tables:
 
 Provider credentials (API keys, imported OpenAI tokens) live in `settings` rows — there is no dedicated tokens table.
 
-Task types used in `agent_tasks.task_type`: `pr_review`, `pr_merge`, `pr_deep_review`, `alert_triage`, `alert_fix`, `code_fix`, `chat`. Note: the database uses a PostgreSQL enum for `task_type` — adding new types requires an ALTER TYPE migration on the enum.
+Task types used in `agent_tasks.task_type` (the actual Postgres enum in `database.py`): `pr_review`, `pr_merge`, `alert_response`, `alert_triage`, `alert_fix`, `user_chat`, `cluster_fix`, `code_fix`. Note: the database uses a PostgreSQL enum for `task_type` — adding new types requires an ALTER TYPE migration on the enum.
 
 Model keys (used in `models.py` defaults and DB `model_*` settings): `pr_review`, `alert_triage`, `alert_fix`, `code_fix`, `deep_review`, `chat`.
 

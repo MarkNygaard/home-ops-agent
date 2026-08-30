@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     ntfy_agent_topic: str = "home-ops-agent"
     ntfy_token: str = ""
 
+    # MCP server — read-only access to the agent's own task/memory/cost record,
+    # for coding sessions. Unset disables the endpoint entirely.
+    mcp_api_token: str = ""
+    # Extra Host header values the MCP endpoint accepts, comma-separated. The
+    # host from `base_url` and localhost are always allowed; add the in-cluster
+    # service name here if anything calls it directly rather than through the
+    # ingress.
+    mcp_allowed_hosts: str = ""
+
     # Web UI
     session_secret: str = "change-me-in-production"
     base_url: str = "https://agent.mnygaard.io"
