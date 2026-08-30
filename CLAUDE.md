@@ -13,6 +13,8 @@ src/home_ops_agent/
 ├── database.py             # SQLAlchemy async models (Conversation, Message, Memory, AgentTask, Setting)
 ├── agent/
 │   ├── core.py             # Agent class — provider-aware tool-use loop (Anthropic/Kimi + OpenAI)
+│   ├── claude_code.py      # Claude Code CLI backend (Claude subscription, tools via in-process MCP)
+│   ├── workspace.py        # Git worktree checkout + guarded commit/push (claude-code only)
 │   ├── providers.py        # Model → provider resolution + provider constants
 │   ├── prompts.py          # System prompts with DB overrides, memory loading
 │   ├── models.py           # Per-task model resolution (DB → env fallback, includes deep_review)
@@ -24,7 +26,8 @@ src/home_ops_agent/
 │       ├── ntfy.py         # ntfy publish with auth — built-in
 │       ├── prometheus.py   # PromQL queries, metrics, alerts — optional skill
 │       ├── loki.py         # LogQL queries, label listing — optional skill
-│       └── flux.py         # Flux Kustomization/HelmRelease management — optional skill
+│       ├── flux.py         # Flux Kustomization/HelmRelease management — optional skill
+│       └── talos.py        # Talos/tuppr upgrade diagnostics (read-only) — optional skill
 ├── workers/
 │   ├── pr_monitor.py       # Periodic PR review (4-tier mode, deep review, code fix auto-merge)
 │   └── alert_subscriber.py # ntfy JSON stream — two-stage alert pipeline (triage → fix)
@@ -59,6 +62,13 @@ uv run python -m pytest tests/ -v
 # Run locally (needs DATABASE_URL and ANTHROPIC_API_KEY env vars)
 uvicorn home_ops_agent.main:app --host 0.0.0.0 --port 8000
 
+# Frontend (web/) — ONLY when changing the Next.js app. Its deps live in web/,
+# not the repo root, so install there separately (a root-level install does NOT
+# cover the frontend). Run lint + build to validate web changes.
+cd web && pnpm install --frozen-lockfile
+pnpm lint     # eslint (eslint.config.mjs)
+pnpm build    # next build → static export into ../src/home_ops_agent/static
+
 # Build Docker image
 docker build -t home-ops-agent .
 
@@ -77,16 +87,24 @@ git tag v0.x.y && git push origin v0.x.y
 ## Important patterns
 
 - **AsyncAnthropic** — Must use `anthropic.AsyncAnthropic` (not `Anthropic`) since the app is fully async (FastAPI + asyncio workers). Synchronous client blocks the event loop. The OpenAI provider likewise uses `openai.AsyncOpenAI`.
-- **Multi-provider routing** — `agent/core.py` `Agent` is provider-aware: a single agent can run Claude, Kimi, and GPT/Codex models. `agent/providers.py` resolves a model ID to its provider by prefix (`claude-*`→anthropic, `kimi-*`→kimi, `gpt-*`/`codex-*`/`o3*`→openai). Anthropic and Kimi share the Anthropic wire protocol (Kimi via its Anthropic-compatible endpoint, base URL `https://api.kimi.com/coding/`); OpenAI/Codex use the ChatGPT-backend Responses API. Provider is resolved per `run()` call, so workers build one agent and use any model.
+- **Multi-provider routing** — `agent/core.py` `Agent` is provider-aware: a single agent can run Claude, Kimi, and GPT/Codex models. `agent/providers.py` resolves a model ID to its provider by prefix (`claude-code/*`→claude_code, `claude-*`→anthropic, `kimi-*`→kimi, `gpt-*`/`codex-*`/`o3*`→openai). Anthropic and Kimi share the Anthropic wire protocol (Kimi via its Anthropic-compatible endpoint, base URL `https://api.kimi.com/coding/`); OpenAI/Codex use the ChatGPT-backend Responses API. Provider is resolved per `run()` call, so workers build one agent and use any model.
+- **Claude Code backend** — `agent/claude_code.py` runs a task on a **Claude Pro/Max subscription** instead of API credit, by driving the Claude Code CLI through `claude-agent-sdk`. Selected with a `claude-code/` model prefix (`claude-code/sonnet`, `claude-code/opus`); the suffix is passed to the CLI as `--model`. Registered tools are handed to the CLI as an **in-process MCP server** (`mcp__homeops__*`), so tool handlers and their guardrails are unchanged. Claude Code's own built-ins are removed (`tools=[]`), so the agent can only call our tools — it never gets a shell or filesystem. Runs are recorded at $0 in `costs.py` (subscription, not metered). Two differences from the API backends: message history is flattened into one prompt (the CLI takes a single prompt), and `ANTHROPIC_API_KEY` is blanked in the child env so a stray key can't silently bill API credit.
 - **Credentials** — `auth/credentials.py` `build_credentials()` loads all provider creds from `settings` rows (no global auth toggle). Anthropic & Kimi use API keys; OpenAI uses an imported ChatGPT-subscription OAuth token (`openai_access_token`/`openai_refresh_token`/`openai_account_id`) that the server keeps refreshed via `auth.openai.com/oauth/token`.
-- **Model IDs** — Use short form: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`, `kimi-for-coding`, plus OpenAI IDs (e.g. `gpt-5.5`, `codex-5.3`). No date suffixes.
+- **Model IDs** — Use short form: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`, `kimi-for-coding`, plus OpenAI IDs (e.g. `gpt-5.5`, `codex-5.3`) and subscription IDs (`claude-code/sonnet`). No date suffixes.
 - **Tool-use loop** — `agent/core.py` implements: send message → get tool_use → execute → send tool_result → repeat until text response.
 - **DB settings override env** — Settings stored in PostgreSQL take priority over environment variables. The UI writes to DB.
-- **Memory extraction** — Runs in background after each chat using Haiku. Extracts structural facts, not transient state.
-- **Skills system** — Tools are grouped into skills (`agent/skills.py`). Built-in skills (kubernetes, github, ntfy) are always enabled. Optional skills (prometheus, loki, flux) can be toggled and configured via the Settings UI. Each skill defines its own tools and config fields.
+- **Memory extraction** — Runs in background after each chat using Haiku. Extracts structural facts, not transient state. Note the asymmetry: memories are **written only by chat** (`api/chat.py` is the sole caller of `extract_memories`) but **read by every agent** through `get_prompt()`. Facts learned during an alert investigation, a PR review, or outside this agent entirely have no automatic path in — that is what `POST /api/memories` is for.
+- **Memory staleness** — Memories are injected into every system prompt, so an incident snapshot stored as a fact reads as present tense forever and can contradict what the live tools report. Two guards: `memory.PERISHABLE_CATEGORIES` (`issue`) is dropped from the prompt after `PERISHABLE_MAX_AGE` (7 days), and every rendered line carries its age. Filtering happens **before** the row limit, so a burst of incidents cannot evict durable knowledge out of the window. The extraction prompt separately rejects "currently"/"recently"-shaped statements and requires `issue` to mean a *recurring* pattern.
+- **Skills system** — Tools are grouped into skills (`agent/skills.py`). Built-in skills (kubernetes, github, ntfy) are always enabled. Optional skills (prometheus, loki, flux, talos) can be toggled and configured via the Settings UI. Each skill defines its own tools and config fields.
+- **Talos diagnostics are read-only on purpose** — `agent/tools/talos.py` inspects tuppr `TalosUpgrade`/`KubernetesUpgrade` CRs, upgrade Jobs, node taint/cordon state, and *why a node cannot be drained* (the PDB-allows-zero-disruptions case that makes an upgrade hang rather than fail). It deliberately exposes **no** mutating tool. Recovery means `talosctl upgrade --drain=false` against a node, which needs a talosconfig (effectively cluster-root) and is not reversible the way a pod restart or a PR-branch commit is — a different risk class from every other guardrail in this codebase. The agent diagnoses and hands the user the command; `prompt_alert_response` states this explicitly. Promote an action here only once the `agent_tasks` history shows the same diagnosis leading to the same command repeatedly.
 - **4-tier PR mode** — `comment_only` → `auto_merge` (patch) → `auto_merge_minor` → `auto_merge_all` (fully autonomous). In `auto_merge_all`, PRs flagged `NEEDS_REVIEW` are escalated to the `deep_review` model (Opus) for a second opinion.
 - **Two-stage alert pipeline** — Alerts go through triage (Haiku, cheap/fast) first. Triage returns `fix`, `notify`, or `ignore`. Only `fix` escalates to the Alert Fix agent (Sonnet).
 - **Code fix auto-merge** — When a PR review flags `NEEDS_FIX`, the Code Fix agent pushes a commit to the PR branch, then polls CI for up to 5 minutes. If CI passes, it auto-merges.
+- **Two code-fix paths** — The Code Fix agent has two modes, chosen in `workers/pr_fix.py` by whether the resolved `code_fix` model is a `claude-code/*` one:
+  - **Checkout mode** (`claude-code/*` only) — `agent/workspace.py` clones home-ops and adds a `git worktree` on the PR branch. The Claude Code CLI runs with `cwd` set to it and its `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Bash` tools enabled, so the agent can grep the whole repo, edit several files, and validate with `kubeconform` before committing. The only way out is the `workspace_commit` tool, which re-applies `PROTECTED_BRANCHES` and `ALLOWED_COMMIT_PATHS` **to the whole staged diff** (with `--no-renames`, so a rename can't smuggle a file out of an allowed path) and unstages everything on a violation.
+  - **API mode** (everything else) — the original single-file `github_create_commit` path.
+- **Subscription billing is enforced by env, not hope** — the Claude Code CLI has a documented [authentication precedence](https://code.claude.com/docs/en/authentication#authentication-precedence) in which several credential sources outrank `CLAUDE_CODE_OAUTH_TOKEN`. `claude_code._PRECEDENCE_ENV` blanks all of them (`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_PROFILE`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`) on **every** `claude-code/*` run, so a key left in the pod env cannot silently move the run onto metered API credit. The `CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY` flags are read as flags rather than values — blanking one could read as "set" — so those are logged as a warning instead (`_PROVIDER_FLAGS`).
+- **Workspace secret masking** — Enabling `Bash` gives the agent a shell in the pod, so `claude_code._MASKED_ENV` additionally blanks `DATABASE_URL`, `SESSION_SECRET`, `NTFY_TOKEN`, `GITHUB_TOKEN` and the other provider keys. The GitHub token is passed to `git` in a per-invocation URL and never written to `.git/config`, so `git remote -v` inside the worktree does not reveal it.
 
 ## Safety guardrails (code-level, not prompt-level)
 
@@ -99,10 +117,11 @@ git tag v0.x.y && git push origin v0.x.y
 
 ## Authentication
 
-Three providers can be configured simultaneously (any subset). The model assigned to each task picks the provider.
+Four providers can be configured simultaneously (any subset). The model assigned to each task picks the provider.
 
 - **Anthropic** — API key only. (The old Max/Pro OAuth flow was removed; Anthropic does not allow third-party apps to use Consumer subscription OAuth tokens.)
 - **Kimi for Coding** — API key from the Kimi Code Console, used against the Anthropic-compatible endpoint `https://api.kimi.com/coding/` (model `kimi-for-coding`).
+- **Claude Code** — a Claude Pro/Max **subscription**, via the Claude Code CLI. `claude setup-token` mints a long-lived (1 year) token from an interactive browser flow this hosted server cannot run, so the user runs it locally and pastes the token into Settings (stored as `claude_code_oauth_token`, passed to the CLI as `CLAUDE_CODE_OAUTH_TOKEN`). Unlike the OpenAI tokens it is not refreshable and needs no keep-warm loop. Per the CLI docs the token "authenticates with your Claude subscription and requires a Pro, Max, Team, or Enterprise plan" — it does **not** bill API credit. What does bill API credit is `ANTHROPIC_API_KEY` (and the other sources in `_PRECEDENCE_ENV`) outranking it, which is why those are blanked per run. Pasting `~/.claude/.credentials.json` instead was considered and rejected: its refresh token is single-use and rotates, so sharing it with a developer machine logs one of the two out.
 - **OpenAI / ChatGPT** — ChatGPT-subscription OAuth tokens. Because the app is a hosted server (it cannot receive the Codex `localhost:1455` redirect), tokens are **imported** via `POST /api/auth/openai` (authenticate locally first, e.g. `codex login`, then paste `access_token`/`refresh_token`/`account_id`). The server refreshes them automatically using the Codex public client (`OPENAI_CLIENT_ID` in `agent/providers.py`).
 
 Credentials are stored as `settings` rows; disconnect a provider with `DELETE /api/auth/{provider}`.
@@ -125,6 +144,12 @@ Task types used in `agent_tasks.task_type`: `pr_review`, `pr_merge`, `pr_deep_re
 Model keys (used in `models.py` defaults and DB `model_*` settings): `pr_review`, `alert_triage`, `alert_fix`, `code_fix`, `deep_review`, `chat`.
 
 ## Deployment
+
+The `claude-agent-sdk` wheel bundles the Claude Code CLI binary and prefers it over any copy on `PATH`, so the image installs no Node/npm for it. The Dockerfile asserts the bundled binary is present and executable at build time.
+
+Checkout mode needs `git` and `kubeconform` (both installed in the runtime stage) and a writable `AGENT_WORKSPACE_DIR` (defaults to `/home/agent/workspace`). No volume is required — the clone is re-created when missing — but mounting one over that path avoids re-cloning on every restart.
+
+The `talos` skill needs `get`/`list` on `poddisruptionbudgets` (policy), `jobs` (batch) and the `tuppr.home-operations.com` CRDs, on top of the existing node/pod permissions. Missing RBAC surfaces as a 403 the tools report as "the agent's ClusterRole is missing get/list permission" rather than a silent empty result.
 
 Deployed via Flux in the home-ops repo under `kubernetes/apps/automation/home-ops-agent/`. Uses bjw-s app-template HelmRelease with:
 - ServiceAccount + ClusterRole RBAC
