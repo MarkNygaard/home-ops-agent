@@ -18,6 +18,7 @@ from home_ops_agent.api.status import router as status_router
 from home_ops_agent.database import init_db
 from home_ops_agent.mcp.bridge import mcp_tools_to_agent_tools
 from home_ops_agent.mcp.client import MCPClient
+from home_ops_agent.mcp.server import MCP_PATH as mcp_path
 from home_ops_agent.mcp.server import lifespan as mcp_server_lifespan
 from home_ops_agent.mcp.server import mount as mount_mcp_server
 from home_ops_agent.workers.alert_subscriber import run_alert_subscriber
@@ -106,6 +107,19 @@ app.include_router(costs_router)
 # otherwise swallow /mcp. No-op unless MCP_API_TOKEN is set.
 mount_mcp_server(app)
 
+
+# A client configured with `.../mcp` rather than `.../mcp/` would otherwise
+# fall through to the static catch-all below and get a 405. Registered before
+# it so the redirect wins.
+@app.post(mcp_path)
+async def redirect_bare_mcp():
+    """Send a bare /mcp POST to the mounted endpoint at /mcp/."""
+    from fastapi.responses import RedirectResponse
+
+    # 307 preserves the method and body, so the JSON-RPC request survives.
+    return RedirectResponse(url=f"{mcp_path}/", status_code=307)
+
+
 # Static files (web UI) with catch-all for Next.js client-side routing
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
@@ -119,7 +133,14 @@ if static_dir.exists():
     @app.get("/{path:path}")
     @app.head("/{path:path}")
     async def serve_static(path: str):
-        """Serve Next.js static export with fallback to index.html."""
+        """Serve Next.js static export with fallback to index.html.
+
+        Note the MCP endpoint is mounted above but only matches `/mcp/...`.
+        Starlette would normally redirect a bare `/mcp` to `/mcp/`, but that
+        only happens when no route matches -- and this catch-all matches
+        everything, so a client configured without the trailing slash got a 405
+        from here instead. `redirect_bare_mcp` below handles that case.
+        """
         # Try exact file first (e.g., style.css, favicon.ico)
         file_path = static_dir / path
         if file_path.is_file():

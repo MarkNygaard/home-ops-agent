@@ -96,3 +96,98 @@ def test_parse_triage_action_notify_default():
 def test_parse_triage_action_case_insensitive():
     assert _parse_triage_action("ACTION: FIX") == "fix"
     assert _parse_triage_action("Action: Ignore") == "ignore"
+
+
+# --- resolved alerts must not cost a triage run ---
+
+
+def test_resolved_alerts_are_recognised():
+    from home_ops_agent.workers.alert_subscriber import is_resolved
+
+    assert is_resolved({"title": "[RESOLVED] OomKilled OomKilled media"}) is True
+    assert is_resolved({"title": "[FIRING] OomKilled OomKilled media"}) is False
+    assert is_resolved({"title": "KubePodNotReady"}) is False
+    assert is_resolved({}) is False
+
+
+def test_firing_and_resolved_share_a_cooldown_key():
+    """A fire/clear pair must collapse onto one key.
+
+    With the marker left in the key they were two different alerts, so the
+    clearing notification never saw the cooldown its own firing had set -- and
+    every alert cost two full triage runs minutes apart.
+    """
+    from home_ops_agent.workers.alert_subscriber import alert_identity
+
+    firing = {
+        "topic": "alertmanager",
+        "title": "[FIRING] OomKilled OomKilled media",
+        "message": "flaresolverr was OOMKilled",
+    }
+    resolved = {**firing, "title": "[RESOLVED] OomKilled OomKilled media"}
+
+    assert alert_identity(firing) == alert_identity(resolved)
+
+
+def test_different_alerts_keep_different_keys():
+    from home_ops_agent.workers.alert_subscriber import alert_identity
+
+    a = {"topic": "alertmanager", "title": "[FIRING] OomKilled media", "message": "x"}
+    b = {"topic": "alertmanager", "title": "[FIRING] KubePodNotReady media", "message": "x"}
+
+    assert alert_identity(a) != alert_identity(b)
+
+
+async def test_a_resolved_alert_is_never_triaged(monkeypatch):
+    """The whole point: no model call, no tool calls, no agent_tasks row."""
+    from unittest.mock import AsyncMock
+
+    from home_ops_agent.workers import alert_subscriber
+
+    monkeypatch.setattr(alert_subscriber, "_is_enabled", AsyncMock(return_value=True))
+    triage = AsyncMock()
+    monkeypatch.setattr(alert_subscriber, "_triage_alert", triage)
+    build_credentials = AsyncMock()
+    monkeypatch.setattr(alert_subscriber, "build_credentials", build_credentials)
+
+    await alert_subscriber._investigate_alert(
+        {
+            "topic": "alertmanager",
+            "title": "[RESOLVED] OomKilled OomKilled media",
+            "message": "recovered",
+        }
+    )
+
+    triage.assert_not_called()
+    # It should not even reach the point of loading credentials.
+    build_credentials.assert_not_called()
+
+
+async def test_a_firing_alert_is_still_triaged(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import alert_subscriber
+
+    alert_subscriber._cooldowns.clear()
+    monkeypatch.setattr(alert_subscriber, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        alert_subscriber,
+        "build_credentials",
+        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+    )
+    monkeypatch.setattr(
+        alert_subscriber.registry, "get_all_enabled_tools", AsyncMock(return_value=[])
+    )
+    triage = AsyncMock(return_value=("summary", "ignore"))
+    monkeypatch.setattr(alert_subscriber, "_triage_alert", triage)
+
+    await alert_subscriber._investigate_alert(
+        {
+            "topic": "alertmanager",
+            "title": "[FIRING] OomKilled OomKilled media",
+            "message": "pod died",
+        }
+    )
+
+    triage.assert_called_once()
