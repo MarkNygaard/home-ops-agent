@@ -180,6 +180,7 @@ def init_registry():
     from home_ops_agent.agent.tools.loki import SKILL as loki_skill
     from home_ops_agent.agent.tools.ntfy import SKILL as ntfy_skill
     from home_ops_agent.agent.tools.prometheus import SKILL as prometheus_skill
+    from home_ops_agent.agent.tools.talos import SKILL as talos_skill
 
     registry.register(kubernetes_skill)
     registry.register(github_skill)
@@ -187,3 +188,4 @@ def init_registry():
     registry.register(prometheus_skill)
     registry.register(loki_skill)
     registry.register(flux_skill)
+    registry.register(talos_skill)

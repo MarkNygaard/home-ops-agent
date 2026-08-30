@@ -19,9 +19,13 @@ sys.modules.setdefault("kubernetes.config", _k8s_mock)
 # sys.modules["kubernetes.client.rest"] IS _k8s_mock, so
 # `from kubernetes.client.rest import ApiException` resolves to _k8s_mock.ApiException.
 class _ApiException(Exception):
-    def __init__(self, reason="mocked", **kwargs):
+    # `status` matters: tool code branches on the HTTP code to tell "CRD not
+    # installed" (404) from "RBAC gap" (403). Keyword-only, matching how the
+    # real client is constructed and how every call site here passes it.
+    def __init__(self, reason="mocked", status=None, **kwargs):
         super().__init__(reason)
         self.reason = reason
+        self.status = status
 
 
 _k8s_mock.ApiException = _ApiException
@@ -32,6 +36,8 @@ _k8s_mock.config.load_kube_config = MagicMock()
 _k8s_mock.client.CoreV1Api = MagicMock
 _k8s_mock.client.AppsV1Api = MagicMock
 _k8s_mock.client.CustomObjectsApi = MagicMock
+_k8s_mock.client.PolicyV1Api = MagicMock
+_k8s_mock.client.BatchV1Api = MagicMock
 
 from home_ops_agent.database import Base  # noqa: E402
 
