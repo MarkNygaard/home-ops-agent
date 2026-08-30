@@ -55,6 +55,38 @@ async def _is_enabled() -> bool:
         return setting.value.lower() in ("true", "1", "yes")
 
 
+# Alertmanager routes both the firing and the clearing notification through
+# ntfy, distinguished only by this marker in the title.
+_RESOLVED_MARKERS = ("[resolved]", "[ok]")
+_FIRING_MARKERS = ("[firing]", "[alert]")
+
+
+def is_resolved(alert: dict) -> bool:
+    """Is this the notification saying an alert has *cleared*?
+
+    A cleared alert has nothing to diagnose: by definition the condition is
+    gone. Triaging one anyway costs a full agent run to reach the conclusion
+    the title already states -- one such run spent 18k tokens and four tool
+    calls before answering "the alert title shows [RESOLVED]".
+    """
+    title = (alert.get("title") or "").lower()
+    return any(marker in title for marker in _RESOLVED_MARKERS)
+
+
+def alert_identity(alert: dict) -> str:
+    """Cooldown key for an alert, independent of firing/resolved state.
+
+    The marker is stripped so a fire/clear pair collapses onto one key. With it
+    left in, the two notifications were different keys, so the clearing one
+    never saw the cooldown its own firing had set -- and every alert cost two
+    full triage runs a few minutes apart.
+    """
+    title = (alert.get("title") or "").lower()
+    for marker in _RESOLVED_MARKERS + _FIRING_MARKERS:
+        title = title.replace(marker, "")
+    return f"{alert.get('topic', '')}:{title.strip()}:{(alert.get('message') or '')[:50]}"
+
+
 def _format_alert_context(alert: dict) -> str:
     """Format alert details as a text block for the agent prompt."""
     return (
@@ -237,7 +269,12 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         logger.debug("Agent is disabled, skipping alert investigation")
         return
 
-    alert_key = f"{alert.get('topic', '')}:{alert.get('title', '')}:{alert.get('message', '')[:50]}"
+    # Cheap checks first: neither costs a model call.
+    if is_resolved(alert):
+        logger.info("Alert already resolved, not triaging: %s", alert.get("title"))
+        return
+
+    alert_key = alert_identity(alert)
 
     if await _is_on_cooldown(alert_key):
         logger.debug("Alert on cooldown, skipping: %s", alert_key)

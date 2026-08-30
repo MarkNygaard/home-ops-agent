@@ -215,3 +215,16 @@ async def test_check_prs_counts_failed_reviews(monkeypatch):
     assert result["open_prs"] == 1
     assert result["reviewed"] == 0
     assert result["failed"] == 1
+
+
+async def test_scheduled_cycle_publishes_its_result(monkeypatch):
+    """The dashboard should reflect the cycle that runs all day, not only Run now."""
+    from home_ops_agent.api import status as status_api
+    from home_ops_agent.workers import pr_monitor
+
+    status_api._pr_check_last_result = None
+    pr_monitor._record_cycle_result({"status": "completed", "reviewed": 2, "failed": 0})
+
+    assert status_api._pr_check_last_result["status"] == "completed"
+    assert status_api._pr_check_last_result["reviewed"] == 2
+    assert "at" in status_api._pr_check_last_result

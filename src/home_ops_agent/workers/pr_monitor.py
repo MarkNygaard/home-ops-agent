@@ -383,6 +383,18 @@ async def _get_check_interval() -> int:
     return settings.pr_check_interval_seconds
 
 
+def _record_cycle_result(result: dict | None) -> None:
+    """Publish a cycle summary for the status endpoint."""
+    from datetime import datetime as _dt
+
+    from home_ops_agent.api import status as status_api
+
+    status_api._pr_check_last_result = {
+        **(result or {"status": "completed"}),
+        "at": _dt.now(UTC).isoformat(),
+    }
+
+
 async def run_pr_monitor():
     """Background task: periodically check PRs."""
     logger.info(
@@ -394,7 +406,11 @@ async def run_pr_monitor():
 
     while True:
         try:
-            await check_prs()
+            # The scheduled cycle is the one that runs all day; recording its
+            # outcome is what makes the dashboard reflect reality rather than
+            # only the last time someone pressed Run now.
+            result = await check_prs()
+            _record_cycle_result(result)
             last_pr_check_at = datetime.now(UTC)
         except Exception:
             logger.exception("PR monitor cycle failed")

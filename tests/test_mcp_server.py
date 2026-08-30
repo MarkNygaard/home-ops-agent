@@ -579,3 +579,29 @@ async def test_lifespan_is_a_noop_when_mounting_failed(monkeypatch):
     monkeypatch.setattr(mcp_server, "_server", None)
     async with mcp_server.lifespan():
         pass
+
+
+async def test_bare_mcp_path_redirects_instead_of_405(monkeypatch):
+    """A client configured without the trailing slash must still work.
+
+    The static catch-all matches `/mcp`, so Starlette's usual redirect-to-slash
+    never fires and a POST landed on a GET-only route as a 405. That cost a
+    full debugging round-trip.
+    """
+    monkeypatch.setattr(mcp_server.settings, "mcp_api_token", "secret")
+    monkeypatch.setattr(mcp_server.settings, "base_url", "http://testserver")
+    monkeypatch.setattr(mcp_server, "_server", None)
+
+    from home_ops_agent.main import app
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        resp = await client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 307, f"expected a redirect, got {resp.status_code}"
+    assert resp.headers["location"].endswith("/mcp/")
