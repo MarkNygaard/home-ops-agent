@@ -19,6 +19,11 @@ export interface Settings {
   models: Record<string, string>
   alert_cooldown_seconds: number
   ntfy_topics: string
+  notify_level?: string
+  ntfy_url?: string
+  ntfy_agent_topic?: string
+  ntfy_token_configured?: boolean
+  ntfy_token_hint?: string | null
   pr_check_interval_seconds: number
   chat_suggestions: string
 }

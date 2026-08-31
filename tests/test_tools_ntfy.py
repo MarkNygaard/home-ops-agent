@@ -2,7 +2,33 @@
 
 import json
 
+import pytest
+
 from home_ops_agent.agent.tools.ntfy import publish
+
+
+@pytest.fixture(autouse=True)
+def _env_ntfy_config(monkeypatch):
+    """Resolve the destination from env, without a DB round trip.
+
+    resolve_config() reads `settings` rows first; these tests have no database,
+    so each publish would pay a connection timeout before falling back. Reads
+    ntfy.settings lazily so it picks up whatever mock_settings patched in,
+    regardless of fixture ordering.
+    """
+    from home_ops_agent.agent.tools import ntfy
+
+    async def _resolved():
+        return {
+            "url": ntfy.settings.ntfy_url,
+            "topic": ntfy.settings.ntfy_agent_topic,
+            "token": ntfy.settings.ntfy_token,
+        }
+
+    ntfy.reset_config_cache()
+    monkeypatch.setattr(ntfy, "resolve_config", _resolved)
+    yield
+    ntfy.reset_config_cache()
 
 
 async def test_publish_basic(httpx_mock, mock_settings):
