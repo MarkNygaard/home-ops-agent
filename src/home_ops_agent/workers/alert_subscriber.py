@@ -16,6 +16,7 @@ from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
+from home_ops_agent.workers import notifications
 
 logger = logging.getLogger(__name__)
 
@@ -309,16 +310,16 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
             await _fix_alert(alert, triage_summary, agent)
         else:
             # Notify only — send the triage summary via ntfy
-            from home_ops_agent.agent.tools.ntfy import publish_notification
 
             try:
-                await publish_notification(
+                await notifications.notify(
+                    notifications.ATTENTION,
                     {
                         "title": f"Alert: {alert.get('title', 'Unknown')}",
                         "message": triage_summary[:300],
                         "priority": "high",
                         "tags": "warning",
-                    }
+                    },
                 )
             except Exception:
                 logger.exception("Failed to send alert notification")
