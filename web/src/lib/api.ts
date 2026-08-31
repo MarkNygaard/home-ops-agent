@@ -21,7 +21,12 @@ export function fetchSettings(): Promise<Settings> {
   return fetchJson<Settings>("/api/settings")
 }
 
-export function updateSetting(key: string, value: string): Promise<void> {
+// Returns the response body: this endpoint reports validation problems as an
+// `error` key with a 200, so discarding it made those failures invisible.
+export function updateSetting(
+  key: string,
+  value: string,
+): Promise<{ status?: string; key?: string; error?: string }> {
   return fetchJson("/api/settings/" + key, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
