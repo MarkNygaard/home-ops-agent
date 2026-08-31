@@ -76,6 +76,29 @@ export const MEMORY_CATEGORIES = [
   { value: "general", label: "General" },
 ] as const
 
+// Mirrors LEVELS in workers/notifications.py. ATTENTION and FAILURE are never
+// suppressed, whichever level is chosen.
+export const NOTIFY_LEVELS = [
+  {
+    value: "all",
+    label: "Everything",
+    description:
+      "Every step, including 'reviewed, looks safe' and 'fix pushed'. A routine merged PR sends two notifications.",
+  },
+  {
+    value: "outcomes",
+    label: "Outcomes only (recommended)",
+    description:
+      "Skips intermediate steps whose result is reported later. A routine merged PR sends one notification.",
+  },
+  {
+    value: "actionable",
+    label: "Only what needs me",
+    description:
+      "Reviews needing attention and anything that failed. Routine merges pass silently.",
+  },
+] as const
+
 export const CATEGORY_COLORS: Record<string, string> = {
   issue: "destructive",
   preference: "default",

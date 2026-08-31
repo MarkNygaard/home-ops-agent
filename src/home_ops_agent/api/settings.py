@@ -8,6 +8,12 @@ from sqlalchemy import delete, select
 
 from home_ops_agent.agent import providers
 from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
+from home_ops_agent.agent.tools.ntfy import (
+    NTFY_TOKEN_KEY,
+    NTFY_TOPIC_KEY,
+    NTFY_URL_KEY,
+    reset_config_cache,
+)
 from home_ops_agent.auth import credentials as creds
 from home_ops_agent.config import settings
 from home_ops_agent.database import Setting, async_session
@@ -71,6 +77,10 @@ async def get_settings():
             db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)
         ),
         "notify_level": db_settings.get("notify_level", NOTIFY_DEFAULT_LEVEL),
+        "ntfy_url": db_settings.get("ntfy_url") or settings.ntfy_url,
+        "ntfy_agent_topic": db_settings.get("ntfy_agent_topic") or settings.ntfy_agent_topic,
+        "ntfy_token_configured": bool(db_settings.get("ntfy_token") or settings.ntfy_token),
+        "ntfy_token_hint": _mask_key(db_settings.get("ntfy_token") or settings.ntfy_token),
         "ntfy_topics": db_settings.get(
             "ntfy_topics",
             f"{settings.ntfy_alertmanager_topic},{settings.ntfy_gatus_topic}",
@@ -114,6 +124,9 @@ ALLOWED_SETTING_KEYS = {
     "model_chat",
     "chat_suggestions",
     "notify_level",
+    "ntfy_url",
+    "ntfy_agent_topic",
+    "ntfy_token",
 }
 
 
@@ -150,6 +163,11 @@ async def update_setting(key: str, body: UpdateSetting):
             session.add(Setting(key=key, value=body.value))
 
         await session.commit()
+
+    # The notification destination is cached for a few seconds; drop it so a
+    # change made here applies to the next notification rather than later.
+    if key in (NTFY_URL_KEY, NTFY_TOPIC_KEY, NTFY_TOKEN_KEY):
+        reset_config_cache()
 
     return {"status": "ok", "key": key}
 
