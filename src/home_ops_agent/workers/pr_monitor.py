@@ -199,9 +199,16 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
         return None
 
 
-async def _notify_review(pr: dict, result: AgentResult):
-    """Send ntfy notification about a completed PR review."""
-    from home_ops_agent.agent.tools.ntfy import publish_notification
+async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_only"):
+    """Send ntfy notification about a completed PR review.
+
+    The *kind* matters as much as the text. A SAFE_TO_MERGE verdict in an
+    auto-merge mode is an intermediate step -- the merge itself will report the
+    outcome a cycle later -- so it is ROUTINE and suppressed at the default
+    notification level. In comment_only mode nothing else will fire, so the same
+    verdict is the outcome.
+    """
+    from home_ops_agent.workers import notifications
 
     # Determine risk level from the response
     response_lower = result.response.lower()
@@ -209,32 +216,34 @@ async def _notify_review(pr: dict, result: AgentResult):
         priority = "high"
         tag = "warning"
         title = f"PR #{pr['number']} needs your review"
+        kind = notifications.ATTENTION
     elif "safe_to_merge" in response_lower:
         priority = "default"
         tag = "white_check_mark"
         title = f"PR #{pr['number']} reviewed - safe to merge"
+        kind = notifications.ROUTINE if pr_mode != "comment_only" else notifications.OUTCOME
     else:
         priority = "default"
         tag = "mag"
         title = f"PR #{pr['number']} reviewed"
+        # NEEDS_FIX starts a code-fix chain that reports its own outcome.
+        kind = notifications.ROUTINE if pr_mode != "comment_only" else notifications.OUTCOME
 
     # Truncate summary for notification
     summary = result.response[:300]
     if len(result.response) > 300:
         summary += "..."
 
-    try:
-        await publish_notification(
-            {
-                "title": title,
-                "message": f"{pr['title']}\n\n{summary}",
-                "priority": priority,
-                "tags": tag,
-                "click_url": pr.get("html_url", ""),
-            }
-        )
-    except Exception:
-        logger.exception("Failed to send ntfy notification for PR #%s", pr["number"])
+    await notifications.notify(
+        kind,
+        {
+            "title": title,
+            "message": f"{pr['title']}\n\n{summary}",
+            "priority": priority,
+            "tags": tag,
+            "click_url": pr.get("html_url", ""),
+        },
+    )
 
 
 async def _save_task(pr: dict, result: AgentResult):
@@ -341,7 +350,7 @@ async def check_prs() -> dict:
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
             )
-            await _notify_review(pr, result)
+            await _notify_review(pr, result, pr_mode)
             reviewed_count += 1
             logger.info(
                 "Reviewed PR #%s: %s",

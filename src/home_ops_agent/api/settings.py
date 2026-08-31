@@ -11,6 +11,8 @@ from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
 from home_ops_agent.auth import credentials as creds
 from home_ops_agent.config import settings
 from home_ops_agent.database import Setting, async_session
+from home_ops_agent.workers.notifications import DEFAULT_LEVEL as NOTIFY_DEFAULT_LEVEL
+from home_ops_agent.workers.notifications import LEVELS as NOTIFY_LEVELS
 
 router = APIRouter()
 
@@ -68,6 +70,7 @@ async def get_settings():
         "alert_cooldown_seconds": int(
             db_settings.get("alert_cooldown_seconds", settings.alert_cooldown_seconds)
         ),
+        "notify_level": db_settings.get("notify_level", NOTIFY_DEFAULT_LEVEL),
         "ntfy_topics": db_settings.get(
             "ntfy_topics",
             f"{settings.ntfy_alertmanager_topic},{settings.ntfy_gatus_topic}",
@@ -110,6 +113,7 @@ ALLOWED_SETTING_KEYS = {
     "model_deep_review",
     "model_chat",
     "chat_suggestions",
+    "notify_level",
 }
 
 
@@ -121,6 +125,9 @@ async def update_setting(key: str, body: UpdateSetting):
 
     # Reject assigning a task model to a provider that has no credentials,
     # which would otherwise fail silently at runtime when the task runs.
+    if key == "notify_level" and body.value not in NOTIFY_LEVELS:
+        return {"error": (f"notify_level must be one of: {', '.join(sorted(NOTIFY_LEVELS))}")}
+
     if key.startswith("model_"):
         provider = providers.resolve_provider(body.value)
         credentials = await creds.build_credentials()

@@ -12,6 +12,7 @@ from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.database import AgentTask, Conversation, Message, async_session
+from home_ops_agent.workers import notifications
 from home_ops_agent.workers.pr_monitor import (
     MAX_REVIEWS_PER_CYCLE,
     _already_reviewed,
@@ -48,7 +49,6 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
     and the user later switches to auto-merge mode.
     """
     from home_ops_agent.agent.tools.github import merge_pr
-    from home_ops_agent.agent.tools.ntfy import publish_notification
 
     merged_count = 0
     for pr in prs:
@@ -96,14 +96,15 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
 
             # Notify first — DB errors should not prevent notification
             try:
-                await publish_notification(
+                await notifications.notify(
+                    notifications.OUTCOME,
                     {
                         "title": f"Auto-merged PR #{pr_number}",
                         "message": pr["title"],
                         "priority": "default",
                         "tags": "merged",
                         "click_url": pr.get("html_url", ""),
-                    }
+                    },
                 )
             except Exception:
                 logger.exception(
@@ -134,6 +135,21 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
                     pr_number,
                 )
         else:
+            # Previously log-only: the agent decided to merge, could not, and
+            # said nothing. Successes were announced twice while the one
+            # outcome actually needing a human was silent.
+            await notifications.notify(
+                notifications.FAILURE,
+                {
+                    "title": f"Auto-merge failed: PR #{pr_number}",
+                    "message": (f"{pr['title']}\n\n{merge_result.get('message', 'unknown error')}")[
+                        :400
+                    ],
+                    "priority": "high",
+                    "tags": "x",
+                    "click_url": pr.get("html_url", ""),
+                },
+            )
             logger.warning(
                 "Failed to merge PR #%s: %s",
                 pr_number,
@@ -171,7 +187,6 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
             if task and "safe_to_merge" in (task.summary or "").lower():
                 # Approved but PR still open — try to merge
                 from home_ops_agent.agent.tools.github import merge_pr
-                from home_ops_agent.agent.tools.ntfy import publish_notification
 
                 logger.info(
                     "Deep review approved PR #%s previously, retrying merge",
@@ -201,14 +216,15 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                             pr_number,
                         )
                     try:
-                        await publish_notification(
+                        await notifications.notify(
+                            notifications.OUTCOME,
                             {
                                 "title": f"Auto-merged PR #{pr_number} (retry)",
                                 "message": pr["title"],
                                 "priority": "default",
                                 "tags": "white_check_mark",
                                 "click_url": pr.get("html_url", ""),
-                            }
+                            },
                         )
                     except Exception:
                         pass
@@ -301,7 +317,6 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
             )
 
             # Notify
-            from home_ops_agent.agent.tools.ntfy import publish_notification
 
             approved = is_approved_by_deep_review(result.response)
 
@@ -349,14 +364,15 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                 tags = "warning"
 
             try:
-                await publish_notification(
+                await notifications.notify(
+                    notifications.OUTCOME if priority != "high" else notifications.ATTENTION,
                     {
                         "title": title,
                         "message": f"{pr['title']}\n\n{result.response[:200]}",
                         "priority": priority,
                         "tags": tags,
                         "click_url": pr.get("html_url", ""),
-                    }
+                    },
                 )
             except Exception:
                 logger.exception(
@@ -373,7 +389,6 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
 async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
     """Wait for CI to pass on a PR, then merge it. Notify on success or failure."""
     from home_ops_agent.agent.tools.github import get_check_runs, get_pr, merge_pr
-    from home_ops_agent.agent.tools.ntfy import publish_notification
 
     logger.info("Waiting for CI on PR #%s before merging", pr_number)
 
@@ -425,19 +440,33 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
                         await session.commit()
 
                     try:
-                        await publish_notification(
+                        await notifications.notify(
+                            notifications.OUTCOME,
                             {
                                 "title": f"Code fix merged: PR #{pr_number}",
                                 "message": title,
                                 "priority": "default",
                                 "tags": "white_check_mark",
                                 "click_url": html_url,
-                            }
+                            },
                         )
                     except Exception:
                         logger.exception("Failed to send merge notification")
                     return
                 else:
+                    await notifications.notify(
+                        notifications.FAILURE,
+                        {
+                            "title": f"Code fix merge failed: PR #{pr_number}",
+                            "message": (
+                                f"{title}\n\nCI passed but the merge failed: "
+                                f"{merge_result.get('message', 'unknown error')}"
+                            )[:400],
+                            "priority": "high",
+                            "tags": "x",
+                            "click_url": html_url,
+                        },
+                    )
                     logger.warning(
                         "Failed to merge PR #%s: %s",
                         pr_number,
@@ -448,7 +477,8 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
                 # CI failed
                 logger.warning("CI failed on code fix PR #%s", pr_number)
                 try:
-                    await publish_notification(
+                    await notifications.notify(
+                        notifications.FAILURE,
                         {
                             "title": f"Code fix CI failed: PR #{pr_number}",
                             "message": (
@@ -457,7 +487,7 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
                             "priority": "high",
                             "tags": "x",
                             "click_url": html_url,
-                        }
+                        },
                     )
                 except Exception:
                     logger.exception("Failed to send CI failure notification")
@@ -469,14 +499,15 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
     # Timed out waiting for CI
     logger.warning("Timed out waiting for CI on PR #%s", pr_number)
     try:
-        await publish_notification(
+        await notifications.notify(
+            notifications.ATTENTION,
             {
                 "title": f"Code fix: CI timeout on PR #{pr_number}",
                 "message": f"{title}\n\nCI did not complete within 5 minutes.",
                 "priority": "default",
                 "tags": "clock",
                 "click_url": html_url,
-            }
+            },
         )
     except Exception:
         logger.exception("Failed to send timeout notification")

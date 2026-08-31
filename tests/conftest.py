@@ -56,6 +56,7 @@ _ASYNC_SESSION_PATCHES = [
     "home_ops_agent.api.settings.async_session",
     "home_ops_agent.auth.credentials.async_session",
     "home_ops_agent.mcp.server.async_session",
+    "home_ops_agent.workers.notifications.async_session",
 ]
 
 

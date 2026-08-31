@@ -12,6 +12,7 @@ from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, async_session
+from home_ops_agent.workers import notifications
 from home_ops_agent.workers.pr_merge import wait_for_ci_and_merge
 from home_ops_agent.workers.pr_monitor import _extract_verdict
 
@@ -153,17 +154,17 @@ async def attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
             )
 
             # Notify about the fix
-            from home_ops_agent.agent.tools.ntfy import publish_notification
 
             try:
-                await publish_notification(
+                await notifications.notify(
+                    notifications.ROUTINE,
                     {
                         "title": f"Code fix pushed for PR #{pr_number}",
                         "message": f"{pr['title']}\n\nWaiting for CI...",
                         "priority": "default",
                         "tags": "wrench",
                         "click_url": pr.get("html_url", ""),
-                    }
+                    },
                 )
             except Exception:
                 logger.exception("Failed to send code fix notification")
