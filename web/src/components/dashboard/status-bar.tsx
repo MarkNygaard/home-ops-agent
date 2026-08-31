@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
 import { useWs } from "@/providers/websocket-provider"
-import { useCosts } from "@/hooks/use-costs"
+import { useAnalytics } from "@/hooks/use-analytics"
 import { useSettings } from "@/hooks/use-settings"
 import { fetchStatus, triggerPrCheck } from "@/lib/api"
 import type { PrCheckResult } from "@/lib/types"
@@ -54,16 +54,21 @@ function describeCheck(result: PrCheckResult | null | undefined): string | null 
   }
 }
 
-function CostBadge() {
-  const { data: costs } = useCosts(30)
-  if (!costs || costs.total_requests === 0) return null
+function UsageBadge() {
+  const { data } = useAnalytics(30)
+  if (!data || data.total_requests === 0) return null
 
-  const total = costs.total_cost_usd
-  const label = total < 0.01 ? `$${total.toFixed(4)}` : `$${total.toFixed(2)}`
+  // Show spend when there is any, otherwise token volume: a permanent "$0.00"
+  // is noise, while tokens say something whichever way billing works.
+  const label = data.is_billed
+    ? data.total_cost_usd < 0.01
+      ? `$${data.total_cost_usd.toFixed(4)}`
+      : `$${data.total_cost_usd.toFixed(2)}`
+    : `${(data.total_tokens / 1_000_000).toFixed(1)}M tok`
 
   return (
     <Link
-      href="/settings/costs"
+      href="/settings/analytics"
       className="text-sm text-muted-foreground transition-colors hover:text-foreground"
     >
       30d: <span className="font-mono text-foreground">{label}</span>
@@ -177,7 +182,7 @@ export function StatusBar() {
         )}
       </div>
 
-      <CostBadge />
+      <UsageBadge />
     </div>
   )
 }

@@ -137,27 +137,44 @@ export interface StatusResponse {
   last_pr_check_result?: PrCheckResult | null
 }
 
-export interface CostByModel {
+export interface UsageByModel {
   model: string
   input_tokens: number
   output_tokens: number
+  total_tokens: number
   cost_usd: number
   requests: number
 }
 
-export interface CostByTask {
+export interface UsageByTask {
   task_type: string
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
   cost_usd: number
   requests: number
 }
 
-export interface CostsResponse {
+export interface RunsByType {
+  task_type: string
+  completed: number
+  failed: number
+  total: number
+}
+
+export interface AnalyticsResponse {
   days: number
+  // False while every provider is plan-billed; the UI hides cost entirely.
+  is_billed: boolean
   total_cost_usd: number
   total_input_tokens: number
   total_output_tokens: number
+  total_tokens: number
   total_requests: number
-  by_model: CostByModel[]
-  by_task: CostByTask[]
+  by_model: UsageByModel[]
+  by_task: UsageByTask[]
+  runs: RunsByType[]
+  total_runs: number
+  total_failed: number
   pricing: Record<string, { input: number; output: number }>
 }
