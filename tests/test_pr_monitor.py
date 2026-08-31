@@ -177,7 +177,7 @@ async def test_check_prs_reports_no_open_prs(monkeypatch):
     monkeypatch.setattr(
         pr_monitor,
         "build_credentials",
-        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+        AsyncMock(return_value=Credentials(kimi_api_key="k")),
     )
     monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
     monkeypatch.setattr("home_ops_agent.agent.tools.github.list_prs", AsyncMock(return_value="[]"))
@@ -198,7 +198,7 @@ async def test_check_prs_counts_failed_reviews(monkeypatch):
     monkeypatch.setattr(
         pr_monitor,
         "build_credentials",
-        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+        AsyncMock(return_value=Credentials(kimi_api_key="k")),
     )
     monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
     monkeypatch.setattr(pr_monitor, "_get_pr_mode", AsyncMock(return_value="comment_only"))

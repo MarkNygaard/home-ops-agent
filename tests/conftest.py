@@ -180,7 +180,6 @@ def mock_settings():
     from home_ops_agent.config import Settings
 
     test_settings = Settings(
-        anthropic_api_key="test-api-key",
         kimi_api_key="",
         database_url="sqlite+aiosqlite:///:memory:",
         github_token="test-gh-token",
@@ -195,12 +194,12 @@ def mock_settings():
         base_url="https://test.local",
         pr_check_interval_seconds=1800,
         alert_cooldown_seconds=900,
-        model_pr_review="claude-haiku-4-5",
-        model_alert_triage="claude-haiku-4-5",
-        model_alert_fix="claude-sonnet-4-6",
-        model_code_fix="claude-sonnet-4-6",
-        model_deep_review="claude-opus-4-8",
-        model_chat="claude-sonnet-4-6",
+        model_pr_review="claude-code/haiku",
+        model_alert_triage="claude-code/haiku",
+        model_alert_fix="claude-code/sonnet",
+        model_code_fix="claude-code/sonnet",
+        model_deep_review="claude-code/opus",
+        model_chat="claude-code/sonnet",
     )
 
     targets = [

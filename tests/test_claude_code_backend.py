@@ -16,18 +16,27 @@ def test_resolve_provider_claude_code():
     assert providers.resolve_provider("claude-code/claude-opus-4-8") == providers.CLAUDE_CODE
 
 
-def test_claude_prefix_still_routes_to_api():
-    """The `claude-code/` check must not swallow plain Claude model IDs."""
-    assert providers.resolve_provider("claude-sonnet-4-6") == providers.ANTHROPIC
+def test_unrecognised_models_fall_back_to_the_subscription():
+    """A dated ID left over from the metered provider must still resolve.
+
+    The Anthropic API provider was removed; anything unrecognised now goes to
+    the subscription rather than to a provider that cannot be configured.
+    """
+    assert providers.resolve_provider("claude-sonnet-4-6") == providers.CLAUDE_CODE
+    assert providers.resolve_provider("something-weird") == providers.CLAUDE_CODE
 
 
 def test_claude_code_model_strips_prefix():
     assert providers.claude_code_model("claude-code/sonnet") == "sonnet"
-    assert providers.claude_code_model("claude-code/claude-opus-4-8") == "claude-opus-4-8"
+    # A dated ID collapses onto its alias, which tracks the current model.
+    assert providers.claude_code_model("claude-code/claude-opus-4-8") == "opus"
     # Bare prefix means "let the CLI decide".
     assert providers.claude_code_model("claude-code/") == ""
-    # Non-prefixed IDs pass through untouched.
-    assert providers.claude_code_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
+    # Legacy settings written before the aliases existed keep working.
+    assert providers.claude_code_model("claude-sonnet-4-6") == "sonnet"
+    assert providers.claude_code_model("claude-haiku-4-5-20251001") == "haiku"
+    # Anything else is passed to the CLI as given.
+    assert providers.claude_code_model("kimi-for-coding") == "kimi-for-coding"
 
 
 def test_credentials_expose_claude_code():
@@ -37,7 +46,7 @@ def test_credentials_expose_claude_code():
 
 
 def test_agent_rejects_claude_code_without_token():
-    agent = Agent(Credentials(anthropic_api_key="k"))
+    agent = Agent(Credentials(kimi_api_key="k"))
     with pytest.raises(ValueError, match="claude_code"):
         agent._provider_for("claude-code/sonnet")
 
@@ -48,8 +57,9 @@ def test_agent_rejects_claude_code_without_token():
 def test_claude_code_runs_are_not_billed():
     """Subscription runs must not inherit the unknown-model Sonnet fallback."""
     assert costs.calculate_cost("claude-code/sonnet", 1_000_000, 1_000_000) == 0.0
-    # Sanity: the API path still prices normally.
-    assert costs.calculate_cost("claude-sonnet-4-6", 1_000_000, 0) == 3.00
+    # Every configurable provider is plan-billed, so nothing is priced per token.
+    assert costs.calculate_cost("kimi-for-coding", 1_000_000, 0) == 0.0
+    assert costs.calculate_cost("some-unknown-model", 1_000_000, 0) == 0.0
 
 
 # --- message flattening ---

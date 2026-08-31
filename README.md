@@ -11,7 +11,7 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 - **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, create fix branches, commit changes, and open PRs. Code Fix agent auto-merges after CI passes. Every action is logged and reported via ntfy.
 - **Interactive Chat** — Next.js web UI (shadcn/ui) where you can ask questions about cluster state, run diagnostics, or issue commands. Conversations persist across page refreshes.
 - **Persistent Memory** — Extracts durable facts from conversations and carries them into every future prompt. Add your own for anything learned elsewhere; incident-shaped entries expire so a stale snapshot cannot contradict what the live tools report.
-- **Per-Task Models** — Assign a different model to each agent (e.g., Haiku for cheap PR reviews, Opus for deep review). Four providers can be configured at once, including a **Claude Pro/Max subscription** instead of API credit. Configurable via the Settings UI.
+- **Per-Task Models** — Assign a different model to each agent (e.g., Haiku for cheap PR reviews, Opus for deep review). Claude models run on your **Pro/Max subscription**, named by alias so they track the current version without you editing anything. Configurable via the Settings UI.
 - **Inspect it from your editor** — A read-only [MCP endpoint](#mcp-endpoint) exposes what the agent has run, the tool calls behind each run, and what it remembers, so a coding session can diagnose a bad run directly instead of clicking through the UI.
 - **Customizable Prompts** — Edit system prompts per agent through modal editors to describe your specific cluster setup.
 - **Activity History** — View all agent actions and chat conversations with full reasoning and tool call details. Click a conversation to reopen it.
@@ -31,7 +31,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 - [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversations, memories, settings, and task logs
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
 - Prometheus + Loki — for metrics and log queries (optional, via skills system)
-- **At least one model provider** — an [Anthropic API key](https://console.anthropic.com/settings/keys), a Claude Pro/Max subscription (via `claude setup-token`), a Kimi for Coding key, or imported ChatGPT tokens. See [Providers](#providers).
+- **A Claude Pro/Max subscription** (via `claude setup-token`) — or a Kimi for Coding key, or imported ChatGPT tokens. See [Providers](#providers). There is no metered API-key option.
 - GitHub personal access token — fine-grained (scoped to your repo with `Contents: Read/Write` and `Pull requests: Read/Write`) or classic with `repo` scope (required if using a dedicated bot account)
 
 ## Quick Start
@@ -118,7 +118,7 @@ The `NTFY_*` values above are defaults only: the publish URL, topic and token ca
 
 Open the agent's web UI and go to **Settings**:
 
-1. **Authentication** — Configure at least one provider (Anthropic key, Claude subscription token, Kimi key, or imported ChatGPT tokens)
+1. **Authentication** — Configure at least one provider (Claude subscription token, Kimi key, or imported ChatGPT tokens)
 2. **Cluster Context** — Describe your cluster (nodes, IPs, domain, infrastructure). This is prepended to all agent prompts.
 3. **Agents** — Choose which Claude model each agent uses and customize their prompts
 4. **Skills** — Enable optional skills (Prometheus, Loki, Flux CD, Talos) and configure their endpoints
@@ -134,31 +134,34 @@ In the ntfy mobile app, subscribe to the `home-ops-agent` topic on your ntfy ser
 
 | Agent | Default Model | What it does |
 |-------|--------------|-------------|
-| **PR Review** | Haiku 4.5 | Reviews open PRs, posts comments with risk assessment |
-| **Alert Triage** | Haiku 4.5 | First responder — checks pods, logs, metrics, determines severity |
-| **Alert Fix** | Sonnet 4.6 | Takes corrective action — restarts pods, reconciles Flux |
-| **Code Fix** | Sonnet 4.6 | Creates branches, commits fixes, opens PRs. Auto-merges after CI passes. |
-| **Deep Review** | Opus 4.8 | Escalation agent for critical PRs in Fully Autonomous mode |
-| **Chat** | Sonnet 4.6 | Interactive conversation about cluster state |
+| **PR Review** | Haiku | Reviews open PRs, posts comments with risk assessment |
+| **Alert Triage** | Haiku | First responder — checks pods, logs, metrics, determines severity |
+| **Alert Fix** | Sonnet | Takes corrective action — restarts pods, reconciles Flux |
+| **Code Fix** | Sonnet | Creates branches, commits fixes, opens PRs. Auto-merges after CI passes. |
+| **Deep Review** | Opus | Escalation agent for critical PRs in Fully Autonomous mode |
+| **Chat** | Sonnet | Interactive conversation about cluster state |
 
-All models and prompts are configurable via the Settings UI.
+Defaults are subscription aliases (`claude-code/haiku` and so on), which resolve to the current model on their own. All models and prompts are configurable via the Settings UI.
 
 ### Providers
 
-Models from four providers can be configured at once — each agent's assigned model is routed to its provider automatically:
+Models from three providers can be configured at once — each agent's assigned model is routed to its provider automatically. **All of them bill a subscription or plan; none is metered per token.**
 
-| Provider | Auth | Bills | Example models |
-|----------|------|-------|----------------|
-| **Anthropic** | API key | API credit | `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8` |
-| **Claude subscription** | Long-lived token from `claude setup-token` | **Your Pro/Max plan** | `claude-code/haiku`, `claude-code/sonnet`, `claude-code/opus` |
-| **Kimi for Coding** | API key (Anthropic-compatible endpoint) | Kimi plan | `kimi-for-coding` |
-| **OpenAI / ChatGPT** | Imported ChatGPT-subscription OAuth tokens (auto-refreshed) | ChatGPT plan | `gpt-5.5`, `codex-5.3` |
+| Provider | Auth | Models |
+|----------|------|--------|
+| **Claude subscription** | Long-lived token from `claude setup-token` | `claude-code/haiku`, `claude-code/sonnet`, `claude-code/opus` |
+| **Kimi for Coding** | API key (Anthropic-compatible endpoint) | `kimi-for-coding` |
+| **OpenAI / ChatGPT** | Imported ChatGPT-subscription OAuth tokens (auto-refreshed) | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
 
 Configure each provider independently under Settings → Authentication.
 
-**Claude subscription.** A `claude-code/` model prefix runs the task through the local Claude Code CLI instead of the Anthropic API, so it bills your Pro/Max plan rather than API credit. Run `claude setup-token` locally (it mints a token valid for a year) and paste the result. The agent's own tools are handed to the CLI as an in-process MCP server, so every tool and guardrail behaves identically; Claude Code's own filesystem and shell tools are removed. Runs record $0 in the cost tracker — a real dollar figure there means something outranked the subscription token.
+**Claude subscription.** A `claude-code/` model prefix runs the task through the local Claude Code CLI, billing your Pro/Max plan. Run `claude setup-token` locally (it mints a token valid for a year) and paste the result. The agent's own tools are handed to the CLI as an in-process MCP server, so every tool and guardrail behaves identically; Claude Code's own filesystem and shell tools are removed.
 
-**OpenAI.** Authenticate locally (e.g. `codex login`) and paste the resulting access/refresh tokens and account ID.
+**Claude models are named by alias, not version** — `haiku`, `sonnet`, `opus`. The CLI resolves each to the current model, so nothing needs editing when a new one ships. There is deliberately no metered Anthropic API-key option: it required pinning dated IDs like `claude-sonnet-4-6` and updating them by hand every release. A setting still naming a dated ID is mapped onto its alias automatically.
+
+**OpenAI.** GPT-5.6 comes in three tiers — Sol (flagship), Terra (everyday workhorse) and Luna (fast and cheap). `gpt-5.5` still works but is previous-generation.
+
+Authenticate OpenAI locally (e.g. `codex login`) and paste the resulting access/refresh tokens and account ID.
 
 ## PR Modes
 

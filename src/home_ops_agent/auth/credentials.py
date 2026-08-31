@@ -1,13 +1,11 @@
 """Multi-provider credential resolution.
 
-Replaces the old single-provider ``auth_method`` toggle. All three providers
-can hold credentials simultaneously; the model picked for a task determines
-which provider (and therefore which credential) is used.
+All providers can hold credentials simultaneously; the model picked for a task
+determines which provider (and therefore which credential) is used.
 
 Credentials are stored as ``settings`` rows (same store as API keys), so no
 schema migration is required:
 
-- ``anthropic_api_key``
 - ``kimi_api_key``
 - ``openai_access_token`` / ``openai_refresh_token`` / ``openai_account_id``
   / ``openai_expires_at`` (ISO-8601)
@@ -48,7 +46,6 @@ _openai_refresh_lock = asyncio.Lock()
 class Credentials:
     """All configured provider credentials. Any subset may be present."""
 
-    anthropic_api_key: str | None = None
     kimi_api_key: str | None = None
     openai_access_token: str | None = None
     openai_refresh_token: str | None = None
@@ -59,8 +56,6 @@ class Credentials:
     def available_providers(self) -> set[str]:
         """Return the set of providers that have usable credentials."""
         available: set[str] = set()
-        if self.anthropic_api_key:
-            available.add(providers.ANTHROPIC)
         if self.kimi_api_key:
             available.add(providers.KIMI)
         if self.openai_access_token:
@@ -93,7 +88,6 @@ async def build_credentials() -> Credentials:
         db = {s.key: s.value for s in result.scalars().all()}
 
     return Credentials(
-        anthropic_api_key=db.get("anthropic_api_key") or settings.anthropic_api_key or None,
         kimi_api_key=db.get("kimi_api_key") or settings.kimi_api_key or None,
         openai_access_token=db.get(OPENAI_ACCESS_TOKEN_KEY) or None,
         openai_refresh_token=db.get(OPENAI_REFRESH_TOKEN_KEY) or None,

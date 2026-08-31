@@ -1,33 +1,42 @@
 """Provider registry — maps model IDs to their API provider.
 
-The agent supports four providers that can all be authenticated at once:
+The agent supports three providers that can all be authenticated at once:
 
-- ``anthropic``   — Claude models via the Anthropic API (API key).
-- ``kimi``        — Moonshot "Kimi for Coding" via its Anthropic-compatible
-                    endpoint (API key + base URL). Uses the same wire protocol
-                    as Anthropic, so it reuses the Anthropic backend.
-- ``openai``      — GPT / Codex models billed to a ChatGPT subscription, via the
-                    ChatGPT backend Responses API (OAuth access token).
 - ``claude_code`` — Claude models billed to a **Claude subscription** (Pro/Max),
                     run through the local Claude Code CLI via the Claude Agent
                     SDK. Selected with a ``claude-code/`` model prefix, e.g.
                     ``claude-code/sonnet``. The agent's own tools are handed to
                     the CLI as an in-process MCP server, so tool handlers (and
-                    their guardrails) are unchanged.
+                    their guardrails) are unchanged. This is the default and the
+                    fallback for anything unrecognised.
+- ``kimi``        — Moonshot "Kimi for Coding" via its Anthropic-compatible
+                    endpoint (API key + base URL). Speaks the Anthropic wire
+                    protocol, so it uses the ``_run_anthropic`` backend.
+- ``openai``      — GPT models billed to a ChatGPT subscription, via the ChatGPT
+                    backend Responses API (OAuth access token). GPT-5.6 ships as
+                    three tiers: ``gpt-5.6-sol`` (flagship), ``gpt-5.6-terra``
+                    (workhorse) and ``gpt-5.6-luna`` (fast/cheap).
+
+**There is no metered Anthropic API provider.** It was removed because it
+required pinning dated model IDs (``claude-sonnet-4-6``) that had to be updated
+by hand each release, while the Claude Code CLI accepts the aliases ``haiku`` /
+``sonnet`` / ``opus`` and resolves each to the current model on its own. Every
+remaining provider bills a subscription or plan rather than per token.
 
 The provider for a model is resolved from its ID prefix so new model names can
 be added (in the UI / DB) without touching code.
 """
 
-ANTHROPIC = "anthropic"
 KIMI = "kimi"
 OPENAI = "openai"
 CLAUDE_CODE = "claude_code"
 
-PROVIDERS = (ANTHROPIC, KIMI, OPENAI, CLAUDE_CODE)
+PROVIDERS = (CLAUDE_CODE, KIMI, OPENAI)
 
-# Providers that speak the Anthropic wire protocol (handled by the same backend).
-ANTHROPIC_PROTOCOL = (ANTHROPIC, KIMI)
+# Providers that speak the Anthropic wire protocol (handled by the same
+# backend). Only Kimi now, via its Anthropic-compatible endpoint; the grouping
+# stays because `_run_anthropic` is written against the protocol, not a vendor.
+ANTHROPIC_PROTOCOL = (KIMI,)
 
 # --- Kimi for Coding (Anthropic-compatible) ---
 KIMI_BASE_URL = "https://api.kimi.com/coding/"
@@ -62,30 +71,43 @@ def resolve_provider(model: str) -> str:
     Resolution is prefix-based so model IDs can be configured without code
     changes:
 
-    - ``claude-code/*``                     -> claude_code
-    - ``claude-*``                          -> anthropic
     - ``kimi-*`` / ``kimi-for-coding``      -> kimi
     - ``gpt-*`` / ``codex-*`` / ``o3*`` ... -> openai
+    - everything else                       -> claude_code
 
-    Anything unrecognized falls back to Anthropic (the historical default).
+    The fallback is deliberate: a bare ``claude-sonnet-4-6`` left over from when
+    the metered Anthropic provider existed resolves to the subscription rather
+    than to a provider that is no longer configurable.
     """
     m = model.lower().strip()
-    if m.startswith(CLAUDE_CODE_PREFIX):
-        return CLAUDE_CODE
     if m.startswith("kimi"):
         return KIMI
     if m.startswith(_OPENAI_PREFIXES):
         return OPENAI
-    return ANTHROPIC
+    return CLAUDE_CODE
+
+
+# Dated Claude model IDs map back onto the CLI's aliases. The aliases track the
+# current model on their own, which is the whole reason for preferring them: a
+# pinned `claude-sonnet-4-6` needs editing every release, `sonnet` does not.
+_CLAUDE_FAMILIES = ("haiku", "sonnet", "opus")
 
 
 def claude_code_model(model: str) -> str:
-    """Strip the ``claude-code/`` prefix, yielding the CLI's ``--model`` value.
+    """Reduce a model ID to the value passed to the CLI as ``--model``.
 
-    An empty suffix (bare ``claude-code/``) means "let the CLI pick", which the
-    backend signals by returning an empty string.
+    Strips the ``claude-code/`` prefix, then collapses a dated Claude ID onto
+    its alias so settings written before the aliases existed keep working. An
+    empty suffix (bare ``claude-code/``) means "let the CLI pick", signalled to
+    the backend by returning an empty string.
     """
     m = model.strip()
     if m.lower().startswith(CLAUDE_CODE_PREFIX):
-        return m[len(CLAUDE_CODE_PREFIX) :].strip()
+        m = m[len(CLAUDE_CODE_PREFIX) :].strip()
+
+    lowered = m.lower()
+    if lowered.startswith("claude-"):
+        for family in _CLAUDE_FAMILIES:
+            if lowered.startswith(f"claude-{family}"):
+                return family
     return m

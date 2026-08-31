@@ -5,12 +5,13 @@ from home_ops_agent.config import Settings
 
 def test_default_model_values():
     s = Settings()
-    assert s.model_pr_review == "claude-haiku-4-5"
-    assert s.model_alert_triage == "claude-haiku-4-5"
-    assert s.model_alert_fix == "claude-sonnet-4-6"
-    assert s.model_code_fix == "claude-sonnet-4-6"
-    assert s.model_deep_review == "claude-opus-4-8"
-    assert s.model_chat == "claude-sonnet-4-6"
+    # Aliases, not pinned versions: the CLI resolves these to the current model.
+    assert s.model_pr_review == "claude-code/haiku"
+    assert s.model_alert_triage == "claude-code/haiku"
+    assert s.model_alert_fix == "claude-code/sonnet"
+    assert s.model_code_fix == "claude-code/sonnet"
+    assert s.model_deep_review == "claude-code/opus"
+    assert s.model_chat == "claude-code/sonnet"
 
 
 def test_default_intervals():

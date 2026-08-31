@@ -97,20 +97,28 @@ async def extract_memories(
     if len(messages) < 2:
         return []
 
-    # Memory extraction uses a cheap Anthropic-protocol model. Prefer Anthropic;
-    # fall back to Kimi's Anthropic-compatible endpoint. (OpenAI uses a different
-    # API and is skipped — extraction is best-effort.)
+    # Extraction wants a cheap model and no tools. Prefer the Claude
+    # subscription, then Kimi's Anthropic-compatible endpoint. (OpenAI uses a
+    # different API and is skipped — extraction is best-effort.)
+    #
+    # The subscription path matters: this used to require the metered Anthropic
+    # credential, so removing that provider would otherwise have left memory
+    # extraction silently dependent on Kimi being configured.
     credentials = await build_credentials()
-    if credentials.has_provider(providers.ANTHROPIC):
-        client = anthropic.AsyncAnthropic(api_key=credentials.anthropic_api_key)
-        model = "claude-haiku-4-5"
-    elif credentials.has_provider(providers.KIMI):
-        client = anthropic.AsyncAnthropic(
-            api_key=credentials.kimi_api_key, base_url=providers.KIMI_BASE_URL
+
+    if credentials.has_provider(providers.CLAUDE_CODE):
+        return await _save_extracted(
+            conversation_id,
+            await _extract_via_claude_code(credentials, messages),
         )
-        model = "kimi-for-coding"
-    else:
+
+    if not credentials.has_provider(providers.KIMI):
         return []
+
+    client = anthropic.AsyncAnthropic(
+        api_key=credentials.kimi_api_key, base_url=providers.KIMI_BASE_URL
+    )
+    model = "kimi-for-coding"
 
     # Build a summary of the conversation for extraction
     conv_text = ""
@@ -132,49 +140,102 @@ async def extract_memories(
             messages=[{"role": "user", "content": conv_text[:8000]}],
         )
 
-        result_text = response.content[0].text.strip()
+        result_text = response.content[0].text
 
-        # Parse JSON, handling markdown code blocks
-        if result_text.startswith("```"):
-            result_text = result_text.split("\n", 1)[1].rsplit("```", 1)[0]
-
-        memories = json.loads(result_text)
-        if not isinstance(memories, list):
-            return []
-
-        # Save to database
-        saved = []
-        async with async_session() as session:
-            for mem in memories:
-                content = mem.get("content", "").strip()
-                category = mem.get("category", "general")
-                if not content:
-                    continue
-                if category not in MEMORY_CATEGORIES:
-                    category = "general"
-
-                # Check for duplicates (simple substring match)
-                result = await session.execute(select(Memory).where(Memory.content == content))
-                if result.scalar_one_or_none():
-                    continue
-
-                memory = Memory(
-                    content=content,
-                    category=category,
-                    source_conversation_id=conversation_id,
-                )
-                session.add(memory)
-                saved.append({"content": content, "category": category})
-
-            await session.commit()
-
-        if saved:
-            logger.info("Extracted %d memories from conversation %d", len(saved), conversation_id)
-        return saved
+        return await _save_extracted(conversation_id, _parse_extraction(result_text))
 
     except Exception:
         logger.exception("Failed to extract memories")
         return []
+
+
+def _render_conversation(messages: list[dict]) -> str:
+    """Flatten a conversation into the text the extractor reads."""
+    conv_text = ""
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", {})
+        text = content.get("text", "") if isinstance(content, dict) else str(content)
+        if text:
+            conv_text += f"{role}: {text}\n\n"
+    return conv_text
+
+
+def _parse_extraction(result_text: str) -> list[dict]:
+    """Parse the model's JSON array, tolerating a markdown code fence."""
+    result_text = result_text.strip()
+    if result_text.startswith("```"):
+        result_text = result_text.split("\n", 1)[1].rsplit("```", 1)[0]
+    try:
+        memories = json.loads(result_text)
+    except json.JSONDecodeError:
+        logger.warning("Memory extraction returned unparseable output")
+        return []
+    return memories if isinstance(memories, list) else []
+
+
+async def _extract_via_claude_code(credentials, messages: list[dict]) -> list[dict]:
+    """Run extraction on the Claude subscription, with no tools registered."""
+    from home_ops_agent.agent import claude_code
+    from home_ops_agent.agent.models import get_model_for_task
+
+    conv_text = _render_conversation(messages)
+    if len(conv_text) < 50:
+        return []
+
+    # Reuse whichever cheap model is assigned to triage rather than pinning one.
+    model = await get_model_for_task("alert_triage")
+    if providers.resolve_provider(model) != providers.CLAUDE_CODE:
+        model = f"{providers.CLAUDE_CODE_PREFIX}haiku"
+
+    try:
+        result = await claude_code.run(
+            [],
+            EXTRACTION_PROMPT,
+            [{"role": "user", "content": conv_text[:8000]}],
+            model,
+            1,
+            credentials.claude_code_oauth_token or "",
+        )
+    except Exception:
+        logger.exception("Memory extraction via the Claude subscription failed")
+        return []
+
+    return _parse_extraction(result.response)
+
+
+async def _save_extracted(conversation_id: int, memories: list[dict]) -> list[dict]:
+    """Persist extracted memories, skipping duplicates and unknown categories."""
+    saved = []
+    async with async_session() as session:
+        for mem in memories:
+            if not isinstance(mem, dict):
+                continue
+            content = (mem.get("content") or "").strip()
+            category = mem.get("category", "general")
+            if not content:
+                continue
+            if category not in MEMORY_CATEGORIES:
+                category = "general"
+
+            result = await session.execute(select(Memory).where(Memory.content == content))
+            if result.scalar_one_or_none():
+                continue
+
+            session.add(
+                Memory(
+                    content=content,
+                    category=category,
+                    source_conversation_id=conversation_id,
+                )
+            )
+            saved.append({"content": content, "category": category})
+
+        await session.commit()
+
+    if saved:
+        logger.info("Extracted %d memories from conversation %d", len(saved), conversation_id)
+    return saved
 
 
 def _is_stale(memory: Memory, now: datetime) -> bool:

@@ -82,15 +82,17 @@ def test_agent_requires_credentials():
 def test_agent_with_api_key():
     # The api_key convenience wraps into anthropic-only credentials.
     agent = Agent(api_key="sk-test")
-    assert agent.credentials.anthropic_api_key == "sk-test"
-    assert agent.credentials.available_providers() == {"anthropic"}
+    # The api_key shortcut targets the Anthropic wire protocol, which only
+    # Kimi speaks now.
+    assert agent.credentials.kimi_api_key == "sk-test"
+    assert agent.credentials.available_providers() == {"kimi"}
 
 
 def test_agent_with_credentials_multiple_providers():
     from home_ops_agent.auth.credentials import Credentials
 
-    agent = Agent(Credentials(anthropic_api_key="sk-a", kimi_api_key="sk-k"))
-    assert agent.credentials.available_providers() == {"anthropic", "kimi"}
+    agent = Agent(Credentials(claude_code_oauth_token="oat", kimi_api_key="sk-k"))
+    assert agent.credentials.available_providers() == {"claude_code", "kimi"}
 
 
 def test_agent_with_no_credentials_raises():
@@ -171,6 +173,7 @@ async def test_run_text_response():
         result = await agent.run(
             system_prompt="You are helpful.",
             messages=[{"role": "user", "content": "Hi"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "Hello!"
@@ -208,6 +211,7 @@ async def test_run_tool_use_loop():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "Do it"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "Done!"
@@ -232,6 +236,7 @@ async def test_run_unknown_tool():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "test"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "OK"
@@ -266,6 +271,7 @@ async def test_run_tool_exception():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "test"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "Handled error"
@@ -293,6 +299,7 @@ async def test_run_max_turns():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "loop"}],
+            model="kimi-for-coding",
             max_turns=2,
         )
 
@@ -324,6 +331,7 @@ async def test_run_tool_result_non_string():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "test"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "Got dict"
@@ -339,6 +347,7 @@ async def test_run_no_tools():
         result = await agent.run(
             system_prompt="test",
             messages=[{"role": "user", "content": "test"}],
+            model="kimi-for-coding",
         )
 
     assert result.response == "No tools"
