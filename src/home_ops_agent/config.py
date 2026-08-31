@@ -4,9 +4,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Claude API
-    anthropic_api_key: str = ""
-
     # Kimi for Coding (Anthropic-compatible endpoint, API key auth)
     kimi_api_key: str = ""
 
@@ -47,12 +44,14 @@ class Settings(BaseSettings):
     alert_cooldown_seconds: int = 900  # 15 minutes
 
     # Per-task model configuration (override via UI settings)
-    model_pr_review: str = "claude-haiku-4-5"
-    model_alert_triage: str = "claude-haiku-4-5"
-    model_alert_fix: str = "claude-sonnet-4-6"
-    model_code_fix: str = "claude-sonnet-4-6"
-    model_deep_review: str = "claude-opus-4-8"
-    model_chat: str = "claude-sonnet-4-6"
+    # Aliases, not pinned versions: the Claude Code CLI resolves haiku/sonnet/
+    # opus to the current model, so these never need editing on a model release.
+    model_pr_review: str = "claude-code/haiku"
+    model_alert_triage: str = "claude-code/haiku"
+    model_alert_fix: str = "claude-code/sonnet"
+    model_code_fix: str = "claude-code/sonnet"
+    model_deep_review: str = "claude-code/opus"
+    model_chat: str = "claude-code/sonnet"
 
     model_config = {"env_prefix": "", "case_sensitive": False}
 

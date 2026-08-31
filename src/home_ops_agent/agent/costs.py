@@ -7,22 +7,24 @@ from home_ops_agent.database import ApiUsage, async_session
 
 logger = logging.getLogger(__name__)
 
-# Pricing per million tokens (USD) — update when Anthropic changes pricing.
+# Pricing per million tokens (USD).
+#
+# Every configurable provider now bills a subscription or plan rather than per
+# token, so these are all zero: usage rows still record token counts, without
+# implying a per-token charge that is not made. The dated Anthropic entries were
+# removed along with the metered Anthropic provider; historical `api_usage` rows
+# keep the cost that was computed when they were written.
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    "claude-haiku-4-5": {"input": 0.80, "output": 4.00},
-    "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
-    "claude-opus-4-6": {"input": 15.00, "output": 75.00},
-    "claude-opus-4-8": {"input": 15.00, "output": 75.00},
-    # Kimi for Coding and ChatGPT-subscription models are billed via their
-    # respective subscriptions, not per-token. Recorded at $0 so usage rows
-    # still appear without implying API pricing.
     "kimi-for-coding": {"input": 0.00, "output": 0.00},
+    "gpt-5.6-sol": {"input": 0.00, "output": 0.00},
+    "gpt-5.6-terra": {"input": 0.00, "output": 0.00},
+    "gpt-5.6-luna": {"input": 0.00, "output": 0.00},
     "gpt-5.5": {"input": 0.00, "output": 0.00},
-    "codex-5.3": {"input": 0.00, "output": 0.00},
 }
 
-# Fallback for unknown models (use Sonnet pricing as a reasonable default).
-_DEFAULT_PRICING = {"input": 3.00, "output": 15.00}
+# Unknown models: $0, matching every provider that can actually be configured.
+# A metered provider added later needs its real prices here, not this default.
+_DEFAULT_PRICING = {"input": 0.00, "output": 0.00}
 
 
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:

@@ -4,12 +4,13 @@ A single ``Agent`` can route each ``run()`` to a different provider based on the
 model ID, so a worker can build one agent and use Claude, Kimi, and GPT/Codex
 models interchangeably (whichever has credentials):
 
-- Anthropic & Kimi share the Anthropic wire protocol (Kimi via its
-  Anthropic-compatible endpoint), handled by the same backend.
-- OpenAI / Codex models use the ChatGPT-backend Responses API.
 - ``claude-code/*`` models run through the local Claude Code CLI, billing a
-  Claude Pro/Max subscription instead of API credit. The registered tools are
-  handed to the CLI as an in-process MCP server, so handlers are unchanged.
+  Claude Pro/Max subscription. The registered tools are handed to the CLI as an
+  in-process MCP server, so handlers are unchanged. This is the default, and
+  the fallback for any model ID that is not recognised.
+- Kimi speaks the Anthropic wire protocol via its Anthropic-compatible
+  endpoint, handled by ``_run_anthropic``.
+- OpenAI / Codex models use the ChatGPT-backend Responses API.
 """
 
 import json
@@ -55,10 +56,11 @@ class Agent:
     """Provider-aware agent with tool use."""
 
     def __init__(self, credentials: Credentials | None = None, *, api_key: str | None = None):
-        # ``api_key`` is a convenience for Anthropic-only callers (and tests).
+        # ``api_key`` is a convenience for callers using the Anthropic wire
+        # protocol directly (Kimi, and the tests that cover that backend).
         if credentials is None:
             if api_key:
-                credentials = Credentials(anthropic_api_key=api_key)
+                credentials = Credentials(kimi_api_key=api_key)
             else:
                 raise ValueError("credentials (or api_key) must be provided")
         if not credentials.has_any():
@@ -83,13 +85,10 @@ class Agent:
 
     def _anthropic_client(self, provider: str) -> anthropic.AsyncAnthropic:
         if provider not in self._anthropic_clients:
-            if provider == providers.KIMI:
-                client = anthropic.AsyncAnthropic(
-                    api_key=self.credentials.kimi_api_key,
-                    base_url=providers.KIMI_BASE_URL,
-                )
-            else:
-                client = anthropic.AsyncAnthropic(api_key=self.credentials.anthropic_api_key)
+            client = anthropic.AsyncAnthropic(
+                api_key=self.credentials.kimi_api_key,
+                base_url=providers.KIMI_BASE_URL,
+            )
             self._anthropic_clients[provider] = client
         return self._anthropic_clients[provider]
 
@@ -155,7 +154,7 @@ class Agent:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-code/sonnet",
         max_turns: int = 20,
         workspace: "Workspace | None" = None,
     ) -> AgentResult:
@@ -196,7 +195,7 @@ class Agent:
         self,
         system_prompt: str,
         messages: list[dict[str, Any]],
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-code/sonnet",
         max_turns: int = 20,
         on_tool_start: Callable[..., Coroutine] | None = None,
         on_tool_end: Callable[..., Coroutine] | None = None,

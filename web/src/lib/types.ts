@@ -11,10 +11,9 @@ export interface Settings {
   agent_enabled: boolean
   pr_mode: string
   providers: {
-    anthropic: ProviderStatus
+    claude_code: ProviderStatus
     kimi: ProviderStatus
     openai: ProviderStatus
-    claude_code: ProviderStatus
   }
   models: Record<string, string>
   alert_cooldown_seconds: number

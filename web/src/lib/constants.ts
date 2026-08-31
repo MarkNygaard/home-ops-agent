@@ -43,25 +43,28 @@ export const AGENTS = [
   },
 ] as const
 
+// Claude models are named by alias, not version: the Claude Code CLI resolves
+// haiku/sonnet/opus to the current model, so this list does not need editing
+// when a new one ships. That is why the metered Anthropic provider — which
+// required pinning dated IDs — was removed.
 export const MODEL_OPTIONS = [
-  { value: "claude-haiku-4-5", label: "Haiku 4.5", provider: "anthropic" },
-  { value: "claude-sonnet-4-6", label: "Sonnet 4.6", provider: "anthropic" },
-  { value: "claude-opus-4-8", label: "Opus 4.8", provider: "anthropic" },
+  { value: "claude-code/haiku", label: "Haiku", provider: "claude_code" },
+  { value: "claude-code/sonnet", label: "Sonnet", provider: "claude_code" },
+  { value: "claude-code/opus", label: "Opus", provider: "claude_code" },
   { value: "kimi-for-coding", label: "Kimi for Coding", provider: "kimi" },
-  { value: "gpt-5.5", label: "GPT-5.5", provider: "openai" },
-  { value: "codex-5.3", label: "Codex 5.3", provider: "openai" },
-  // Same Claude models, run through the Claude Code CLI so they bill the
-  // Claude subscription instead of API credit.
-  { value: "claude-code/haiku", label: "Haiku (subscription)", provider: "claude_code" },
-  { value: "claude-code/sonnet", label: "Sonnet (subscription)", provider: "claude_code" },
-  { value: "claude-code/opus", label: "Opus (subscription)", provider: "claude_code" },
+  // GPT-5.6 ships as three tiers. Terra is the everyday workhorse, Sol the
+  // flagship, Luna the fast/cheap one. gpt-5.5 is kept because existing
+  // settings may still name it; it is previous-generation.
+  { value: "gpt-5.6-sol", label: "GPT-5.6 Sol", provider: "openai" },
+  { value: "gpt-5.6-terra", label: "GPT-5.6 Terra", provider: "openai" },
+  { value: "gpt-5.6-luna", label: "GPT-5.6 Luna", provider: "openai" },
+  { value: "gpt-5.5", label: "GPT-5.5 (previous)", provider: "openai" },
 ] as const
 
 export const PROVIDER_LABELS: Record<string, string> = {
-  anthropic: "Anthropic",
+  claude_code: "Claude subscription",
   kimi: "Kimi",
   openai: "OpenAI",
-  claude_code: "Claude subscription",
 }
 
 // Categories the agent's extractor uses, and that a hand-written memory may
@@ -108,13 +111,26 @@ export const CATEGORY_COLORS: Record<string, string> = {
   general: "secondary",
 }
 
+// Settings written before the metered Anthropic provider was removed point at
+// dated IDs. Map them onto the subscription aliases; the backend does the same
+// for anything this list misses.
 export const MODEL_MIGRATION: Record<string, string> = {
-  "claude-sonnet-4-20250514": "claude-sonnet-4-6",
-  "claude-opus-4-20250514": "claude-opus-4-8",
-  "claude-sonnet-4-6-20250514": "claude-sonnet-4-6",
-  "claude-opus-4-6-20250514": "claude-opus-4-8",
-  "claude-opus-4-6": "claude-opus-4-8",
-  "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+  "claude-haiku-4-5": "claude-code/haiku",
+  "claude-sonnet-4-6": "claude-code/sonnet",
+  "claude-opus-4-6": "claude-code/opus",
+  "claude-opus-4-8": "claude-code/opus",
+  "claude-sonnet-4-20250514": "claude-code/sonnet",
+  "claude-opus-4-20250514": "claude-code/opus",
+  "claude-sonnet-4-6-20250514": "claude-code/sonnet",
+  "claude-opus-4-6-20250514": "claude-code/opus",
+  "claude-haiku-4-5-20251001": "claude-code/haiku",
+  // gpt-5.3-codex is deprecated for ChatGPT sign-in; gpt-5.4 and gpt-5.4-mini
+  // retire from Codex on 2026-08-31. Terra is the recommended replacement for
+  // the workhorse tiers, Luna for the mini one.
+  "codex-5.3": "gpt-5.6-terra",
+  "gpt-5.3-codex": "gpt-5.6-terra",
+  "gpt-5.4": "gpt-5.6-terra",
+  "gpt-5.4-mini": "gpt-5.6-luna",
 }
 
 export const PROMPT_DESCRIPTIONS: Record<string, string> = {

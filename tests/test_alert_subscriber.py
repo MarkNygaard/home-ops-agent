@@ -174,7 +174,7 @@ async def test_a_firing_alert_is_still_triaged(monkeypatch):
     monkeypatch.setattr(
         alert_subscriber,
         "build_credentials",
-        AsyncMock(return_value=Credentials(anthropic_api_key="k")),
+        AsyncMock(return_value=Credentials(kimi_api_key="k")),
     )
     monkeypatch.setattr(
         alert_subscriber.registry, "get_all_enabled_tools", AsyncMock(return_value=[])

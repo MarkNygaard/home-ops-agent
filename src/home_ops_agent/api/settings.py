@@ -43,7 +43,6 @@ async def get_settings():
         result = await session.execute(select(Setting))
         db_settings = {s.key: s.value for s in result.scalars().all()}
 
-    anthropic_key = db_settings.get("anthropic_api_key") or settings.anthropic_api_key
     kimi_key = db_settings.get("kimi_api_key") or settings.kimi_api_key
     openai_token = db_settings.get(creds.OPENAI_ACCESS_TOKEN_KEY)
     claude_code_token = (
@@ -55,10 +54,6 @@ async def get_settings():
         "pr_mode": db_settings.get("pr_mode", "comment_only"),
         # Per-provider auth status — all three can be configured simultaneously.
         "providers": {
-            "anthropic": {
-                "configured": bool(anthropic_key),
-                "hint": _mask_key(anthropic_key),
-            },
             "kimi": {
                 "configured": bool(kimi_key),
                 "hint": _mask_key(kimi_key),
@@ -106,7 +101,6 @@ async def get_settings():
 ALLOWED_SETTING_KEYS = {
     "agent_enabled",
     "pr_mode",
-    "anthropic_api_key",
     "kimi_api_key",
     "claude_code_oauth_token",
     "alert_cooldown_seconds",
@@ -242,7 +236,6 @@ async def import_openai_tokens(body: OpenAITokens):
 async def disconnect_provider(provider: str):
     """Remove stored credentials for a provider."""
     key_map = {
-        "anthropic": ["anthropic_api_key"],
         "kimi": ["kimi_api_key"],
         "openai": [
             creds.OPENAI_ACCESS_TOKEN_KEY,

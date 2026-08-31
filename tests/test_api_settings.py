@@ -46,7 +46,7 @@ def test_allowed_keys_contains_critical_keys():
     """Verify critical keys are in the actual whitelist."""
     assert "agent_enabled" in ALLOWED_SETTING_KEYS
     assert "pr_mode" in ALLOWED_SETTING_KEYS
-    assert "anthropic_api_key" in ALLOWED_SETTING_KEYS
+    assert "kimi_api_key" in ALLOWED_SETTING_KEYS
 
 
 def test_allowed_keys_excludes_dangerous_keys():
@@ -110,7 +110,7 @@ def test_get_settings_endpoint(client):
     assert "pr_review" in data["models"]
     assert "chat" in data["models"]
     # Per-provider auth status block
-    assert set(data["providers"]) == {"anthropic", "kimi", "openai", "claude_code"}
+    assert set(data["providers"]) == {"kimi", "openai", "claude_code"}
     assert data["providers"]["openai"]["configured"] is False
 
 
@@ -182,16 +182,16 @@ def test_update_setting_overwrites_existing(client):
 def test_update_model_accepts_configured_provider(client):
     """A model whose provider has credentials is accepted."""
     # Seed an Anthropic key so the anthropic provider is configured.
-    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+    client.put("/api/settings/kimi_api_key", json={"value": "sk-test"})
 
-    response = client.put("/api/settings/model_chat", json={"value": "claude-opus-4-8"})
+    response = client.put("/api/settings/model_chat", json={"value": "kimi-for-coding"})
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
 
 def test_update_model_rejects_unconfigured_provider(client):
     """A model whose provider has no credentials is rejected up front."""
-    client.put("/api/settings/anthropic_api_key", json={"value": "sk-test"})
+    client.put("/api/settings/kimi_api_key", json={"value": "sk-test"})
 
     # OpenAI is not configured in the test client → reject a gpt model.
     response = client.put("/api/settings/model_chat", json={"value": "gpt-5.5"})

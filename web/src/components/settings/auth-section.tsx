@@ -25,18 +25,10 @@ export function AuthSection({ settings, onSaved }: AuthSectionProps) {
         <h3 className="text-sm font-medium">Model Providers</h3>
         <p className="text-xs text-muted-foreground">
           Configure any combination of providers. Each model you assign to an
-          agent is routed to its provider automatically.
+          agent is routed to its provider automatically. All of them bill a
+          subscription or plan rather than per token.
         </p>
       </div>
-
-      <ApiKeyCard
-        title="Anthropic (Claude)"
-        placeholder="sk-ant-..."
-        settingKey="anthropic_api_key"
-        status={providers?.anthropic}
-        provider="anthropic"
-        onSaved={onSaved}
-      />
 
       <ApiKeyCard
         title="Kimi for Coding"
