@@ -14,12 +14,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://home_ops_agent:password@localhost:5432/home_ops_agent"
 
-    # GitHub
+    # GitHub. `github_repo` has no default on purpose: a wrong one would point
+    # the PR agent at somebody else's repository.
     github_token: str = ""
-    github_repo: str = "MarkNygaard/home-ops"
+    github_repo: str = ""
 
     # Cluster
-    cluster_domain: str = "mnygaard.io"
+    cluster_domain: str = ""
     ntfy_url: str = "http://ntfy.monitoring.svc.cluster.local"
     ntfy_alertmanager_topic: str = "alertmanager"
     ntfy_gatus_topic: str = "gatus"
@@ -37,7 +38,9 @@ class Settings(BaseSettings):
 
     # Web UI
     session_secret: str = "change-me-in-production"
-    base_url: str = "https://agent.mnygaard.io"
+    # Public URL of this agent's web UI. Also supplies the MCP endpoint's Host
+    # allowlist, so it must match how the agent is actually reached.
+    base_url: str = ""
 
     # Agent behavior
     pr_check_interval_seconds: int = 1800  # 30 minutes
@@ -57,3 +60,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# Settings with no sensible default. Absent ones are reported at startup by
+# `missing_required()` rather than surfacing later as a puzzling API error.
+REQUIRED_SETTINGS: dict[str, str] = {
+    "github_repo": "GITHUB_REPO — the repo to monitor, e.g. 'you/home-ops'",
+    "github_token": "GITHUB_TOKEN — a token with Contents and Pull requests access",
+    "base_url": "BASE_URL — the public URL of this agent, e.g. https://agent.example.com",
+}
+
+
+def missing_required() -> list[str]:
+    """Which required settings are unset, as human-readable descriptions."""
+    return [
+        description
+        for key, description in REQUIRED_SETTINGS.items()
+        if not getattr(settings, key, "")
+    ]

@@ -195,6 +195,9 @@ def test_no_workspace_keeps_tools_locked_down():
 
 async def test_get_file_content_flags_truncation(monkeypatch):
     """Truncated content must be labelled — it feeds a whole-file commit."""
+    from home_ops_agent.agent.tools import github as gh
+
+    monkeypatch.setattr(gh.settings, "github_repo", "test-owner/test-repo")
     import httpx
 
     from home_ops_agent.agent.tools import github
@@ -238,6 +241,9 @@ async def test_get_file_content_flags_truncation(monkeypatch):
 
 
 async def test_get_file_content_untruncated_has_no_warning(monkeypatch):
+    from home_ops_agent.agent.tools import github as gh
+
+    monkeypatch.setattr(gh.settings, "github_repo", "test-owner/test-repo")
     import base64
 
     import httpx
