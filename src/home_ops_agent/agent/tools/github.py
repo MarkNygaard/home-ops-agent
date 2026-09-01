@@ -23,6 +23,22 @@ PROTECTED_BRANCHES = {"main", "master"}
 ALLOWED_COMMIT_PATHS = {"kubernetes/apps/"}  # Agent can only modify files under these paths
 
 
+def repo_configured() -> str | None:
+    """Return an error payload when GITHUB_REPO is unset, else None.
+
+    Without this every tool builds a request to ``/repos//…`` and reports a
+    bare 404, which reads like a missing PR rather than a missing setting.
+    """
+    if not settings.github_repo:
+        return json.dumps(
+            {
+                "error": "GITHUB_REPO is not configured. Set it to the repository "
+                "to monitor, e.g. 'you/home-ops'."
+            }
+        )
+    return None
+
+
 def _headers() -> dict[str, str]:
     return {
         "Authorization": f"Bearer {settings.github_token}",
@@ -33,6 +49,9 @@ def _headers() -> dict[str, str]:
 
 async def list_prs(params: dict) -> str:
     """List open pull requests."""
+    if error := repo_configured():
+        return error
+
     state = params.get("state", "open")
     author = params.get("author")
 
@@ -66,6 +85,9 @@ async def list_prs(params: dict) -> str:
 
 async def get_pr(params: dict) -> str:
     """Get detailed info about a specific PR including diff stats."""
+    if error := repo_configured():
+        return error
+
     pr_number = params["pr_number"]
 
     async with httpx.AsyncClient() as client:
@@ -97,6 +119,9 @@ async def get_pr(params: dict) -> str:
 
 async def get_pr_files(params: dict) -> str:
     """Get the list of changed files in a PR with their diffs."""
+    if error := repo_configured():
+        return error
+
     pr_number = params["pr_number"]
 
     async with httpx.AsyncClient() as client:
@@ -120,6 +145,9 @@ async def get_pr_files(params: dict) -> str:
 
 async def get_check_runs(params: dict) -> str:
     """Get CI check status for a specific commit/PR."""
+    if error := repo_configured():
+        return error
+
     ref = params["ref"]  # SHA or branch name
 
     async with httpx.AsyncClient() as client:
@@ -190,6 +218,9 @@ async def create_pr_comment(params: dict) -> str:
     instead of a new one being posted. Without `head_sha`, behavior is the
     legacy POST-only path (free-form comment, no dedup).
     """
+    if error := repo_configured():
+        return error
+
     pr_number = params["pr_number"]
     body = params["body"]
     head_sha = params.get("head_sha", "")
@@ -222,6 +253,9 @@ async def create_pr_comment(params: dict) -> str:
 
 async def merge_pr(params: dict) -> str:
     """Merge a PR (squash merge)."""
+    if error := repo_configured():
+        return error
+
     pr_number = params["pr_number"]
     commit_title = params.get("commit_title", "")
 
@@ -244,6 +278,9 @@ async def merge_pr(params: dict) -> str:
 
 async def get_file_content(params: dict) -> str:
     """Get a file's content from the repo."""
+    if error := repo_configured():
+        return error
+
     path = params["path"]
     ref = params.get("ref", "main")
 
@@ -318,6 +355,11 @@ async def create_commit(params: dict) -> str:
 
     encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
+    # Checked here rather than at the top: the guardrails above run
+    # unconditionally, and the repository name is only needed now.
+    if error := repo_configured():
+        return error
+
     async with httpx.AsyncClient() as client:
         url = f"{GITHUB_API}/repos/{settings.github_repo}/contents/{path}"
         payload: dict[str, Any] = {
@@ -385,6 +427,11 @@ async def create_branch(params: dict) -> str:
             {"error": f"BLOCKED: Branch name must start with one of: {', '.join(safe_prefixes)}"}
         )
 
+    # Checked here rather than at the top: the guardrails above run
+    # unconditionally, and the repository name is only needed now.
+    if error := repo_configured():
+        return error
+
     async with httpx.AsyncClient() as client:
         # Get the SHA of the base branch
         url = f"{GITHUB_API}/repos/{settings.github_repo}/git/ref/heads/{base}"
@@ -408,6 +455,9 @@ async def create_branch(params: dict) -> str:
 
 async def create_pr(params: dict) -> str:
     """Create a pull request."""
+    if error := repo_configured():
+        return error
+
     title = params["title"]
     body = params.get("body", "")
     head = params["head"]  # Branch with changes

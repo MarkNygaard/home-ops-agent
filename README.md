@@ -93,7 +93,50 @@ Encrypt with SOPS if using Flux.
 
 ### 5. Deploy
 
-Use the [bjw-s app-template](https://github.com/bjw-s-labs/helm-charts/tree/main/charts/library/common) Helm chart. See the [example manifests](kubernetes/) for reference.
+Use the [bjw-s app-template](https://github.com/bjw-s-labs/helm-charts/tree/main/charts/library/common) Helm chart, or any deployment that gives the container the environment below plus a ServiceAccount with the RBAC in [Safety](#safety).
+
+A minimal HelmRelease:
+
+```yaml
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: home-ops-agent
+spec:
+  chart:
+    spec:
+      chart: app-template
+      version: 3.x
+      sourceRef:
+        kind: HelmRepository
+        name: bjw-s
+        namespace: flux-system
+  values:
+    controllers:
+      home-ops-agent:
+        serviceAccount: { identifier: home-ops-agent }
+        containers:
+          app:
+            image:
+              repository: ghcr.io/<your-username>/home-ops-agent
+              tag: <version>
+            env:
+              GITHUB_REPO: you/home-ops
+              BASE_URL: https://agent.example.com
+              CLUSTER_DOMAIN: example.com
+            envFrom:
+              - secretRef: { name: home-ops-agent-secret }
+    service:
+      app:
+        controller: home-ops-agent
+        ports: { http: { port: 8000 } }
+    persistence:
+      workspace:
+        type: emptyDir
+        globalMounts: [{ path: /home/agent/workspace }]
+```
+
+The `workspace` volume is only needed for [checkout-mode code fixes](#code-fixes); without it the agent falls back to single-file API commits.
 
 Key environment variables:
 

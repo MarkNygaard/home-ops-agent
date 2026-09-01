@@ -15,6 +15,7 @@ from home_ops_agent.api.chat import set_mcp_tools
 from home_ops_agent.api.settings import router as settings_router
 from home_ops_agent.api.skills import router as skills_router
 from home_ops_agent.api.status import router as status_router
+from home_ops_agent.config import missing_required
 from home_ops_agent.database import init_db
 from home_ops_agent.mcp.bridge import mcp_tools_to_agent_tools
 from home_ops_agent.mcp.client import MCPClient
@@ -37,6 +38,11 @@ mcp_client = MCPClient()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan: initialize DB, connect MCP servers, start background workers."""
+    # Say plainly what is unconfigured, once, instead of letting it surface
+    # later as a 404 from an API call nobody expected to fail.
+    for description in missing_required():
+        logger.error("Required setting is not configured: %s", description)
+
     # Initialize database tables
     await init_db()
     logger.info("Database initialized")

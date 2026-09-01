@@ -154,17 +154,17 @@ def test_ingress_host_is_allowed(monkeypatch):
     Left alone that rejects every request, including ones arriving through the
     ingress, so the public host is derived from base_url.
     """
-    monkeypatch.setattr(mcp_server.settings, "base_url", "https://agent.mnygaard.io")
+    monkeypatch.setattr(mcp_server.settings, "base_url", "https://agent.example.com")
     monkeypatch.setattr(mcp_server.settings, "mcp_allowed_hosts", "")
 
     hosts = mcp_server.allowed_hosts()
 
-    assert "agent.mnygaard.io" in hosts
+    assert "agent.example.com" in hosts
     assert "localhost" in hosts
 
 
 def test_extra_hosts_are_configurable(monkeypatch):
-    monkeypatch.setattr(mcp_server.settings, "base_url", "https://agent.mnygaard.io")
+    monkeypatch.setattr(mcp_server.settings, "base_url", "https://agent.example.com")
     monkeypatch.setattr(
         mcp_server.settings,
         "mcp_allowed_hosts",
