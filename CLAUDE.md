@@ -41,6 +41,7 @@ src/home_ops_agent/
 ├── api/
 │   ├── chat.py             # WebSocket chat endpoint with memory extraction
 │   ├── status.py           # REST: health, history, conversations, memories
+│   ├── analytics.py        # REST: token usage, run outcomes, cost (gated on is_billed)
 │   ├── settings.py         # REST: settings CRUD, prompts CRUD, provider credential import
 │   └── skills.py           # REST: skill listing, enable/disable, config updates
 └── static/                 # Next.js static export (built from web/, served by FastAPI)
@@ -111,6 +112,8 @@ git tag v0.x.y && git push origin v0.x.y
 
 - **ntfy destination is DB-backed** — `ntfy_url`, `ntfy_agent_topic` and `ntfy_token` resolve from `settings` rows first, then env, like every other setting; `agent/tools/ntfy.py` `resolve_config()` caches the result for `CONFIG_TTL_SECONDS` so a notification never waits on a DB round trip (which matters most during an incident, when the DB may be slow), and the settings writer calls `reset_config_cache()` so a UI change applies at once. A blank DB value falls back rather than blanking the destination. Note the Settings → Notifications page separates two things that read alike: the **publish** topic (where the agent sends) and `ntfy_topics`, the **subscription** list (what the alert subscriber listens to).
 - **Notification policy is centralised** — `workers/notifications.py` classifies every push as `ROUTINE` (a step finished as expected), `OUTCOME` (a terminal state for autonomous work), `ATTENTION` (needs a human) or `FAILURE`, and the `notify_level` setting picks the threshold: `all` / `outcomes` (default) / `actionable`. Before this, eleven scattered `publish_notification` calls announced every step: one routine Renovate patch sent two pushes ("reviewed, safe to merge", then "auto-merged" a cycle later), a code-fixed PR sent three, and a **failed merge sent none** — it only logged a warning, so the one outcome worth interrupting someone for was the silent one. Two failure notifications were added and only `notifications.py` may call `publish_notification` directly.
+
+- **Analytics, not costs** — `api/analytics.py` replaced `api/costs.py`. With no metered provider, cost is $0 everywhere and a view organised around it showed nothing (its proportion bars were a share of a zero total). Token volume and run outcomes carry the signal; cost is still computed and returned but gated behind `is_billed`, so the UI hides it until a metered provider exists and shows it again with no code change. Two vocabularies are reported separately rather than merged: `api_usage.task_type` uses the *model task* keys and holds token counts, while `agent_tasks.task_type` uses the Postgres enum and is the only place a **failure** is visible. The window cutoff is computed in Python — the old endpoint used `func.make_interval()`, which is Postgres-only and is why it had no test coverage at all.
 
 ## Safety guardrails (code-level, not prompt-level)
 

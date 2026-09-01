@@ -102,6 +102,21 @@ export const NOTIFY_LEVELS = [
   },
 ] as const
 
+// Covers both vocabularies: the model-task keys used by api_usage and the
+// agent_tasks.task_type enum, which overlap but are not identical.
+export const TASK_LABELS: Record<string, string> = {
+  pr_review: "PR Review",
+  pr_merge: "PR Merge",
+  deep_review: "Deep Review",
+  alert_response: "Alert Response",
+  alert_triage: "Alert Triage",
+  alert_fix: "Alert Fix",
+  code_fix: "Code Fix",
+  cluster_fix: "Cluster Fix",
+  user_chat: "Chat",
+  chat: "Chat",
+}
+
 export const CATEGORY_COLORS: Record<string, string> = {
   issue: "destructive",
   preference: "default",

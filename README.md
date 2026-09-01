@@ -15,6 +15,7 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 - **Inspect it from your editor** — A read-only [MCP endpoint](#mcp-endpoint) exposes what the agent has run, the tool calls behind each run, and what it remembers, so a coding session can diagnose a bad run directly instead of clicking through the UI.
 - **Customizable Prompts** — Edit system prompts per agent through modal editors to describe your specific cluster setup.
 - **Activity History** — View all agent actions and chat conversations with full reasoning and tool call details. Click a conversation to reopen it.
+- **Analytics** — Token volume by model and by agent, and run counts by type with failures called out. Cost appears only if something actually costs money; with every provider on a subscription, nothing does.
 - **Kill Switch** — Instantly disable all agent activity from the Settings UI. One click to stop, one click to resume.
 - **Notification Levels** — Notifications are classified by how much they need you, and one setting picks the threshold. Anything that failed, or needs your review, is always sent.
 - **Safety Guardrails** — Code-level protections prevent commits to main, modifications outside `kubernetes/apps/`, and destructive actions in system namespaces.
