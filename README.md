@@ -59,7 +59,10 @@ Go to **GitHub → Settings → Developer settings → Personal access tokens �
 **Option B: Classic token** (using a dedicated bot account):
 Create a separate GitHub account for the agent, invite it as a collaborator to your repo, then create a classic token with `repo` scope. This is required because fine-grained tokens can only access repos owned by the token creator.
 
-### 3. Create an ntfy user (if auth is enabled)
+### 3. Create an ntfy user (optional)
+
+Skip this if your ntfy server is open — the agent publishes and subscribes without
+credentials. Do it if you want your notifications to be private:
 
 ```bash
 kubectl exec -n monitoring <ntfy-pod> -- sh -c \
@@ -86,6 +89,7 @@ stringData:
   GITHUB_TOKEN: "github_pat_..."
   DATABASE_URL: "postgresql+asyncpg://home_ops_agent:your-password@postgres-rw.database.svc.cluster.local:5432/home_ops_agent"
   SESSION_SECRET: "random-string-here"
+  # Optional — only if your ntfy server requires authentication.
   NTFY_TOKEN: "tk_..."
 ```
 

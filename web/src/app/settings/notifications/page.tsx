@@ -131,10 +131,13 @@ export default function NotificationSettingsPage() {
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <Label htmlFor="ntfy-token">Access token</Label>
+                <span className="text-xs text-muted-foreground">optional</span>
+                {/* "No auth" rather than "Not set": an unauthenticated ntfy
+                    server is a normal setup, not an incomplete one. */}
                 <Badge
                   variant={settings?.ntfy_token_configured ? "default" : "secondary"}
                 >
-                  {settings?.ntfy_token_configured ? "Configured" : "Not set"}
+                  {settings?.ntfy_token_configured ? "Configured" : "No auth"}
                 </Badge>
                 {settings?.ntfy_token_hint && (
                   <span className="font-mono text-xs text-muted-foreground">
@@ -142,12 +145,21 @@ export default function NotificationSettingsPage() {
                   </span>
                 )}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Only needed if your ntfy server requires authentication. Leave it
+                empty for an open server — notifications still work, but anyone
+                who knows the topic name can read them.
+              </p>
               <Input
                 id="ntfy-token"
                 type="password"
                 value={ntfyToken}
                 onChange={(e) => setField("ntfy_token", e.target.value)}
-                placeholder="Leave blank to keep the stored token"
+                placeholder={
+                  settings?.ntfy_token_configured
+                    ? "Leave blank to keep the stored token"
+                    : "tk_… — leave empty for no authentication"
+                }
                 className="max-w-lg"
               />
             </div>

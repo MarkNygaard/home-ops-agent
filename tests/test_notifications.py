@@ -214,3 +214,73 @@ async def test_a_trailing_slash_does_not_double_up(db_session):
     # publish() strips it when composing the URL.
     assert f"{config['url'].rstrip('/')}/{config['topic']}" == "http://ntfy.example/t"
     assert httpx is not None
+
+
+async def test_no_token_means_no_auth_header(db_session, monkeypatch):
+    """ntfy auth is optional: an open server must work with no token at all."""
+    import httpx
+
+    from home_ops_agent.agent.tools import ntfy
+
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, content=None):
+            captured["headers"] = headers or {}
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: _Client())
+    monkeypatch.setattr(ntfy.settings, "ntfy_token", "")
+    ntfy.reset_config_cache()
+
+    await ntfy.publish({"message": "hello"})
+
+    assert "Authorization" not in captured["headers"]
+
+
+async def test_a_token_adds_the_auth_header(db_session, monkeypatch):
+    import httpx
+
+    from home_ops_agent.agent.tools import ntfy
+
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, content=None):
+            captured["headers"] = headers or {}
+            return _Resp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: _Client())
+    monkeypatch.setattr(ntfy.settings, "ntfy_token", "tk_secret")
+    ntfy.reset_config_cache()
+
+    await ntfy.publish({"message": "hello"})
+
+    assert captured["headers"]["Authorization"] == "Bearer tk_secret"
+
+
+def test_ntfy_token_is_not_a_required_setting():
+    """It only buys privacy; notifications work on an open server without it."""
+    from home_ops_agent.config import REQUIRED_SETTINGS
+
+    assert "ntfy_token" not in REQUIRED_SETTINGS
