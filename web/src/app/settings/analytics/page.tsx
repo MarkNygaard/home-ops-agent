@@ -35,30 +35,56 @@ function formatCost(usd: number): string {
   return usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`
 }
 
-/** A labelled proportion bar. Shares are of tokens, which stay meaningful
- *  whether or not anything is billed. */
+/** A labelled proportion bar.
+ *
+ *  Single-series magnitude, so one hue is right — the accent the rest of the
+ *  dashboard uses. A categorical palette would be wrong here: these bars encode
+ *  "how much", not "which one", and the labels already carry identity.
+ *
+ *  `failedShare` splits the bar into a completed segment and a failed one. That
+ *  second colour is the reserved status token, not a second series hue, and it
+ *  is always accompanied by the count in `detail` so a failure is never
+ *  signalled by colour alone.
+ */
 function ShareRow({
   label,
   detail,
   share,
   value,
+  failedShare = 0,
+  muted = false,
 }: {
   label: string
   detail?: string
   share: number
   value: string
+  failedShare?: number
+  muted?: boolean
 }) {
+  const width = Math.max(share, 1)
+  const failedWidth = failedShare > 0 ? Math.max(failedShare, 1) : 0
+  const completedWidth = Math.max(width - failedWidth, 0)
+
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm">{label}</span>
         <span className="font-mono text-sm text-muted-foreground">{value}</span>
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-foreground/40"
-          style={{ width: `${Math.max(share, 1)}%` }}
-        />
+      {/* gap-0.5 is the 2px surface gap that keeps stacked segments readable. */}
+      <div className="flex h-2 gap-0.5 overflow-hidden rounded-full bg-muted">
+        {completedWidth > 0 && (
+          <div
+            className={`h-full rounded-full ${muted ? "bg-accent-orange/70" : "bg-accent-orange"}`}
+            style={{ width: `${completedWidth}%` }}
+          />
+        )}
+        {failedWidth > 0 && (
+          <div
+            className="h-full rounded-full bg-destructive"
+            style={{ width: `${failedWidth}%` }}
+          />
+        )}
       </div>
       {detail && <span className="text-xs text-muted-foreground">{detail}</span>}
     </div>
@@ -204,6 +230,7 @@ export default function SettingsAnalyticsPage() {
                       detail={`${t.requests} call${t.requests === 1 ? "" : "s"}`}
                       share={(t.total_tokens / maxTaskTokens) * 100}
                       value={formatTokens(t.total_tokens)}
+                      muted
                     />
                   ))}
                 </CardContent>
@@ -219,19 +246,24 @@ export default function SettingsAnalyticsPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-col gap-4">
-                  {data.runs.map((r) => (
-                    <ShareRow
-                      key={r.task_type}
-                      label={TASK_LABELS[r.task_type] ?? r.task_type}
-                      detail={
-                        r.failed > 0
-                          ? `${r.completed} completed · ${r.failed} failed`
-                          : `${r.completed} completed`
-                      }
-                      share={(r.total / maxRuns) * 100}
-                      value={String(r.total)}
-                    />
-                  ))}
+                  {data.runs.map((r) => {
+                    const share = (r.total / maxRuns) * 100
+                    return (
+                      <ShareRow
+                        key={r.task_type}
+                        label={TASK_LABELS[r.task_type] ?? r.task_type}
+                        detail={
+                          r.failed > 0
+                            ? `${r.completed} completed · ${r.failed} failed`
+                            : `${r.completed} completed`
+                        }
+                        share={share}
+                        failedShare={r.total > 0 ? (r.failed / r.total) * share : 0}
+                        value={String(r.total)}
+                        muted
+                      />
+                    )
+                  })}
                 </CardContent>
               </Card>
             </>
