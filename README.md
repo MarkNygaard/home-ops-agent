@@ -8,6 +8,7 @@ Built for GitOps setups using [Flux Operator](https://github.com/controlplaneio-
 
 - **PR Review** — Monitors your GitHub repo for open PRs (primarily Renovate dependency updates). Posts review comments with risk assessment. 4-tier auto-merge modes from comment-only to fully autonomous.
 - **Alert Investigation** — Two-stage pipeline: fast triage with Haiku determines severity, then escalates fixable issues to Sonnet for corrective action. Subscribes to ntfy topics (Alertmanager, Gatus). Alerts that have already cleared are dropped before triage rather than investigated.
+- **Cluster Health Check** — A scheduled sweep that notifies when the cluster degrades, including the cases nothing else is watching: a node left cordoned after a failed upgrade, pods stranded by node-pinned storage, a stuck Flux reconcile, a database short of replicas, a backup that quietly stopped running. Correlates rather than lists — it reports *why* pods are Pending, not just how many. See [Cluster Health Check](#cluster-health-check).
 - **Auto-Fix** — Can restart stuck pods, reconcile Flux resources, create fix branches, commit changes, and open PRs. Code Fix agent auto-merges after CI passes. Every action is logged and reported via ntfy.
 - **Interactive Chat** — Next.js web UI (shadcn/ui) where you can ask questions about cluster state, run diagnostics, or issue commands. Conversations persist across page refreshes.
 - **Persistent Memory** — Extracts durable facts from conversations and carries them into every future prompt. Add your own for anything learned elsewhere; incident-shaped entries expire so a stale snapshot cannot contradict what the live tools report.
@@ -142,6 +143,90 @@ spec:
 
 The `workspace` volume is only needed for [checkout-mode code fixes](#code-fixes); without it the agent falls back to single-file API commits.
 
+And the ServiceAccount it runs as. Everything here is `get`/`list`/`watch` except three deliberate exceptions — `delete` on pods and `patch` on workloads and Flux resources, which is what the [auto-fix](#features) tools use to restart a pod or force a reconcile:
+
+```yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: home-ops-agent
+  namespace: automation          # wherever you deploy it
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: home-ops-agent
+rules:
+  # Core read
+  - apiGroups: [""]
+    resources: ["pods", "services", "events", "nodes", "configmaps", "persistentvolumeclaims", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Restart a stuck pod
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  # Workload read + restart
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "patch"]
+  # Flux — read and reconcile
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["helm.toolkit.fluxcd.io"]
+    resources: ["helmreleases"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["gitrepositories", "ocirepositories", "helmrepositories"]
+    verbs: ["get", "list", "patch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes", "gateways"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  # Talos upgrade diagnostics — read-only (see Skills)
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["tuppr.home-operations.com"]
+    resources: ["talosupgrades", "kubernetesupgrades"]
+    verbs: ["get", "list"]
+  # Cluster health check — read-only. Each of these is optional; the check
+  # skips whatever it cannot read. See Cluster Health Check.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list"]
+  - apiGroups: ["volsync.backube"]
+    resources: ["replicationsources"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: home-ops-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: home-ops-agent
+subjects:
+  - kind: ServiceAccount
+    name: home-ops-agent
+    namespace: automation
+```
+
+There is deliberately no `create`, `update` or `deletecollection` anywhere, and nothing at all for `nodes/status`, evictions or taints — see [Safety](#safety).
+
 Key environment variables:
 
 | Variable | Description | Default |
@@ -155,6 +240,7 @@ Key environment variables:
 | `NTFY_AGENT_TOPIC` | Topic for agent reports | `home-ops-agent` |
 | `PR_CHECK_INTERVAL_SECONDS` | How often to check for PRs | `1800` (30 min) |
 | `ALERT_COOLDOWN_SECONDS` | Min time between re-investigating same alert | `900` (15 min) |
+| `HEALTH_CHECK_INTERVAL_SECONDS` | How often to sweep [cluster health](#cluster-health-check) | `600` (10 min) |
 | `BASE_URL` | Public URL of the agent web UI | — |
 | `MCP_API_TOKEN` | Bearer token for the [MCP endpoint](#mcp-endpoint). Unset disables it entirely. | — |
 | `MCP_ALLOWED_HOSTS` | Extra `Host` values the MCP endpoint accepts, comma-separated. The host from `BASE_URL` and localhost are always allowed. | — |
@@ -172,7 +258,7 @@ Open the agent's web UI and go to **Settings**:
 4. **Skills** — Enable optional skills (Prometheus, Loki, Flux CD, Talos) and configure their endpoints
 5. **PR Mode** — Start with "Comment Only", escalate through 4 tiers as you gain trust (see below)
 6. **Notifications** — Choose how much to send, and where (ntfy URL, publish topic, token, subscription topics)
-7. **Kill Switch** — Disable/enable all agent activity instantly
+7. **Kill Switch** — Disable/enable all agent activity instantly (this includes the [health check](#cluster-health-check))
 
 ### 7. Subscribe to notifications
 
@@ -246,6 +332,67 @@ Tools are organized into skills that can be enabled/disabled from the Settings U
 Optional skills require endpoint configuration (done in the Skills settings panel).
 
 **Talos diagnostics are read-only on purpose.** Recovering a stalled upgrade means `talosctl upgrade --drain=false` against a node, which needs a talosconfig (effectively cluster-root) and is not reversible the way a pod restart is. The agent diagnoses and hands you the command. The skill needs `get`/`list` on `poddisruptionbudgets`, `jobs`, and the `tuppr.home-operations.com` CRDs.
+
+## Cluster Health Check
+
+A background sweep, every 10 minutes by default, that pushes a notification when the cluster degrades and another when it recovers. It runs automatically — there is nothing to enable.
+
+**Why it exists, and why it is not just another Alertmanager rule.** In a typical home cluster the alerting stack shares a failure domain with the failures it reports. If ntfy, Alertmanager and Gatus sit on node-pinned storage (`local-path-provisioner` and friends), whichever node holds them takes all three down together — so the one incident guaranteed to silence your alerting is a node going away, which is also the incident you most need to hear about. Silence is not evidence of health. This agent holds no PVC, so it reschedules freely and can still report.
+
+| Area | What it catches |
+|---|---|
+| **Nodes** | NotReady, cordoned, upgrade taints — including a node left cordoned after a failed upgrade, which is invisible to anything watching only pods |
+| **Pods** | Pending beyond a threshold, CrashLoopBackOff |
+| **Flux** | Kustomizations and HelmReleases that are failing, or stuck mid-reconcile |
+| **Upgrades** | [tuppr](https://github.com/home-operations/tuppr) `TalosUpgrade` / `KubernetesUpgrade` in a failed phase |
+| **Database** | CNPG `readyInstances` below `instances` — invisible to pod checks, because the pods stay Running while replication is broken |
+| **Backups** | Volsync `lastSyncTime` age — a nightly snapshot that stops usually surfaces only when someone needs a restore |
+
+**It correlates rather than lists.** "6 pods Pending" is a symptom list; the diagnosis is what saves you the twenty minutes:
+
+```
+● talosupgrade 'talos' is in phase Failed
+    k8s-1: Upgrade Job failed while node remained at v1.13.9
+
+● 1 node(s) unhealthy or cordoned
+    k8s-1: cordoned (taint: tuppr.home-operations.com/outdated)
+
+● 6 pod(s) Pending for over 10m
+  → pinned by local-path PVCs to k8s-1, which is unschedulable
+    monitoring/ntfy-566685b584-4vctr (pinned to k8s-1)
+    ...
+```
+
+Resolving each Pending pod through its PVC to the PV's `nodeAffinity` is what buys the `→` line, and is the one reason the check wants `persistentvolumes` read access. Cause is printed above effect on purpose.
+
+**It reports and never acts.** Recovering a stalled node upgrade means `talosctl upgrade --drain=false`, which needs a talosconfig and is not reversible the way a pod restart is — the same reasoning that keeps the [Talos skill](#skills) read-only.
+
+### What it needs from your cluster
+
+Only `nodes` and `pods` are required. **Everything else is optional and skipped automatically** — a missing CRD (404) or absent RBAC (403) costs you that one check, never the cycle, so the worker is useful on a cluster with no CNPG, no Volsync, no tuppr and no Flux. Losing `persistentvolumes` costs the `→` explanation but not the finding, and says so in the logs.
+
+If you are not on node-pinned storage the pod-correlation matters less, but the node, upgrade and backup checks are unaffected.
+
+### Notification behaviour
+
+Transitions only: one push when the cluster becomes degraded, one when it recovers, then a re-nag every 4 hours while it stays broken. A still-degraded cycle does **not** re-notify, so a 10-minute interval does not mean six pushes an hour.
+
+Degraded pushes are classified as needing your attention, so the [notification level](#features) setting cannot silence them. Warnings — a stale backup, a crash-looping pod — are reported but do not by themselves mark the cluster degraded.
+
+The check honours the global **Kill Switch** (`agent_enabled`) like every other worker.
+
+> **Worth knowing:** the default `NTFY_URL` points at an in-cluster ntfy. If your ntfy is itself node-pinned, the agent will *notice* an incident it cannot *tell you about*. Pointing `NTFY_URL` at an ntfy outside the cluster (or a hosted one) removes the last shared failure domain.
+
+### Tuning
+
+`HEALTH_CHECK_INTERVAL_SECONDS` sets the cycle. The rest are stored settings with no UI yet — they have sane defaults and most people never touch them, but each can be overridden in the `settings` table, and a stored value beats the environment:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `health_check_interval_seconds` | `600` | Cycle length |
+| `health_check_pending_pod_minutes` | `10` | How long a pod may sit Pending before it counts |
+| `health_check_backup_max_age_hours` | `36` | Backup age that counts as stale |
+| `health_check_renag_seconds` | `14400` | Re-nag interval while still degraded |
 
 ## Memory
 
@@ -336,7 +483,7 @@ Code-level guardrails that cannot be bypassed by the LLM:
 - **Kill switch**: Instantly disable all agent activity from the UI
 - **Merge logging**: Every merge attempt is logged at WARNING level, and a failed merge notifies you
 - **Secret masking**: Checkout mode enables a shell, so `DATABASE_URL`, `SESSION_SECRET`, `NTFY_TOKEN`, `GITHUB_TOKEN` and the provider keys are blanked in that environment. The GitHub token reaches `git` only as a per-invocation argument, never `.git/config`.
-- **No node operations**: The Talos skill exposes no mutating tool; node upgrades stay manual
+- **No node operations**: The Talos skill exposes no mutating tool; node upgrades stay manual. The [health check](#cluster-health-check) is read-only for the same reason — it diagnoses a stalled upgrade and hands you the command
 
 ## Development
 
