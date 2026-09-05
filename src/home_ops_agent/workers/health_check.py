@@ -66,6 +66,15 @@ VOLSYNC_GROUP = "volsync.backube"
 # rather than either spamming every cycle or going quiet after the first push.
 DEFAULT_RENAG_SECONDS = 4 * 60 * 60
 
+# How long a Flux resource must stay un-Ready before it counts as a problem.
+# A reconcile in flight is normal and says nothing about cluster health, so
+# `Unknown` gets the longer window — Flux's own HelmRelease upgrade timeout is
+# 5m, and anything still going at 15m is genuinely wedged rather than working.
+# `False` is a real failure, but Flux retries, so give a short window for one
+# that clears on its own before treating it as worth a push.
+FLUX_RECONCILING_GRACE = timedelta(minutes=15)
+FLUX_FAILED_GRACE = timedelta(minutes=5)
+
 # Severity ordering for the summary line.
 DEGRADED = "degraded"
 WARNING = "warning"
@@ -266,15 +275,58 @@ def _check_pods(pending_minutes: int, pins: dict[tuple[str, str], str], bad_node
     return findings
 
 
+def _condition_age(condition: dict) -> timedelta | None:
+    """How long a condition has held its current status, per the cluster.
+
+    Read from ``lastTransitionTime`` rather than remembered between cycles, so
+    the grace periods below cost this worker no state of its own.
+    """
+    stamp = condition.get("lastTransitionTime")
+    if not stamp:
+        return None
+    try:
+        return datetime.now(UTC) - datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _not_ready(items: list[dict]) -> list[str]:
-    """Flux resources whose Ready condition is not True, with the reason."""
+    """Flux resources that are actually broken, with the reason.
+
+    Flux's Ready condition is three-state and the middle one is not a fault:
+    ``True`` reconciled, ``False`` failed, ``Unknown`` reconciling right now.
+    Treating ``Unknown`` as degradation reports every routine upgrade as an
+    outage — with Renovate auto-merging, that is most days, and the first thing
+    this check ever did was page about its own rollout.
+
+    ``False`` is a real failure but not always a durable one, because Flux
+    retries. Both statuses therefore have to persist past a grace period before
+    they count, which is what separates "mid-reconcile" from "stuck".
+    """
     out = []
     for item in items:
         conditions = (item.get("status") or {}).get("conditions") or []
         ready = next((c for c in conditions if c.get("type") == "Ready"), None)
-        if ready and ready.get("status") != "True":
-            name = f"{item['metadata']['namespace']}/{item['metadata']['name']}"
-            out.append(f"{name}: {(ready.get('message') or ready.get('reason') or '')[:140]}")
+        if not ready:
+            continue
+        status = ready.get("status")
+        if status == "True":
+            continue
+
+        age = _condition_age(ready)
+        grace = FLUX_RECONCILING_GRACE if status == "Unknown" else FLUX_FAILED_GRACE
+        # No timestamp means we cannot tell fresh from stuck. Report it: a
+        # missing lastTransitionTime is rare, and staying quiet on the unknown
+        # case is the failure mode this whole worker exists to avoid.
+        if age is not None and age < grace:
+            continue
+
+        name = f"{item['metadata']['namespace']}/{item['metadata']['name']}"
+        detail = (ready.get("message") or ready.get("reason") or "")[:140]
+        if status == "Unknown":
+            mins = int(age.total_seconds() // 60) if age else 0
+            detail = f"stuck reconciling for {mins}m: {detail}"
+        out.append(f"{name}: {detail}")
     return out
 
 
