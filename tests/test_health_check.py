@@ -152,6 +152,79 @@ def test_all_nodes_healthy_produces_no_findings():
     assert bad == set()
 
 
+# --- Flux's Ready condition is three-state ------------------------------------
+
+
+def _flux(name, namespace, status, message, age_minutes):
+    """A Flux resource whose Ready condition has held `status` for `age_minutes`."""
+    stamp = (datetime.now(UTC) - timedelta(minutes=age_minutes)).isoformat().replace("+00:00", "Z")
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "status": {
+            "conditions": [
+                {
+                    "type": "Ready",
+                    "status": status,
+                    "message": message,
+                    "lastTransitionTime": stamp,
+                }
+            ]
+        },
+    }
+
+
+def test_helmrelease_mid_upgrade_is_not_an_outage():
+    """The regression this check shipped with.
+
+    Its very first cycle pushed "Cluster degraded — automation/home-ops-agent:
+    Running 'upgrade' action" about its own rollout. Ready=Unknown means Flux is
+    reconciling, not that anything is broken, and with Renovate auto-merging
+    that state is reachable most days.
+    """
+    items = [_flux("home-ops-agent", "automation", "Unknown", "Running 'upgrade' action", 0)]
+    assert health_check._not_ready(items) == []
+
+
+def test_reconcile_that_never_finishes_is_reported_as_stuck():
+    """The other side of it: Unknown forever is a real problem."""
+    items = [_flux("some-app", "media", "Unknown", "Running 'upgrade' action", 45)]
+
+    (line,) = health_check._not_ready(items)
+    assert "media/some-app" in line
+    assert "stuck reconciling for 45m" in line
+
+
+def test_brief_failure_is_left_for_flux_to_retry():
+    items = [_flux("some-app", "media", "False", "upgrade retries exhausted", 1)]
+    assert health_check._not_ready(items) == []
+
+
+def test_failure_that_outlives_the_retry_window_is_reported():
+    items = [_flux("some-app", "media", "False", "upgrade retries exhausted", 30)]
+
+    (line,) = health_check._not_ready(items)
+    assert "media/some-app" in line
+    assert "retries exhausted" in line
+    assert "stuck reconciling" not in line, "a failure is not a slow reconcile"
+
+
+def test_ready_resources_are_never_reported():
+    items = [_flux("fine", "default", "True", "Release reconciliation succeeded", 0)]
+    assert health_check._not_ready(items) == []
+
+
+def test_missing_transition_time_is_reported_rather_than_assumed_fresh():
+    """Staying quiet on the unknown case is the failure mode this worker exists
+    to avoid, so an un-timestamped condition counts."""
+    items = [
+        {
+            "metadata": {"name": "odd", "namespace": "default"},
+            "status": {"conditions": [{"type": "Ready", "status": "False", "message": "boom"}]},
+        }
+    ]
+    assert len(health_check._not_ready(items)) == 1
+
+
 # --- notification transitions ------------------------------------------------
 
 
