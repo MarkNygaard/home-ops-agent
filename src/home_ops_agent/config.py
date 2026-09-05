@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Agent behavior
     pr_check_interval_seconds: int = 1800  # 30 minutes
     alert_cooldown_seconds: int = 900  # 15 minutes
+    # Cluster health check. Shorter than the PR cycle because this is the path
+    # that notices a node stranded mid-upgrade, and the cost of a cycle is a
+    # handful of list calls rather than an agent run.
+    health_check_interval_seconds: int = 600  # 10 minutes
 
     # Per-task model configuration (override via UI settings)
     # Aliases, not pinned versions: the Claude Code CLI resolves haiku/sonnet/

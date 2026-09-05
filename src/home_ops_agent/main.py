@@ -23,6 +23,7 @@ from home_ops_agent.mcp.server import MCP_PATH as mcp_path
 from home_ops_agent.mcp.server import lifespan as mcp_server_lifespan
 from home_ops_agent.mcp.server import mount as mount_mcp_server
 from home_ops_agent.workers.alert_subscriber import run_alert_subscriber
+from home_ops_agent.workers.health_check import run_health_monitor
 from home_ops_agent.workers.pr_monitor import run_pr_monitor
 
 logging.basicConfig(
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
     # Start background workers
     pr_task = asyncio.create_task(run_pr_monitor())
     alert_task = asyncio.create_task(run_alert_subscriber(mcp_tools))
+    health_task = asyncio.create_task(run_health_monitor())
     logger.info("Background workers started")
 
     # Starlette does not run a mounted app's lifespan, so the MCP session
@@ -91,6 +93,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     pr_task.cancel()
     alert_task.cancel()
+    health_task.cancel()
     await mcp_client.close()
     logger.info("Shutdown complete")
 
