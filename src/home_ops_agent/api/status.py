@@ -27,6 +27,9 @@ router = APIRouter()
 _pr_check_task: "asyncio.Task | None" = None
 _pr_check_started_at: datetime | None = None
 _pr_check_last_result: dict | None = None
+# Last cluster health check cycle, surfaced alongside the PR check so the
+# dashboard shows both background loops rather than only the noisy one.
+_health_check_last_result: dict | None = None
 
 # A run that outlives this is treated as wedged and superseded, so no single
 # stuck HTTP call can disable the button until the next restart.
@@ -78,6 +81,7 @@ async def agent_status():
         "last_pr_check_at": last_pr_check_at.isoformat() if last_pr_check_at else None,
         "pr_check_running": _pr_check_in_flight(),
         "last_pr_check_result": _pr_check_last_result,
+        "last_health_check_result": _health_check_last_result,
         "task_counts": task_counts,
         "latest_task": {
             "type": latest_task.task_type,
