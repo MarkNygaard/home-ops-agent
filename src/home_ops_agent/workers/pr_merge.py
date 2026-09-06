@@ -83,6 +83,16 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
                 merged_count += 1  # Count towards cycle limit
                 # Delay between deep reviews to avoid API rate limits (Opus)
                 await asyncio.sleep(60)
+            else:
+                # Previously this was a silent skip. Now that the model no
+                # longer merges for itself, this branch is the only thing
+                # standing between a reviewed PR and a merge, so a PR that
+                # quietly stops merging must say so somewhere.
+                logger.info(
+                    "PR #%s reviewed but not merged: the review does not state "
+                    "SAFE_TO_MERGE, or the PR does not meet this mode's criteria",
+                    pr_number,
+                )
             continue
 
         # Merge it
