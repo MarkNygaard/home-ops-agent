@@ -70,10 +70,17 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             # In auto_merge_all mode, escalate NEEDS_REVIEW to deep review
             pr_mode = await _get_pr_mode()
             summary_lower = summary.lower()
+            # The guard against re-escalating looked for "deep_review", but
+            # deep_review_pr stamps its summary "[Deep Review]" -- a space, not
+            # an underscore -- so it never matched. It went unnoticed only
+            # because the gate was reading the shallow review and never got
+            # here; fixing that ordering would have turned this into an Opus
+            # deep review of the same PR on every cycle, forever.
+            already_deep = "deep_review" in summary_lower or "deep review" in summary_lower
             if (
                 pr_mode == "auto_merge_all"
                 and ("needs_review" in summary_lower or "needs review" in summary_lower)
-                and "deep_review" not in summary_lower
+                and not already_deep
             ):
                 logger.info(
                     "Escalating PR #%s to deep review (auto_merge_all mode)",
