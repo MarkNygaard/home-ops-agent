@@ -108,8 +108,13 @@ async def test_notify_never_raises(db_session):
         ("SAFE_TO_MERGE", "auto_merge_all", notifications.ROUTINE),
         # In comment_only nothing else fires, so the review *is* the outcome.
         ("SAFE_TO_MERGE", "comment_only", notifications.OUTCOME),
-        # Needing a human is always worth a push.
-        ("NEEDS_REVIEW", "auto_merge_all", notifications.ATTENTION),
+        # In auto_merge_all a NEEDS_REVIEW verdict is not the verdict yet:
+        # check_prs escalates it to deep review, which reports its own
+        # conclusion. This used to be ATTENTION, which meant two pushes about
+        # one PR two minutes apart -- and ATTENTION is precisely the class no
+        # notify_level can filter, so "outcomes only" could not suppress it.
+        ("NEEDS_REVIEW", "auto_merge_all", notifications.ROUTINE),
+        # Nothing escalates in comment_only, so here it really does need a human.
         ("NEEDS_REVIEW", "comment_only", notifications.ATTENTION),
     ],
 )

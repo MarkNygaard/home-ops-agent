@@ -215,6 +215,24 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
         return None
 
 
+def _summarise(text: str, limit: int = 400) -> str:
+    """Trim a review to notification length without cutting mid-word.
+
+    A hard slice produced endings like "not a tooling b", which reads as a
+    broken notification rather than a shortened one. Prefer the last paragraph
+    break, then sentence, then word, so the text ends somewhere deliberate.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    for separator in ("\n\n", ". ", "\n", " "):
+        cut = head.rfind(separator)
+        if cut > limit // 2:
+            return head[:cut].rstrip(" .,;:-") + " [...]"
+    return head.rstrip() + " [...]"
+
+
 async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_only"):
     """Send ntfy notification about a completed PR review.
 
@@ -232,7 +250,14 @@ async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_
         priority = "high"
         tag = "warning"
         title = f"PR #{pr['number']} needs your review"
-        kind = notifications.ATTENTION
+        # Same reasoning as the SAFE_TO_MERGE branch below, which this used to
+        # miss. In auto_merge_all a NEEDS_REVIEW verdict is not a verdict yet:
+        # check_prs escalates it to deep review immediately afterwards, and
+        # that reports its own conclusion. Sending ATTENTION here produced two
+        # pushes about the same PR a couple of minutes apart, the first of them
+        # premature -- and ATTENTION is exactly the class no notify_level can
+        # filter, so "outcomes only" could not save the user from it.
+        kind = notifications.ROUTINE if pr_mode == "auto_merge_all" else notifications.ATTENTION
     elif "safe_to_merge" in response_lower:
         priority = "default"
         tag = "white_check_mark"
@@ -245,10 +270,7 @@ async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_
         # NEEDS_FIX starts a code-fix chain that reports its own outcome.
         kind = notifications.ROUTINE if pr_mode != "comment_only" else notifications.OUTCOME
 
-    # Truncate summary for notification
-    summary = result.response[:300]
-    if len(result.response) > 300:
-        summary += "..."
+    summary = _summarise(result.response)
 
     await notifications.notify(
         kind,

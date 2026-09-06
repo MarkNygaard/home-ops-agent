@@ -78,6 +78,24 @@ async def resolve_config() -> dict[str, str]:
     return resolved
 
 
+# Markdown a model writes by habit, which ntfy's phone apps render literally:
+# "## Summary" and "**Risk Level**" arrive with the syntax intact, so the
+# decoration becomes noise in the one place the text has to be skimmable. The
+# web app can render markdown given a header, the mobile apps cannot, so
+# flatten it rather than turn it on.
+_MD_HEADING = re.compile(r"^#{1,6}[ \t]+", re.MULTILINE)
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_MD_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+
+
+def _flatten_markdown(text: str) -> str:
+    """Drop markdown syntax, keep the words it was wrapping."""
+    text = _MD_HEADING.sub("", text)
+    text = _MD_BOLD.sub(r"\1", text)
+    text = _MD_INLINE_CODE.sub(r"\1", text)
+    return text
+
+
 # Everything from here on is the model's own plumbing, never content. A call
 # that starts writing JSON arguments and switches to XML part-way leaves its
 # tail inside `message`, so the body ends with `<parameter name="tags">[...]
@@ -116,7 +134,7 @@ def _clean_body(message: object) -> str:
     if "\\n" in text and "\n" not in text:
         text = text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
 
-    return text.strip() or "(empty notification)"
+    return _flatten_markdown(text).strip() or "(empty notification)"
 
 
 def _clean_title(title: object) -> str:
