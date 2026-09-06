@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -77,13 +78,66 @@ async def resolve_config() -> dict[str, str]:
     return resolved
 
 
+# Everything from here on is the model's own plumbing, never content. A call
+# that starts writing JSON arguments and switches to XML part-way leaves its
+# tail inside `message`, so the body ends with `<parameter name="tags">[...]
+# </parameter></invoke>`. The leading `"`/`,` is the JSON string the model was
+# still in the middle of, and is consumed with it.
+_TOOL_CALL_ARTEFACT = re.compile(
+    r'(?is)\s*"?\s*,?\s*<\s*/?\s*(?:antml:)?(?:invoke|parameter|function_calls)\b'
+)
+
+
+def _clean_body(message: object) -> str:
+    """Make a model-authored body fit to read on a phone.
+
+    Two things go wrong often enough to defend against them here, at the one
+    point every notification passes through.
+
+    A malformed tool call leaks its own syntax into the argument, so the body
+    ends in raw ``<parameter>`` tags. Everything from the first such marker is
+    cut, because none of it is ever content.
+
+    The body arrives double-escaped, showing a literal backslash-n rather than
+    a line break, which collapses a structured report into one paragraph. That
+    is only repaired when the text contains no real newline: a body that
+    already has them was not double-escaped, and a literal backslash-n in it is
+    more likely deliberate than a mistake.
+    """
+    text = message if isinstance(message, str) else str(message)
+
+    artefact = _TOOL_CALL_ARTEFACT.search(text)
+    if artefact:
+        logger.warning(
+            "Stripped tool-call syntax from an ntfy body; a model emitted a malformed call"
+        )
+        text = text[: artefact.start()]
+
+    if "\\n" in text and "\n" not in text:
+        text = text.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"')
+
+    return text.strip() or "(empty notification)"
+
+
+def _clean_title(title: object) -> str:
+    """ntfy carries the title in an HTTP header, which cannot hold a newline.
+
+    A model-authored title containing a line break would otherwise fail the
+    request at the transport layer and lose the notification entirely — the
+    worst outcome for the one channel meant to reach the user when other
+    things are broken.
+    """
+    text = _clean_body(title)
+    return " ".join(text.split())[:250] or "Home-Ops Agent"
+
+
 async def publish(params: dict) -> str:
     """Publish a notification to an ntfy topic."""
     config = await resolve_config()
 
     topic = params.get("topic") or config["topic"]
-    title = params.get("title", "Home-Ops Agent")
-    message = params["message"]
+    title = _clean_title(params.get("title", "Home-Ops Agent"))
+    message = _clean_body(params["message"])
     priority = params.get("priority", 3)
     tags = params.get("tags", [])
     click_url = params.get("click_url")
