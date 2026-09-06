@@ -94,20 +94,50 @@ async def _already_reviewed(pr_number: int, head_sha: str) -> bool:
 
 
 async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
-    """Get the review summary for a previously reviewed PR."""
+    """The most recent review for this PR at this SHA.
+
+    Newest first, and the ordering is the point. A PR can have several reviews
+    stored against one SHA -- an initial review and the deep review it was
+    escalated to -- and the later one supersedes the earlier by definition,
+    because escalating exists to get a second opinion.
+
+    Without an explicit order this returned whichever row the database happened
+    to yield first, which was the oldest. PR #926 was auto-merged on a shallow
+    review reading SAFE_TO_MERGE while the Opus deep review two minutes later
+    said NEEDS_REVIEW. The escalation ran, cost its tokens, reached the right
+    answer, and was then ignored.
+    """
     async with async_session() as session:
         result = await session.execute(
-            select(AgentTask).where(
+            select(AgentTask)
+            .where(
                 AgentTask.task_type == "pr_review",
                 AgentTask.trigger == f"PR #{pr_number}",
                 AgentTask.status == "completed",
             )
+            .order_by(AgentTask.created_at.desc(), AgentTask.id.desc())
         )
         tasks = result.scalars().all()
         for task in tasks:
             if task.actions_taken and task.actions_taken.get("head_sha") == head_sha:
                 return task.summary
         return None
+
+
+# A review that refuses cannot also approve. The stored verdict is a prefix
+# like "[SAFE_TO_MERGE]" or "[NEEDS_REVIEW]", but the gate greps the whole
+# summary, so a body discussing the auto-merge policy can put an approving
+# phrase in a review that plainly refuses -- and PR #926's did exactly that,
+# carrying a SAFE_TO_MERGE prefix above "Risk Level: HIGH" and "Auto-Merge
+# Status: Cannot auto-merge". When both appear, refusal wins.
+REFUSAL_MARKERS = (
+    "needs_review",
+    "needs review",
+    "needs_fix",
+    "needs fix",
+    "cannot auto-merge",
+    "do not merge",
+)
 
 
 async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
@@ -117,6 +147,18 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     # Must be from renovate
     if pr.get("author") != "renovate[bot]":
         return False
+
+    # An explicit refusal disqualifies regardless of anything else in the text.
+    # Checked before the approval markers so a self-contradicting review is
+    # never merged on the strength of the half that agrees with us.
+    for marker in REFUSAL_MARKERS:
+        if marker in summary_lower:
+            logger.info(
+                "PR #%s not auto-merged: the review says %r",
+                pr.get("number"),
+                marker,
+            )
+            return False
 
     pr_mode = await _get_pr_mode()
     labels = pr.get("labels", [])
