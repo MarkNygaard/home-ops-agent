@@ -21,6 +21,22 @@ logger = logging.getLogger(__name__)
 # Maximum number of PRs to review per cycle (rate limit)
 MAX_REVIEWS_PER_CYCLE = 3
 
+# Tools deliberately withheld from the PR agent, so that merging and telling
+# you about it stay in code rather than in a model's improvisation.
+#
+# The review prompt sanctions auto-merging but never asks for a notification,
+# so every notification the model sent was unprompted. That is why four
+# consecutive merges arrived under four different title formats, and why one
+# leaked the tail of a malformed tool call into the body.
+#
+# Nothing is lost by withholding them. auto_merge_reviewed_prs, deep_review_pr
+# and attempt_code_fix each import merge_pr and notifications.notify directly
+# rather than going through the agent, so the merge still happens and the
+# notification is the code-built one. What changes is that the decision runs
+# through _is_safe_to_auto_merge -- a gate that can be read and tested --
+# instead of a model re-deriving the rules from prose on every run.
+WITHHELD_FROM_PR_AGENT = frozenset({"github_merge_pr", "ntfy_publish"})
+
 # Track last check time for the status API
 last_pr_check_at: datetime | None = None
 
@@ -305,7 +321,7 @@ async def check_prs() -> dict:
 
     agent = Agent(credentials)
     skill_tools = await registry.get_all_enabled_tools()
-    agent.register_tools(skill_tools)
+    agent.register_tools([tool for tool in skill_tools if tool.name not in WITHHELD_FROM_PR_AGENT])
 
     # List open PRs via direct API call (not through agent)
     from home_ops_agent.agent.tools.github import list_prs

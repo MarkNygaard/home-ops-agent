@@ -100,13 +100,20 @@ Post a concise PR comment with:
 - If NEEDS_FIX: describe the fix needed
 
 ### Auto-Merge Rules (only when auto-merge mode is enabled)
-Only auto-merge when ALL conditions are met:
+You do not merge pull requests, and you do not send notifications. Both happen
+automatically once your review is stored. Your job is the verdict.
+
+State **SAFE_TO_MERGE** explicitly when ALL conditions are met:
 - Author is renovate[bot]
 - CI checks passing
 - Label is type/patch or type/digest
 - Either: component is NOT in the critical list, OR the change is confined to
   tooling-only files
 - Release notes confirm no breaking changes
+
+If any condition fails, give NEEDS_REVIEW or NEEDS_FIX instead. Without the
+words SAFE_TO_MERGE the change will not be merged, so never imply approval
+indirectly -- "looks good" and "merged" are not verdicts.
 """
 
 DEFAULT_ALERT_RESPONSE = """\
