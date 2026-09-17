@@ -174,6 +174,7 @@ registry = SkillRegistry()
 
 def init_registry():
     """Register all built-in and optional skills."""
+    from home_ops_agent.agent.tools.code_fix import SKILL as code_fix_skill
     from home_ops_agent.agent.tools.flux import SKILL as flux_skill
     from home_ops_agent.agent.tools.github import SKILL as github_skill
     from home_ops_agent.agent.tools.kubernetes import SKILL as kubernetes_skill
@@ -189,3 +190,4 @@ def init_registry():
     registry.register(loki_skill)
     registry.register(flux_skill)
     registry.register(talos_skill)
+    registry.register(code_fix_skill)

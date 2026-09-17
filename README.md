@@ -327,6 +327,16 @@ The two backends do not offer the same tools, and the difference is worth knowin
 
 One consequence left: ask a GPT model *why is the cluster unhappy* and it can answer, but ask it to comment on a PR and it cannot — there are no GitHub tools on that backend yet. It can still fix the code and push it.
 
+### Asking for a fix in the chat
+
+The **Code Fix** skill adds a `code_fix` tool. Ask the chat to fix an open PR and it checks the branch out, searches the repository, edits as many files as the fix needs, validates with `kubeconform` and pushes one commit.
+
+It delegates to a nested run rather than giving the chat itself a checkout. A worktree is checked out on one branch and lives for one run; a chat does not know when it starts whether it is about a PR at all, so attaching one up front would mean checking out a branch nobody named on every message. The nested run gets a fresh context and the model assigned to **Code Fix**, not the one assigned to **Chat** — and it is not given the `code_fix` tool, so a fix cannot start another fix.
+
+Unlike the PR monitor, it refuses rather than falling back to the single-file API path when a checkout is not possible. That fallback is right for an unattended run, where something beats nothing; here a person asked, and is owed the reason.
+
+Needs a GitHub token, and a model on a backend that supports a checkout (`claude-code/*` or `gpt-*`).
+
 ### How a GPT model is allowed to push
 
 `workspace_commit` needs the GitHub push token, and pi has a `bash` tool — so a token placed in pi's environment is a token the model can `git push` with, straight past `ALLOWED_COMMIT_PATHS` and `PROTECTED_BRANCHES` rather than through them.
