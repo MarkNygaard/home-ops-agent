@@ -9,6 +9,7 @@ provider and belongs in a manual check.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -387,6 +388,137 @@ def test_every_shipped_extension_is_loadable_as_one():
 
     extensions = Path(__file__).resolve().parents[1] / "extensions"
     shipped = sorted(p.name for p in extensions.glob("*.ts"))
-    assert shipped == ["cluster.ts", "searxng.ts"]
+    assert shipped == ["cluster.ts", "searxng.ts", "workspace.ts"]
     for path in extensions.glob("*.ts"):
         assert "export default" in path.read_text(encoding="utf-8"), path.name
+
+
+class _Silent:
+    """A pi subprocess that emits nothing and exits cleanly."""
+
+    returncode = 0
+
+    class _Stdout:
+        def __aiter__(self):
+            async def gen():
+                if False:
+                    yield b""
+
+            return gen()
+
+    class _Stderr:
+        async def read(self):
+            return b""
+
+    def __init__(self):
+        self.stdout = self._Stdout()
+        self.stderr = self._Stderr()
+
+    async def wait(self):
+        return 0
+
+
+async def _capture_env(monkeypatch, workspace):
+    """Run stream() to completion and return the env pi was launched with."""
+    captured: dict = {}
+
+    async def _fake_exec(*_args, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _Silent()
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    async for _ in pi.stream(
+        "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials(), workspace
+    ):
+        pass
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_no_workspace_means_no_commit_channel(monkeypatch):
+    """Most runs are a chat about cluster state and have nothing to commit.
+
+    The socket must not exist for those, so the tool is not registered and there
+    is no live push channel sitting open during an ordinary conversation.
+    """
+    from home_ops_agent.agent import workspace_bridge
+
+    env = await _capture_env(monkeypatch, None)
+    assert workspace_bridge.SOCKET_ENV not in env
+    assert workspace_bridge.TOKEN_ENV not in env
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="the bridge is a Unix socket; the agent runs on Linux"
+)
+async def test_a_workspace_gets_a_bridge_but_never_the_push_token(monkeypatch, tmp_path):
+    """The point of the whole bridge, pinned.
+
+    pi has a `bash` tool, so anything in this environment is readable by the
+    model. A GitHub token here would let it `git push` directly and walk past
+    ALLOWED_COMMIT_PATHS; the socket and its single-run token let it do exactly
+    one thing, which it could already do.
+    """
+    from home_ops_agent.agent import workspace_bridge
+    from home_ops_agent.agent.workspace import Workspace
+
+    secret = "ghp_thisisthepushtoken"
+    ws = Workspace(path=tmp_path, branch="renovate/chart", token=secret)
+
+    env = await _capture_env(monkeypatch, ws)
+
+    assert env[workspace_bridge.SOCKET_ENV].endswith(".sock")
+    assert env[workspace_bridge.TOKEN_ENV]
+    assert secret not in env.values()
+    assert not any(secret in str(v) for v in env.values())
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="the bridge is a Unix socket; the agent runs on Linux"
+)
+async def test_the_socket_does_not_outlive_the_run(monkeypatch, tmp_path):
+    """A token read out of the environment must be worthless afterwards."""
+    from pathlib import Path
+
+    from home_ops_agent.agent import workspace_bridge
+    from home_ops_agent.agent.workspace import Workspace
+
+    env = await _capture_env(
+        monkeypatch, Workspace(path=tmp_path, branch="renovate/chart", token="t")
+    )
+    assert not Path(env[workspace_bridge.SOCKET_ENV]).exists()
+
+
+def test_the_agents_prompt_replaces_pis_own():
+    """`--system-prompt`, not `--append-system-prompt`, for the agent's prompt.
+
+    pi's built-in prompt is mostly directions to pi's own README, docs and
+    examples -- useful to someone working on pi, an invitation to go reading
+    irrelevant documentation for an agent asked why a Kustomization is stuck.
+    """
+    argv = pi.build_argv("gpt-6-astra", "CLUSTER PROMPT", "hello")
+    assert argv[argv.index("--system-prompt") + 1] == "CLUSTER PROMPT"
+
+
+def test_no_workspace_note_without_a_workspace():
+    """A chat about cluster state has no worktree; telling it to commit is noise."""
+    assert "--append-system-prompt" not in pi.build_argv("gpt-6-astra", "sys", "hello")
+
+
+def test_the_workspace_note_is_appended_not_substituted():
+    """Both must survive: pi appends the second to the first in either branch, so
+    the agent's prompt is not the price of telling the model how to commit."""
+    argv = pi.build_argv("gpt-6-astra", "CLUSTER PROMPT", "hello", append_prompt=pi.WORKSPACE_NOTE)
+    assert argv[argv.index("--system-prompt") + 1] == "CLUSTER PROMPT"
+    assert argv[argv.index("--append-system-prompt") + 1] == pi.WORKSPACE_NOTE
+
+
+def test_the_workspace_note_names_the_only_way_out():
+    """pi has a `bash` tool, so a model that does not know about workspace_commit
+    will reach for `git commit` and silently achieve nothing."""
+    assert "workspace_commit" in pi.WORKSPACE_NOTE
