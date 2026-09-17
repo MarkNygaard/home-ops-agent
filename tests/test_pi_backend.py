@@ -77,8 +77,10 @@ def test_write_auth_shape_and_permissions(tmp_path, monkeypatch):
     written = json.loads(pi.AUTH_FILE.read_text(encoding="utf-8"))
     entry = written[pi.CODEX_PROVIDER]
     assert entry["access"] == "access-token"
-    assert entry["refresh"] == "refresh-token"
     assert entry["accountId"] == "account-id"
+    # Withheld on purpose: OpenAI rotates the refresh token on use, so letting pi
+    # refresh invalidates the copy the agent depends on (401 refresh_token_reused).
+    assert "refresh" not in entry
     # pi expects epoch milliseconds, not seconds and not ISO-8601.
     assert entry["expires"] == int(creds.openai_expires_at.timestamp() * 1000)
 
@@ -93,6 +95,54 @@ def test_text_of_joins_only_text_blocks():
         ]
     }
     assert pi._text_of(message) == "first second"
+
+
+async def _noop_ensure(_creds):
+    """The agent refreshes before writing auth.json; tests do not need a network."""
+    return "token"
+
+
+@pytest.mark.asyncio
+async def test_clean_exit_with_no_text_is_still_a_failure(monkeypatch):
+    """pi returns 0 when the provider rejects the credential.
+
+    The auth error goes to stderr and the JSON stream simply carries no
+    assistant text, so keying only on the exit code let a dead credential
+    surface as a model with nothing to say.
+    """
+
+    class _FakeStdout:
+        def __aiter__(self):
+            async def gen():
+                if False:
+                    yield b""
+
+            return gen()
+
+    class _FakeStderr:
+        async def read(self):
+            return b"OAuth refresh failed for openai-codex: 401 refresh_token_reused"
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _FakeStdout()
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    with pytest.raises(RuntimeError, match="refresh_token_reused"):
+        async for _ in pi.stream(
+            "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
+        ):
+            pass
 
 
 @pytest.mark.asyncio
@@ -131,6 +181,7 @@ async def test_subprocess_gets_a_writable_home(monkeypatch, tmp_path):
     monkeypatch.setattr(pi, "PI_HOME", tmp_path)
     monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
 
     async for _ in pi.stream(
         "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
@@ -193,6 +244,7 @@ async def test_stream_parses_events(monkeypatch):
 
     monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
 
     result = None
     texts = []
@@ -253,6 +305,7 @@ async def test_provider_rejection_raises_rather_than_returning_empty(monkeypatch
 
     monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
 
     # The message must survive even though a Node crash puts a useless version
     # banner on the last line.
