@@ -27,11 +27,16 @@ success signal.
 
 `web_search`, backed by the self-hosted SearXNG in `productivity`.
 
-Reached over cluster DNS rather than `search.mnygaard.io`: the agent runs in
-this cluster, so the public hostname would leave through the gateway and come
-back for no reason — and would fail entirely whenever external DNS is down,
-which is exactly the kind of incident the agent is most likely to be asked
-about.
+Requires `SEARXNG_URL`. There is no default: an earlier version fell back to a
+Service name from one particular cluster, which for anyone else is a tool that
+is always present and always fails — worse than not having it, because the model
+keeps choosing it and reports the failure as though the web were down. With the
+variable unset the extension registers nothing and says so on stderr.
+
+Point it at the in-cluster Service rather than a public hostname. The agent runs
+in the cluster, so a public name leaves through the gateway and comes back for
+nothing — and stops working entirely when external DNS does, which is exactly
+the kind of incident the agent is most likely to be asked about.
 
 Verified end to end against `gpt-6-astra`:
 

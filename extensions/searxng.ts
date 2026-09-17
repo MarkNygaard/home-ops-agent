@@ -1,14 +1,29 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-// Cluster DNS, not search.mnygaard.io. The agent runs in this cluster, so the
-// public hostname would leave through the gateway and come back for no reason,
-// and would break entirely whenever external DNS is down -- which is exactly
-// the kind of incident the agent is most likely to be asked about.
-const SEARXNG =
-  process.env.SEARXNG_URL ?? "http://searxng.productivity.svc.cluster.local:8080";
+// No default. An earlier version fell back to a service name from one specific
+// cluster, which for anyone else is a tool that is always present and always
+// fails -- worse than not having it, because the model keeps choosing it and
+// reporting the failure as though the web were down.
+//
+// Set SEARXNG_URL to a reachable instance. Prefer the in-cluster service over a
+// public hostname: the agent runs in the cluster, so a public name leaves
+// through the gateway and comes back for nothing, and stops working entirely
+// when external DNS does -- exactly the incident the agent is likely to be
+// asked about.
+const SEARXNG = process.env.SEARXNG_URL;
 
 export default function (pi: ExtensionAPI) {
+  if (!SEARXNG) {
+    // Registering nothing is deliberate. The tool simply does not exist, so the
+    // model never offers a web search it cannot perform.
+    console.error(
+      "[searxng] SEARXNG_URL is not set; web_search is unavailable. " +
+        "Point it at a SearXNG instance with the JSON format enabled."
+    );
+    return;
+  }
+
   pi.registerTool({
     name: "web_search",
     label: "Web search",
