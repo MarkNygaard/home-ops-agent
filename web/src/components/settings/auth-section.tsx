@@ -5,6 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  connectOpenAIComplete,
+  connectOpenAIStart,
   disconnectProvider,
   importOpenAITokens,
   updateSetting,
@@ -140,6 +142,53 @@ function OpenAICard({ status, onSaved }: OpenAICardProps) {
   const [refreshToken, setRefreshToken] = useState('');
   const [accountId, setAccountId] = useState('');
   const [error, setError] = useState('');
+  // PKCE material from `start`, carried until `complete`. Held in component
+  // state rather than on the server: the flow is stateless by design, so a
+  // reload simply means starting again.
+  const [pending, setPending] = useState<{
+    authorize_url: string;
+    state: string;
+    verifier: string;
+  } | null>(null);
+  const [redirect, setRedirect] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+
+  async function handleConnect() {
+    setBusy(true);
+    setError('');
+    const res = await connectOpenAIStart();
+    setBusy(false);
+    if (res.error || !res.authorize_url || !res.state || !res.verifier) {
+      setError(res.error ?? 'Could not start sign-in.');
+      return;
+    }
+    setPending({
+      authorize_url: res.authorize_url,
+      state: res.state,
+      verifier: res.verifier,
+    });
+    window.open(res.authorize_url, '_blank', 'noopener');
+  }
+
+  async function handleComplete() {
+    if (!pending || !redirect.trim()) return;
+    setBusy(true);
+    setError('');
+    const res = await connectOpenAIComplete({
+      redirect: redirect.trim(),
+      state: pending.state,
+      verifier: pending.verifier,
+    });
+    setBusy(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    setPending(null);
+    setRedirect('');
+    onSaved();
+  }
 
   async function handleSave() {
     if (!accessToken.trim() || !refreshToken.trim() || !accountId.trim()) {
@@ -181,31 +230,18 @@ function OpenAICard({ status, onSaved }: OpenAICardProps) {
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Authenticate locally with your ChatGPT subscription (e.g.{' '}
-        <code>codex login</code>), then paste the tokens here. The server keeps
-        them refreshed automatically.
+        Sign in with your ChatGPT subscription. The server keeps the credential
+        refreshed; it does not expire silently.
       </p>
-      <div className="flex max-w-sm flex-col gap-2">
-        <Input
-          type="password"
-          value={accessToken}
-          onChange={(e) => setAccessToken(e.target.value)}
-          placeholder="access_token"
-        />
-        <Input
-          type="password"
-          value={refreshToken}
-          onChange={(e) => setRefreshToken(e.target.value)}
-          placeholder="refresh_token"
-        />
-        <Input
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-          placeholder="chatgpt_account_id"
-        />
+
+      {!pending ? (
         <div className="flex gap-2">
-          <Button onClick={handleSave} variant="outline">
-            Save Tokens
+          <Button onClick={handleConnect} variant="outline" disabled={busy}>
+            {busy
+              ? 'Starting…'
+              : status?.configured
+                ? 'Reconnect ChatGPT'
+                : 'Connect ChatGPT'}
           </Button>
           {status?.configured && (
             <Button onClick={handleDisconnect} variant="ghost">
@@ -213,8 +249,99 @@ function OpenAICard({ status, onSaved }: OpenAICardProps) {
             </Button>
           )}
         </div>
-        {error && <span className="text-xs text-destructive">{error}</span>}
-      </div>
+      ) : (
+        <div className="flex max-w-xl flex-col gap-2 rounded-md border border-dashed p-3">
+          <p className="text-xs text-muted-foreground">
+            A sign-in tab was opened.{' '}
+            <a
+              href={pending.authorize_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Open it again
+            </a>{' '}
+            if it did not appear.
+          </p>
+          {/* The redirect goes to localhost:1455, where the Codex CLI would be
+              listening and this server is not. The page failing to load is the
+              expected outcome, and saying so up front stops it reading as a
+              fault. */}
+          <p className="text-xs text-muted-foreground">
+            After signing in the browser lands on{' '}
+            <code>localhost:1455</code> and shows an error — that is expected,
+            nothing is listening there. Copy the whole URL from the address bar
+            and paste it below.
+          </p>
+          <Input
+            value={redirect}
+            onChange={(e) => setRedirect(e.target.value)}
+            placeholder="http://localhost:1455/auth/callback?code=…&state=…"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={handleComplete}
+              variant="outline"
+              disabled={busy || !redirect.trim()}
+            >
+              {busy ? 'Finishing…' : 'Finish sign-in'}
+            </Button>
+            <Button
+              onClick={() => {
+                setPending(null);
+                setRedirect('');
+                setError('');
+              }}
+              variant="ghost"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {error && <span className="text-xs text-destructive">{error}</span>}
+
+      <button
+        type="button"
+        onClick={() => setShowManual((v) => !v)}
+        className="self-start text-xs text-muted-foreground underline"
+      >
+        {showManual ? 'Hide' : 'Paste tokens from a local Codex CLI instead'}
+      </button>
+
+      {showManual && (
+        <div className="flex max-w-sm flex-col gap-2">
+          {/* Kept for anyone already carrying tokens, but not the default path:
+              a credential imported this way is renewed only by the refresh
+              endpoint, so once its refresh token is spent it stays dead until
+              somebody notices. */}
+          <p className="text-xs text-muted-foreground">
+            Only if you already have tokens from <code>codex login</code>.
+            Signing in above is preferred.
+          </p>
+          <Input
+            type="password"
+            value={accessToken}
+            onChange={(e) => setAccessToken(e.target.value)}
+            placeholder="access_token"
+          />
+          <Input
+            type="password"
+            value={refreshToken}
+            onChange={(e) => setRefreshToken(e.target.value)}
+            placeholder="refresh_token"
+          />
+          <Input
+            value={accountId}
+            onChange={(e) => setAccountId(e.target.value)}
+            placeholder="chatgpt_account_id"
+          />
+          <Button onClick={handleSave} variant="outline">
+            Save Tokens
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

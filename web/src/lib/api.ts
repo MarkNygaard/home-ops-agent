@@ -53,6 +53,51 @@ export function disconnectProvider(
   return fetchJson("/api/auth/" + provider, { method: "DELETE" })
 }
 
+// --- ChatGPT sign-in (PKCE) ---
+//
+// These two report failures as a 4xx with a `detail` message written for the
+// operator — "state mismatch", "PKCE verification failed" — so they cannot use
+// fetchJson, which throws away the body and leaves only "400 Bad Request".
+
+async function postWithDetail<T>(url: string, body?: unknown): Promise<T & { error?: string }> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  let payload: Record<string, unknown> = {}
+  try {
+    payload = await res.json()
+  } catch {
+    // A proxy error page or an empty body; the status is all we have.
+  }
+  if (!res.ok) {
+    const detail = payload.detail ?? payload.error
+    return { error: typeof detail === "string" ? detail : `${res.status} ${res.statusText}` } as T & {
+      error?: string
+    }
+  }
+  return payload as T & { error?: string }
+}
+
+export function connectOpenAIStart(): Promise<{
+  authorize_url?: string
+  state?: string
+  verifier?: string
+  redirect_uri?: string
+  error?: string
+}> {
+  return postWithDetail("/api/auth/openai/connect/start")
+}
+
+export function connectOpenAIComplete(body: {
+  redirect: string
+  state: string
+  verifier: string
+}): Promise<{ status?: string; account_id?: string; expires_at?: string; error?: string }> {
+  return postWithDetail("/api/auth/openai/connect/complete", body)
+}
+
 // Skills
 export function fetchSkills(): Promise<Skill[]> {
   return fetchJson<Skill[]>("/api/skills")
