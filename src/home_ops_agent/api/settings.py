@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
@@ -15,6 +15,7 @@ from home_ops_agent.agent.tools.ntfy import (
     reset_config_cache,
 )
 from home_ops_agent.auth import credentials as creds
+from home_ops_agent.auth import openai_oauth
 from home_ops_agent.config import settings
 from home_ops_agent.database import Setting, async_session
 from home_ops_agent.workers.notifications import DEFAULT_LEVEL as NOTIFY_DEFAULT_LEVEL
@@ -199,12 +200,16 @@ async def reset_prompt(name: str):
     return {"status": "ok", "reset": name}
 
 
-# --- OpenAI (ChatGPT subscription) credential import ---
+# --- OpenAI (ChatGPT subscription) ---
 #
-# This app runs as a hosted server, so it cannot receive the Codex OAuth
-# localhost:1455 redirect. Instead the user authenticates locally (e.g. via the
-# Codex CLI), then imports the resulting tokens here; the server keeps them
-# alive via the refresh endpoint (refresh needs no redirect).
+# Preferred: the PKCE sign-in below (`/connect/start` then `/connect/complete`),
+# which needs no local CLI and no callback server -- the operator pastes back
+# the redirect URL their browser landed on.
+#
+# The import endpoint that follows it is kept for anyone already carrying
+# tokens from a local Codex CLI. It is not the route to reach for: nothing
+# renews a credential obtained that way except the refresh endpoint, so once a
+# refresh token is spent it stays dead until a human notices.
 
 
 class OpenAITokens(BaseModel):
@@ -230,6 +235,37 @@ async def import_openai_tokens(body: OpenAITokens):
     )
 
     return {"status": "ok", "provider": "openai", "expires_at": expires_at.isoformat()}
+
+
+class OpenAIConnectComplete(BaseModel):
+    """What the operator pastes back, plus the PKCE material from `start`."""
+
+    redirect: str
+    state: str
+    verifier: str
+
+
+@router.post("/api/auth/openai/connect/start")
+async def openai_connect_start():
+    """Begin ChatGPT sign-in and return the URL to open.
+
+    The response carries `verifier` and `state`; the client passes both to
+    `/connect/complete`. Nothing is stored server-side between the two calls, so
+    a restart mid-flow costs only a retry.
+    """
+    return openai_oauth.start_login()
+
+
+@router.post("/api/auth/openai/connect/complete")
+async def openai_connect_complete(body: OpenAIConnectComplete):
+    """Exchange the pasted redirect for tokens and store them."""
+    try:
+        result = await openai_oauth.complete_login(body.redirect, body.state, body.verifier)
+    except ValueError as exc:
+        # These messages are written for the operator, so they are returned
+        # rather than swallowed into a generic 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "provider": "openai", **result}
 
 
 @router.delete("/api/auth/{provider}")

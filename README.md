@@ -291,7 +291,7 @@ Models from three providers can be configured at once — each agent's assigned 
 |----------|------|--------|
 | **Claude subscription** | Long-lived token from `claude setup-token` | `claude-code/haiku`, `claude-code/sonnet`, `claude-code/opus` |
 | **Kimi for Coding** | API key (Anthropic-compatible endpoint) | `kimi-for-coding` |
-| **OpenAI / ChatGPT** | Imported ChatGPT-subscription OAuth tokens (auto-refreshed) | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
+| **OpenAI / ChatGPT** | Sign in from the UI (PKCE), auto-refreshed | `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
 
 Configure each provider independently under Settings → Authentication.
 
@@ -301,7 +301,17 @@ Configure each provider independently under Settings → Authentication.
 
 **OpenAI.** GPT-5.6 comes in three tiers — Sol (flagship), Terra (everyday workhorse) and Luna (fast and cheap). `gpt-5.5` still works but is previous-generation.
 
-Authenticate OpenAI locally (e.g. `codex login`) and paste the resulting access/refresh tokens and account ID.
+Sign in under Settings → Authentication → Connect ChatGPT. The flow needs no local CLI and no callback server:
+
+1. **Connect** opens OpenAI's sign-in page in your browser.
+2. After signing in the browser is redirected to `http://localhost:1455/auth/callback?code=…`, which **will not load** — nothing is listening there. That is expected.
+3. Copy that URL out of the address bar and paste it back.
+
+It is the OAuth authorization-code flow with PKCE, deliberately not device code: OpenAI gates device-code authorisation behind a ChatGPT *workspace* security setting, and where an admin has disabled it the device flow fails with "contact your workspace admin" and the operator has no recourse. PKCE carries no such condition. Nothing is held server-side between the two steps, so a restart mid-flow costs only a retry, and it works from a phone.
+
+`POST /api/auth/openai` still accepts tokens extracted from a local `codex` CLI, for anyone already carrying them. It is not the route to reach for — a credential obtained that way is renewed only by the refresh endpoint, so once a refresh token is spent it stays dead until somebody notices.
+
+Models available to a ChatGPT subscription are decided by the pinned **pi** version, not by this app. On an older pi every ChatGPT model is rejected with *"not supported when using Codex with a ChatGPT account"*; `gpt-6-astra` needs pi 0.85.1 or later.
 
 ## PR Modes
 
