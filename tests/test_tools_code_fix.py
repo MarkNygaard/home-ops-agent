@@ -129,7 +129,7 @@ async def test_a_fix_runs_with_the_workspace_and_reports_its_tools(monkeypatch, 
             seen["registered"] = set(self.tools)
             return AgentResult(
                 response="fixed and pushed",
-                tool_calls=[{"name": "edit"}, {"name": "workspace_commit"}],
+                tool_calls=[{"tool": "edit"}, {"tool": "workspace_commit"}],
             )
 
     async def _model(_task):

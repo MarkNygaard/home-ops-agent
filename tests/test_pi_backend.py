@@ -321,9 +321,10 @@ async def test_stream_parses_events(monkeypatch):
     assert result.input_tokens == 1500
     assert result.output_tokens == 86
     assert result.total_tokens == 1586
-    assert result.tool_calls == [
-        {"id": "call_abc", "name": "web_search", "input": {"query": "external-dns 1.22.0"}}
-    ]
+    # `tool`, matching every other backend -- the MCP server reads `c.get("tool")`
+    # and the chat UI renders `tc.tool`, so a `name` key here renders as a blank
+    # chip rather than as an error.
+    assert result.tool_calls == [{"tool": "web_search", "input": {"query": "external-dns 1.22.0"}}]
 
 
 @pytest.mark.asyncio
@@ -522,3 +523,21 @@ def test_the_workspace_note_names_the_only_way_out():
     """pi has a `bash` tool, so a model that does not know about workspace_commit
     will reach for `git commit` and silently achieve nothing."""
     assert "workspace_commit" in pi.WORKSPACE_NOTE
+
+
+def test_tool_calls_use_the_same_key_as_every_other_backend():
+    """`tool`, not `name`.
+
+    core.py and claude_code.py both emit {"tool", "input"}, the MCP server reads
+    `c.get("tool")` and the chat UI renders `tc.tool`. A `name` key here is not
+    an error anywhere -- it just renders as a blank chip and a null tool name,
+    which is why it survived from 0.14.0 unnoticed.
+    """
+    import inspect
+
+    from home_ops_agent.agent import claude_code, core
+
+    for module in (core, claude_code):
+        assert '{"tool":' in inspect.getsource(module), module.__name__
+    assert '{"tool":' in inspect.getsource(pi)
+    assert '"name": event.get("toolName")' not in inspect.getsource(pi)

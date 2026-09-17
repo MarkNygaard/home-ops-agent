@@ -281,13 +281,17 @@ async def _drive(
         kind = event.get("type")
 
         if kind == "tool_execution_start":
-            tool_calls.append(
-                {
-                    "id": event.get("toolCallId"),
-                    "name": event.get("toolName"),
-                    "input": event.get("args"),
-                }
-            )
+            # `tool`, not `name`. Every other backend emits {"tool", "input"} --
+            # core.py in four places, claude_code.py -- and both consumers read
+            # that key: the MCP server does `c.get("tool")` and the chat UI
+            # renders `label={tc.tool}`. This module emitted `name` from the
+            # start, so every GPT run since 0.14.0 has shown blank tool chips in
+            # the chat and null tool names over MCP, while working perfectly.
+            #
+            # toolCallId is dropped rather than renamed: nothing reads it, and an
+            # extra key here is one more thing for the next backend to disagree
+            # about.
+            tool_calls.append({"tool": event.get("toolName"), "input": event.get("args")})
         elif kind == "message_end":
             message = event.get("message") or {}
             if message.get("role") != "assistant":
