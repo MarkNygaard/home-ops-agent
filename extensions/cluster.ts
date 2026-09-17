@@ -367,11 +367,17 @@ export default function (pi: ExtensionAPI) {
           })),
         }));
         if (params.problems_only) {
-          items = items.filter(
-            (p: any) =>
-              !["Running", "Succeeded"].includes(p.phase) ||
-              p.containers.some((c: any) => !c.ready)
-          );
+          // Succeeded is checked first and on its own, not folded into the
+          // readiness test below. A finished Job's pod has phase=Succeeded *and*
+          // every container ready=false, because the containers have exited --
+          // so a single "not Running, or any container unready" condition flags
+          // every completed Job as a problem. On this cluster that reported
+          // three healthy completions as faults on the first live run.
+          items = items.filter((p: any) => {
+            if (p.phase === "Succeeded") return false;
+            if (p.phase !== "Running") return true;
+            return p.containers.some((c: any) => !c.ready);
+          });
         }
         return json(items, { count: items.length });
       } catch (err) {
