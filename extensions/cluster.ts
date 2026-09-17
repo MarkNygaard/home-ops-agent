@@ -407,9 +407,20 @@ export default function (pi: ExtensionAPI) {
           previous: params.previous ? "true" : undefined,
         });
       try {
-        // The log endpoint serves text/plain, so this one does not go through
+        // The log endpoint serves plain text, so this one does not go through
         // apiJson -- the body is not JSON and parsing it would throw on success.
-        const logs = await apiRaw(path, { accept: "text/plain", signal });
+        //
+        // But it will not *accept* `text/plain`, which is the obvious thing to
+        // ask for and what this sent at first. Content negotiation on the
+        // endpoint is inherited from the generic resource handler, so it refuses
+        // anything outside the API's own media types:
+        //
+        //   406: only the following media types are accepted:
+        //   application/json, application/yaml, application/vnd.kubernetes.protobuf
+        //
+        // and then answers `*/*` with plain text regardless. Measured against a
+        // live pod: `text/plain` -> 406, `*/*` -> 200.
+        const logs = await apiRaw(path, { accept: "*/*", signal });
         return text(logs.trim() || "(no logs)");
       } catch (err) {
         return failed(`read logs for ${params.pod_name}`, err);
