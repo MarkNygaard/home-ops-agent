@@ -372,3 +372,21 @@ async def test_provider_rejection_raises_rather_than_returning_empty(monkeypatch
             "sys", [{"role": "user", "content": "hi"}], "gpt-5.4", Credentials()
         ):
             pass
+
+
+def test_every_shipped_extension_is_loadable_as_one():
+    """`_extension_args` globs `extensions/*.ts` and passes each one with `-e`.
+
+    So a shared helper or a types file dropped in that directory is not a
+    neighbour of the extensions — it is loaded *as* an extension, and pi reports
+    `Failed to load extension` for it on every single run. Anything shared has
+    to be inlined or live in a subdirectory, which is why `cluster.ts` carries
+    its own Kubernetes client rather than importing one.
+    """
+    from pathlib import Path
+
+    extensions = Path(__file__).resolve().parents[1] / "extensions"
+    shipped = sorted(p.name for p in extensions.glob("*.ts"))
+    assert shipped == ["cluster.ts", "searxng.ts"]
+    for path in extensions.glob("*.ts"):
+        assert "export default" in path.read_text(encoding="utf-8"), path.name

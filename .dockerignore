@@ -1,0 +1,13 @@
+# The image copies `extensions/` and `web/` wholesale. Anyone who has run
+# `npm install` in either would otherwise ship their node_modules into it --
+# and, for extensions/, into a directory pi is pointed at.
+node_modules/
+**/node_modules/
+
+.git/
+.venv/
+__pycache__/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

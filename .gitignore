@@ -210,3 +210,6 @@ __marimo__/
 .claude/settings.local.json
 # Holds the MCP bearer token — keep the literal out of the repo.
 .mcp.json
+
+# Node
+node_modules/

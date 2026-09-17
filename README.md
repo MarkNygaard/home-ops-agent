@@ -313,6 +313,24 @@ It is the OAuth authorization-code flow with PKCE, deliberately not device code:
 
 Models available to a ChatGPT subscription are decided by the pinned **pi** version, not by this app. On an older pi every ChatGPT model is rejected with *"not supported when using Codex with a ChatGPT account"*; `gpt-6-astra` needs pi 0.85.1 or later.
 
+### Tools by backend
+
+The two backends do not offer the same tools, and the difference is worth knowing before assigning a model to an agent.
+
+| | `claude-code/*` and Kimi | `gpt-*` (pi) |
+|---|---|---|
+| Kubernetes, Flux | yes (Python tools) | yes (`extensions/cluster.ts`) |
+| GitHub, Prometheus, Loki, Talos, ntfy | yes | **no** |
+| Web search | **no** | yes, with `SEARXNG_URL` set |
+| Files and shell | Claude Code only, inside a git worktree | always (pi's own `read`/`bash`/`edit`/`write`) |
+| Commit and push | Claude Code only, via the guarded `workspace_commit` | **no** |
+
+Two consequences:
+
+- Ask a GPT model *why is the cluster unhappy* and it can answer. Ask it about an open PR and it cannot — there are no GitHub tools on that backend yet.
+- A GPT model given a worktree can read, edit and validate files but has no way to push them. `workspace_commit` is the single guarded write path out of a workspace, it is a Python tool, and pi cannot reach it. Code fixes still need a `claude-code/*` model.
+
+
 ## PR Modes
 
 4-tier escalation for PR handling:

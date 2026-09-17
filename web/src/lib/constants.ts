@@ -52,6 +52,12 @@ export const MODEL_OPTIONS = [
   { value: "claude-code/sonnet", label: "Sonnet", provider: "claude_code" },
   { value: "claude-code/opus", label: "Opus", provider: "claude_code" },
   { value: "kimi-for-coding", label: "Kimi for Coding", provider: "kimi" },
+  // GPT models reach the agent through the pi harness, and pi's own model
+  // registry decides which of them a ChatGPT subscription can actually reach —
+  // so this list is only as current as the pinned pi version in the Dockerfile.
+  // gpt-6-astra needs pi >= 0.85.1; on 0.75.3 every GPT model came back as
+  // "not supported when using Codex with a ChatGPT account".
+  { value: "gpt-6-astra", label: "GPT-6 Astra", provider: "openai" },
   // GPT-5.6 ships as three tiers. Terra is the everyday workhorse, Sol the
   // flagship, Luna the fast/cheap one. gpt-5.5 is kept because existing
   // settings may still name it; it is previous-generation.
