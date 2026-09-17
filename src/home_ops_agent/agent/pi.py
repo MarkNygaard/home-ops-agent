@@ -31,7 +31,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from home_ops_agent.auth.credentials import Credentials
+from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
 if TYPE_CHECKING:
     from home_ops_agent.agent.core import AgentResult
@@ -84,10 +84,21 @@ def write_auth(credentials: Credentials) -> bool:
         return False
 
     AUTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    # The refresh token is deliberately withheld. OpenAI rotates it on use, so
+    # two parties refreshing the same credential invalidate each other -- pi did
+    # exactly that here and the next call came back
+    #
+    #   401 refresh_token_reused: "Your refresh token has already been used to
+    #   generate a new access token. Please try signing in again."
+    #
+    # which killed the stored credential outright rather than just failing the
+    # run. ensure_openai_token already serialises refreshes across the agent's
+    # own callers; pi is simply not one of them. It receives a token that is
+    # already fresh, and if it ever does expire mid-run pi fails loudly instead
+    # of silently spending the token the agent depends on.
     entry: dict[str, Any] = {
         "type": "oauth",
         "access": credentials.openai_access_token,
-        "refresh": credentials.openai_refresh_token or "",
         "accountId": credentials.openai_account_id or "",
     }
     if credentials.openai_expires_at:
@@ -145,6 +156,9 @@ async def stream(
     from home_ops_agent.agent.claude_code import flatten_messages
     from home_ops_agent.agent.core import AgentResult
 
+    # Refresh before writing, so the token pi receives is valid for the whole
+    # run and pi never reaches for the refresh it is not given.
+    await ensure_openai_token(credentials)
     if not write_auth(credentials):
         raise ValueError("OpenAI credentials unavailable")
 
@@ -206,7 +220,11 @@ async def stream(
     stderr_raw = await proc.stderr.read() if proc.stderr else b""
     await proc.wait()
 
-    if proc.returncode != 0 and not last_text:
+    # An empty reply is a failure even on a clean exit. pi returns 0 when the
+    # provider rejects the credential -- the auth error goes to stderr and the
+    # JSON stream simply carries no assistant text -- so keying only on the exit
+    # code let "refresh_token_reused" surface as a model with nothing to say.
+    if not last_text and (proc.returncode != 0 or stderr_raw.strip()):
         # Provider rejections arrive on stderr as plain text; the JSON stream
         # carries only `stopReason: error` with no detail, so without this a
         # rejected model surfaces as a silent empty response. That is exactly
