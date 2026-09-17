@@ -8,12 +8,20 @@ already had file and shell tools. pi has ``read``, ``bash``, ``edit`` and
 ``write`` built in, so pointing it at a worktree gives every model the same
 capability and removes the asymmetry rather than working around it.
 
-Tools do **not** cross the process boundary. pi executes tools in-process, and
+Tools are written as extensions, not bridged. pi executes tools in-process, and
 RPC mode drives pi rather than serving tools back to the host, so the Python
 ``ToolDefinition`` registry is not reachable from here. Tools pi should have are
-written as extensions under ``extensions/`` and loaded with ``-e``. The Python
-tools stay where they are and remain available to the Claude Code backend; the
-two sets converge only if everything moves to pi.
+written under ``extensions/`` and loaded with ``-e``. The Python tools stay where
+they are and remain available to the Claude Code backend; the two sets converge
+only if everything moves to pi.
+
+There is exactly one exception, and it is about a credential rather than a tool.
+``workspace_commit`` needs the GitHub push token, and pi has a ``bash`` tool --
+so a token placed in this subprocess's environment is a token the model can
+``git push`` with, walking past ``ALLOWED_COMMIT_PATHS`` instead of through it.
+When a workspace is attached, :mod:`home_ops_agent.agent.workspace_bridge` hands
+pi a single-run Unix socket whose only action is the guarded commit, and keeps
+the token on this side. See that module for why the trade is sound.
 
 Discovery is disabled with ``-ne``. Without it pi loads whatever sits in
 ``~/.pi`` or the working directory — and the working directory here is a
@@ -28,6 +36,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -119,14 +128,50 @@ def _text_of(message: dict[str, Any]) -> str:
     )
 
 
-def build_argv(model: str, system_prompt: str, prompt: str) -> list[str]:
+# Appended, not merged into the agent's prompt, because it is true only of this
+# backend: the Claude Code path gets `workspace_commit` as an ordinary Python
+# tool and needs none of this said. It is deliberately short -- the agent's own
+# prompt is the one that should be steering.
+WORKSPACE_NOTE = (
+    "You are working inside a git worktree and have file and shell tools. "
+    "To land your changes you must call the workspace_commit tool. Committing or "
+    "pushing with git yourself will not work: the credential is deliberately not "
+    "available to your shell, and workspace_commit is the only path out. It "
+    "rejects files outside the allowed paths, names them, and unstages the "
+    "change, so a rejection is recoverable within this run."
+)
+
+
+def build_argv(
+    model: str,
+    system_prompt: str,
+    prompt: str,
+    append_prompt: str = "",
+) -> list[str]:
     """The command line pi is invoked with.
 
     Split out so a test can assert the safety-relevant flags are present without
     running pi.
+
+    ``--system-prompt`` *replaces* pi's built-in prompt rather than adding to it,
+    which is the intent. That prompt opens with "You are an expert coding
+    assistant operating inside pi" and then spends most of its length telling the
+    model where pi's own README, docs and examples live and when to read them --
+    guidance for someone working *on* pi, and a standing invitation to go reading
+    documentation that has nothing to do with this cluster.
+
+    What replacing it costs is pi's "Available tools" section, which is the only
+    consumer of the ``promptSnippet`` each extension registers. Tool *selection*
+    is unaffected -- that runs off the schemas sent with the request, which is how
+    a model picked `web_search` and the cluster tools correctly before this was
+    noticed -- so the snippets are currently inert rather than missed.
+
+    ``--append-system-prompt`` composes with ``--system-prompt`` (pi appends it in
+    both branches), which is how the workspace note reaches the model without
+    either prompt having to know about the other.
     """
     model_arg = model if "/" in model else f"{CODEX_PROVIDER}/{model}"
-    return [
+    argv = [
         "pi",
         "-ne",
         *_extension_args(),
@@ -136,9 +181,10 @@ def build_argv(model: str, system_prompt: str, prompt: str) -> list[str]:
         "json",
         "--system-prompt",
         system_prompt,
-        "-p",
-        prompt,
     ]
+    if append_prompt:
+        argv += ["--append-system-prompt", append_prompt]
+    return [*argv, "-p", prompt]
 
 
 async def stream(
@@ -154,7 +200,6 @@ async def stream(
     the two backends alike.
     """
     from home_ops_agent.agent.claude_code import flatten_messages
-    from home_ops_agent.agent.core import AgentResult
 
     # Refresh before writing, so the token pi receives is valid for the whole
     # run and pi never reaches for the refresh it is not given.
@@ -164,11 +209,48 @@ async def stream(
 
     # pi takes a single prompt string, so the conversation is flattened the same
     # way the Claude Code backend does it and a resumed chat keeps its history.
-    argv = build_argv(model, system_prompt, flatten_messages(messages))
+    argv = build_argv(
+        model,
+        system_prompt,
+        flatten_messages(messages),
+        append_prompt=WORKSPACE_NOTE if workspace is not None else "",
+    )
 
     PI_HOME.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "HOME": str(PI_HOME)}
     cwd = str(workspace.path) if workspace is not None else None
+
+    async with AsyncExitStack() as stack:
+        if workspace is not None:
+            # pi can edit files in the checkout but must not be able to push
+            # from it: it has a `bash` tool, so a GitHub token in this
+            # environment is a token the model can `git push` with, straight
+            # past the path and branch guardrails. The bridge hands it a
+            # single-run socket instead, whose only action is the guarded
+            # commit. Imported here rather than at module scope because
+            # workspace_bridge reaches `core`, which imports this module.
+            from home_ops_agent.agent import workspace_bridge
+
+            handle = await stack.enter_async_context(workspace_bridge.serve(workspace))
+            env.update(handle.env())
+
+        async for item in _drive(argv, env, cwd, model):
+            yield item
+
+
+async def _drive(
+    argv: list[str],
+    env: dict[str, str],
+    cwd: str | None,
+    model: str,
+) -> AsyncGenerator[str | AgentResult, None]:
+    """Run pi and turn its event stream into assistant text plus an ``AgentResult``.
+
+    Split out of :func:`stream` so the workspace bridge's lifetime is a plain
+    ``async with`` around one call, rather than a try/finally wrapped around
+    ninety lines of stream parsing.
+    """
+    from home_ops_agent.agent.core import AgentResult
 
     proc = await asyncio.create_subprocess_exec(
         *argv,

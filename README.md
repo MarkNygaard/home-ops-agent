@@ -323,12 +323,17 @@ The two backends do not offer the same tools, and the difference is worth knowin
 | GitHub, Prometheus, Loki, Talos, ntfy | yes | **no** |
 | Web search | **no** | yes, with `SEARXNG_URL` set |
 | Files and shell | Claude Code only, inside a git worktree | always (pi's own `read`/`bash`/`edit`/`write`) |
-| Commit and push | Claude Code only, via the guarded `workspace_commit` | **no** |
+| Commit and push | yes, via the guarded `workspace_commit` | yes, via the same guarded `workspace_commit` |
 
-Two consequences:
+One consequence left: ask a GPT model *why is the cluster unhappy* and it can answer, but ask it to comment on a PR and it cannot — there are no GitHub tools on that backend yet. It can still fix the code and push it.
 
-- Ask a GPT model *why is the cluster unhappy* and it can answer. Ask it about an open PR and it cannot — there are no GitHub tools on that backend yet.
-- A GPT model given a worktree can read, edit and validate files but has no way to push them. `workspace_commit` is the single guarded write path out of a workspace, it is a Python tool, and pi cannot reach it. Code fixes still need a `claude-code/*` model.
+### How a GPT model is allowed to push
+
+`workspace_commit` needs the GitHub push token, and pi has a `bash` tool — so a token placed in pi's environment is a token the model can `git push` with, straight past `ALLOWED_COMMIT_PATHS` and `PROTECTED_BRANCHES` rather than through them.
+
+So pi is given a channel, not a credential. When a run has a workspace, the agent opens a Unix socket for the lifetime of that run — mode 0600, in a 0700 directory, with a random single-run token — whose only action is "commit this workspace". The push itself, and both guardrails, stay in Python and are shared with the Claude Code path.
+
+The model *can* read that token out of its environment, and that is fine: it authorises exactly the tool the model already has, and nothing else. That is the property that makes handing it over acceptable where handing over the push token would not be. `.git/config` has never carried the token either — it is passed per git invocation and scrubbed after clone — so a shell in the worktree cannot recover it.
 
 
 ## PR Modes
