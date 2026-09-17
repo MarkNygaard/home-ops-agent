@@ -181,6 +181,7 @@ async def stream(
     tool_calls: list[dict[str, Any]] = []
     input_tokens = output_tokens = 0
     last_text = ""
+    stop_reason = ""
 
     assert proc.stdout is not None
     # Records are split on newline only. pi's protocol note is explicit that
@@ -209,6 +210,7 @@ async def stream(
             message = event.get("message") or {}
             if message.get("role") != "assistant":
                 continue
+            stop_reason = message.get("stopReason") or stop_reason
             usage = message.get("usage") or {}
             input_tokens += int(usage.get("input") or 0)
             output_tokens += int(usage.get("output") or 0)
@@ -220,11 +222,17 @@ async def stream(
     stderr_raw = await proc.stderr.read() if proc.stderr else b""
     await proc.wait()
 
-    # An empty reply is a failure even on a clean exit. pi returns 0 when the
-    # provider rejects the credential -- the auth error goes to stderr and the
-    # JSON stream simply carries no assistant text -- so keying only on the exit
-    # code let "refresh_token_reused" surface as a model with nothing to say.
-    if not last_text and (proc.returncode != 0 or stderr_raw.strip()):
+    # stopReason is the only place a rejected request shows up. Measured against
+    # a live rejection, pi gives exit 0, an empty stderr, and a well-formed event
+    # stream whose assistant message carries stopReason=error and no text:
+    #
+    #   exit=0  stderr=0 bytes  message_end stopReason=error err=None
+    #
+    # Two earlier versions of this guard keyed on the exit code and then on
+    # stderr, and both let that through as a successful empty answer. The exit
+    # code and stderr checks are kept because they are what caught pi crashing
+    # on a read-only HOME, which stopReason never sees.
+    if not last_text and (stop_reason == "error" or proc.returncode != 0 or stderr_raw.strip()):
         # Provider rejections arrive on stderr as plain text; the JSON stream
         # carries only `stopReason: error` with no detail, so without this a
         # rejected model surfaces as a silent empty response. That is exactly
@@ -235,7 +243,15 @@ async def stream(
         # so reporting the tail turned "ENOENT: cannot mkdir ~/.pi/..." into
         # "Node.js v22.23.2" and hid the actual fault. Keep enough of the tail
         # to carry a stack trace's message line.
-        detail = " | ".join(stderr.splitlines()[:6]) if stderr else "no output"
+        detail = " | ".join(stderr.splitlines()[:6]) if stderr else ""
+        if not detail:
+            # A rejected request carries no detail anywhere -- error is null on
+            # the message too -- so say what is actually known rather than
+            # inventing a cause.
+            detail = (
+                f"stopReason={stop_reason or 'unknown'}, no output. "
+                "Usually the provider rejected the credential or the model."
+            )
         raise RuntimeError(f"pi exited {proc.returncode}: {detail}")
 
     yield AgentResult(
