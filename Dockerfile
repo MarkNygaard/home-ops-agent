@@ -67,9 +67,7 @@ RUN apt-get update \
 # itself is not needed at runtime.
 COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi /usr/local/lib/node_modules/@earendil-works /usr/local/lib/node_modules/@earendil-works
-RUN printf '#!/bin/sh
-exec /usr/local/bin/node /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js "$@"
-'         > /usr/local/bin/pi     && chmod +x /usr/local/bin/pi
+RUN ln -sf /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /usr/local/bin/pi && chmod +x /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js && pi --version
 
 # The cluster tools pi exposes to the model. Extensions are loaded explicitly
 # with -e rather than by discovery, so nothing on the filesystem can add a tool
