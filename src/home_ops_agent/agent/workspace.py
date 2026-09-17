@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from home_ops_agent.agent import providers
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.agent.tools.github import ALLOWED_COMMIT_PATHS, PROTECTED_BRANCHES
 from home_ops_agent.config import settings
@@ -289,3 +290,64 @@ def build_workspace_tools(ws: Workspace) -> list[ToolDefinition]:
             handler=handler,
         )
     ]
+
+
+# A checkout-based fix — search the repo, edit several files, validate, commit
+# once — needs a backend with file and shell tools *and* a way to push. Claude
+# Code has both: its CLI brings the file tools and `workspace_commit` is handed
+# to it as a Python tool. pi brings the file tools itself, and reaches the same
+# guarded commit over the workspace bridge.
+#
+# Kimi has neither, so it keeps the single-file GitHub Contents API path.
+WORKSPACE_PROVIDERS = (providers.CLAUDE_CODE, providers.OPENAI)
+
+
+def can_use_workspace(model: str, branch: str) -> bool:
+    return bool(
+        providers.resolve_provider(model) in WORKSPACE_PROVIDERS
+        and settings.github_token
+        and branch
+        and branch != "unknown"
+    )
+
+
+@asynccontextmanager
+async def maybe_workspace(model: str, branch: str):
+    """Yield a workspace when the backend supports one, otherwise ``None``.
+
+    A checkout failure is not fatal: the run continues against the GitHub API
+    tools, which is what it would have done anyway.
+    """
+    if not can_use_workspace(model, branch):
+        yield None
+        return
+    try:
+        async with open_workspace(branch, settings.github_token) as ws:
+            yield ws
+    except Exception:
+        logger.exception("Failed to open a workspace for '%s'; using API edits", branch)
+        yield None
+
+
+# Deliberately does not name search tools. This prompt is now read by two
+# backends whose tool names differ -- Claude Code has Grep and Glob, pi has grep
+# and find -- and naming the wrong one sends the model looking for a tool it
+# does not have.
+WORKSPACE_TASK = """Your task:
+1. You are in a git worktree checked out on the PR branch, with file and shell
+   tools. Search the repository for every place the breaking change affects, not
+   just the file the PR changed.
+2. Read the affected files in full and work out what actually broke.
+3. Edit the files directly. You may change several of them.
+4. Validate before committing: run `kubeconform -strict -ignore-missing-schemas`
+   on the manifests you touched, and re-read your edits.
+5. Call workspace_commit once, with a clear message, to commit and push. It is
+   the only way to push from here — committing with git yourself will not work,
+   because the credential is deliberately not available to your shell.
+6. If you have a tool for commenting on a PR, post one explaining the fix.
+   Not every backend has one; if you do not, put the explanation in your reply
+   instead of hunting for a tool that is not there.
+
+Only files under kubernetes/apps/ can be committed — workspace_commit rejects
+anything else, names the rejected paths and unstages the change, so you can
+correct course and call it again."""
