@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import anthropic
 
-from home_ops_agent.agent import claude_code, providers
+from home_ops_agent.agent import claude_code, pi, providers
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
 if TYPE_CHECKING:
@@ -167,7 +167,10 @@ class Agent:
         than failing a run over a capability difference.
         """
         provider = self._provider_for(model)
-        if workspace is not None and provider != providers.CLAUDE_CODE:
+        # pi gives the openai provider read/bash/edit/write, so a worktree is
+        # usable there now; only the Anthropic-protocol backends still lack the
+        # file tools a workspace needs.
+        if workspace is not None and provider in providers.ANTHROPIC_PROTOCOL:
             logger.warning(
                 "Workspace requested but model %s uses the '%s' provider; "
                 "falling back to GitHub API edits.",
@@ -188,6 +191,10 @@ class Agent:
                 max_turns,
                 self.credentials.claude_code_oauth_token or "",
                 workspace=workspace,
+            )
+        if provider == providers.OPENAI:
+            return await pi.run(
+                system_prompt, messages, model, self.credentials, workspace=workspace
             )
         return await self._run_openai(system_prompt, messages, model, max_turns)
 
@@ -223,6 +230,8 @@ class Agent:
                 on_tool_start,
                 on_tool_end,
             )
+        elif provider == providers.OPENAI:
+            gen = pi.stream(system_prompt, messages, model, self.credentials)
         else:
             gen = self._run_openai_streaming(
                 system_prompt, messages, model, max_turns, on_tool_start, on_tool_end
