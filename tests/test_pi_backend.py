@@ -103,6 +103,64 @@ async def _noop_ensure(_creds):
 
 
 @pytest.mark.asyncio
+async def test_stop_reason_error_is_a_failure_even_with_clean_exit_and_no_stderr(monkeypatch):
+    """The shape a live provider rejection actually has.
+
+    Measured in the cluster against a spent credential: exit 0, stderr empty,
+    and a well-formed stream whose assistant message carries stopReason=error
+    with no text and error=None. Neither the exit code nor stderr says anything,
+    so guards keyed on those returned it as a successful empty answer twice.
+    """
+    events = [
+        {"type": "agent_start"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "stopReason": "error",
+                "error": None,
+                "usage": {"input": 0, "output": 0},
+            },
+        },
+        {"type": "agent_end"},
+    ]
+
+    class _FakeStdout:
+        def __aiter__(self):
+            async def gen():
+                for e in events:
+                    yield (json.dumps(e) + "\n").encode()
+
+            return gen()
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _FakeStdout()
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    with pytest.raises(RuntimeError, match="stopReason=error"):
+        async for _ in pi.stream(
+            "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
+        ):
+            pass
+
+
+@pytest.mark.asyncio
 async def test_clean_exit_with_no_text_is_still_a_failure(monkeypatch):
     """pi returns 0 when the provider rejects the credential.
 
