@@ -33,6 +33,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 - [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversations, memories, settings, and task logs
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
 - Prometheus + Loki — for metrics and log queries (optional, via skills system)
+- [SearXNG](https://docs.searxng.org/) — optional, for the `web_search` tool on the [pi backend](#providers). Needs the JSON format enabled and `SEARXNG_URL` set; without it the tool is simply not registered.
 - **A Claude Pro/Max subscription** (via `claude setup-token`) — or a Kimi for Coding key, or imported ChatGPT tokens. See [Providers](#providers). There is no metered API-key option.
 - GitHub personal access token — fine-grained (scoped to your repo with `Contents: Read/Write` and `Pull requests: Read/Write`) or classic with `repo` scope (required if using a dedicated bot account)
 
@@ -129,6 +130,10 @@ spec:
               GITHUB_REPO: you/home-ops
               BASE_URL: https://agent.example.com
               CLUSTER_DOMAIN: example.com
+              # Optional. Enables the `web_search` tool on the pi backend.
+              # Use the in-cluster Service rather than a public hostname, so
+              # searches do not depend on external DNS being up.
+              SEARXNG_URL: http://searxng.<namespace>.svc.cluster.local:8080
             envFrom:
               - secretRef: { name: home-ops-agent-secret }
     service:
@@ -244,6 +249,7 @@ Key environment variables:
 | `BASE_URL` | Public URL of the agent web UI | — |
 | `MCP_API_TOKEN` | Bearer token for the [MCP endpoint](#mcp-endpoint). Unset disables it entirely. | — |
 | `MCP_ALLOWED_HOSTS` | Extra `Host` values the MCP endpoint accepts, comma-separated. The host from `BASE_URL` and localhost are always allowed. | — |
+| `SEARXNG_URL` | SearXNG base URL for the `web_search` tool. Unset means the tool is not registered at all. | — |
 | `AGENT_WORKSPACE_DIR` | Where the git clone and per-run worktrees live, for [checkout-mode code fixes](#code-fixes). | `/home/agent/workspace` |
 
 The `NTFY_*` values above are defaults only: the publish URL, topic and token can be changed from Settings → Notifications without redeploying, and a stored setting takes precedence over the environment.
