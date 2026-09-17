@@ -133,7 +133,7 @@ async def code_fix(params: dict) -> str:
             # person. The tools used are included because "did it actually
             # commit" is the first thing anyone asks, and workspace_commit
             # appearing here is the answer.
-            "tools_used": [t.get("name") for t in result.tool_calls],
+            "tools_used": [t.get("tool") for t in result.tool_calls],
             "result": result.response,
         }
     )
