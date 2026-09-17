@@ -39,11 +39,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Where pi looks for credentials. Written before each run from the credentials
-# already in the database, rather than by an interactive `pi /login` — there is
-# no terminal here to run one in.
+# pi resolves its own directory from HOME, as ~/.pi — there is no variable that
+# overrides it. The container's HOME is /home/agent on a read-only filesystem,
+# so pi cannot create its session directory there and dies before it reaches the
+# model:
+#
+#   Error: ENOENT: no such file or directory,
+#     mkdir '/home/agent/.pi/agent/sessions/--app--'
+#
+# PI_HOME is therefore not passed through to pi; it names a writable directory
+# that is handed to the subprocess *as* HOME.
 PI_HOME = Path(os.environ.get("PI_HOME", "/tmp/pi"))
-AUTH_FILE = PI_HOME / "agent" / "auth.json"
+AUTH_FILE = PI_HOME / ".pi" / "agent" / "auth.json"
 
 # Shipped by the image, not discovered.
 EXTENSIONS_DIR = Path(os.environ.get("PI_EXTENSIONS_DIR", "/app/extensions"))
@@ -145,7 +152,8 @@ async def stream(
     # way the Claude Code backend does it and a resumed chat keeps its history.
     argv = build_argv(model, system_prompt, flatten_messages(messages))
 
-    env = {**os.environ, "PI_HOME": str(PI_HOME)}
+    PI_HOME.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, "HOME": str(PI_HOME)}
     cwd = str(workspace.path) if workspace is not None else None
 
     proc = await asyncio.create_subprocess_exec(
@@ -205,7 +213,11 @@ async def stream(
         # how "model not supported when using Codex with a ChatGPT account"
         # presented before it was tracked down.
         stderr = stderr_raw.decode("utf-8", errors="replace").strip()
-        detail = stderr.splitlines()[-1] if stderr else "no output"
+        # Not the last line. A Node crash ends with the runtime version banner,
+        # so reporting the tail turned "ENOENT: cannot mkdir ~/.pi/..." into
+        # "Node.js v22.23.2" and hid the actual fault. Keep enough of the tail
+        # to carry a stack trace's message line.
+        detail = " | ".join(stderr.splitlines()[:6]) if stderr else "no output"
         raise RuntimeError(f"pi exited {proc.returncode}: {detail}")
 
     yield AgentResult(
