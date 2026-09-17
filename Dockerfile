@@ -8,6 +8,18 @@ COPY web/ ./
 RUN pnpm build
 
 # Stage 2: Python builder
+# pi, the agent harness for every model that is not claude-code. Installed in a
+# node stage and copied in, because the runtime is python:slim and pi is a Node
+# program -- this keeps npm and its cache out of the final image.
+#
+# Pinned rather than latest. pi's model registry decides which models are
+# reachable at all: on 0.75.3 every ChatGPT model returned
+# "not supported when using Codex with a ChatGPT account", and 0.85.1 is what
+# made gpt-6-astra work. So the pin is load-bearing in both directions -- too
+# old and models disappear, unpinned and they change without a commit.
+FROM node:22-slim AS pi
+RUN npm install -g @earendil-works/pi-coding-agent@0.85.1
+
 FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -50,6 +62,17 @@ RUN apt-get update \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# node plus pi. Only the interpreter and the installed package are copied; npm
+# itself is not needed at runtime.
+COPY --from=node:22-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=pi /usr/local/lib/node_modules/@earendil-works /usr/local/lib/node_modules/@earendil-works
+RUN ln -sf /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /usr/local/bin/pi && chmod +x /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js && pi --version
+
+# The cluster tools pi exposes to the model. Extensions are loaded explicitly
+# with -e rather than by discovery, so nothing on the filesystem can add a tool
+# the agent did not ship.
+COPY extensions/ /app/extensions/
 
 # Copy application source
 COPY --from=builder /app/src /app/src

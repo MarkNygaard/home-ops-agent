@@ -1,0 +1,10 @@
+{
+  "name": "home-ops-agent-pi-extensions",
+  "private": true,
+  "type": "module",
+  "description": "pi extensions that give the agent its cluster tools",
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "typebox": "^0.34.0"
+  }
+}
