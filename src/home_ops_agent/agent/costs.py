@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # keep the cost that was computed when they were written.
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "kimi-for-coding": {"input": 0.00, "output": 0.00},
+    "gpt-6-astra": {"input": 0.00, "output": 0.00},
     "gpt-5.6-sol": {"input": 0.00, "output": 0.00},
     "gpt-5.6-terra": {"input": 0.00, "output": 0.00},
     "gpt-5.6-luna": {"input": 0.00, "output": 0.00},

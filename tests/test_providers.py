@@ -170,3 +170,46 @@ def test_retired_openai_ids_still_route_rather_than_falling_through():
     a Claude subscription run on someone's plan."""
     for model in ("codex-5.3", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"):
         assert providers.resolve_provider(model) == providers.OPENAI, model
+
+
+def test_gpt_6_astra_routes_to_openai():
+    """The tier the chat actually uses. It only reaches a model at all because
+    the Dockerfile pins pi >= 0.85.1, but the routing must hold regardless."""
+    assert providers.resolve_provider("gpt-6-astra") == providers.OPENAI
+
+
+def _ui_model_options() -> list[tuple[str, str]]:
+    """The (value, provider) pairs the settings UI offers.
+
+    Read out of the TypeScript rather than duplicated here, so the test fails
+    when the list drifts instead of when someone remembers to update it.
+    """
+    import re
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "web" / "src" / "lib" / "constants.ts"
+    block = re.search(r"MODEL_OPTIONS = \[(.*?)\] as const", source.read_text(), re.S)
+    assert block, "MODEL_OPTIONS not found in constants.ts"
+    return re.findall(r'\{\s*value:\s*"([^"]+)".*?provider:\s*"([^"]+)"\s*\}', block.group(1), re.S)
+
+
+def test_every_ui_model_resolves_to_the_provider_the_ui_claims():
+    """A model ID that misses `_OPENAI_PREFIXES` does not fail loudly — it falls
+    through to the Claude Code default and quietly bills the wrong subscription.
+    """
+    options = _ui_model_options()
+    assert options, "parsed no models out of constants.ts"
+    for value, claimed in options:
+        assert providers.resolve_provider(value) == claimed, value
+
+
+def test_every_metered_ui_model_has_a_pricing_row():
+    """Zero today, because every provider bills a plan. The row still has to
+    exist: the moment a metered provider is added, a missing one silently
+    reports its usage as free."""
+    from home_ops_agent.agent.costs import MODEL_PRICING
+
+    for value, claimed in _ui_model_options():
+        if claimed == providers.CLAUDE_CODE:
+            continue  # priced by prefix, not by table entry
+        assert value in MODEL_PRICING, value

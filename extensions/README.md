@@ -46,3 +46,53 @@ Verified end to end against `gpt-6-astra`:
 Note that SearXNG's usefulness depends on its own version — engine scrapers
 break upstream constantly. A stale image returns zero results for every query
 while looking healthy.
+
+## cluster.ts
+
+The diagnostic tools: `flux_get_kustomizations`, `flux_get_helmreleases`,
+`flux_reconcile`, `k8s_get_pods`, `k8s_get_pod_logs`, `k8s_get_events`,
+`k8s_describe_resource`, `k8s_get_nodes`.
+
+These talk to the Kubernetes API directly, over HTTPS, using the pod's own
+ServiceAccount token and CA from `/var/run/secrets/kubernetes.io/serviceaccount`.
+That is the same credential and the same API the Python tools in
+`agent/tools/` use — only the client differs. Outside a pod
+`KUBERNETES_SERVICE_HOST` is unset, the extension registers nothing and says so,
+exactly as `searxng.ts` does without its URL.
+
+The token is re-read on every request rather than cached at module load.
+Projected ServiceAccount tokens are short-lived and rewritten in place by the
+kubelet, so a copy taken at startup begins returning 401 partway through the
+life of a long-running pod — which would look like the cluster tools breaking
+for no reason.
+
+### What is deliberately not here
+
+`k8s_restart_workload`, `k8s_delete_pod`, `flux_suspend` and `flux_resume`.
+`flux_reconcile` is included because it is idempotent and is what a stuck
+Kustomization actually needs; the destructive four want their
+protected-namespace guard ported alongside them, not after them.
+
+Secrets are not a supported kind for `k8s_describe_resource`. A tool result
+travels into the model's context and then into the stored conversation, so
+reading one would persist a credential in two places not meant to hold any.
+The agent's ClusterRole denies them regardless.
+
+### Differences from the Python tools
+
+Three, all deliberate:
+
+- **Ready is reported as a string, not a boolean.** Flux's `Ready` condition is
+  three-state, and `Unknown` — reconciling, or never reconciled — is not a
+  failure. The Python tools collapse it with `status == "True"`, which reports a
+  Kustomization that has never reconciled and one that is mid-retry
+  identically, as broken.
+- **Conditions are attached only to objects that are not Ready.** On a
+  cluster-wide listing, conditions on every healthy object are pages of
+  "Applied revision: main@sha1:…" that bury the one that matters.
+- **Container state is summarised, not stringified.** The Python version emits
+  `str(cs.state)`, a hundred characters of client-object repr per container;
+  this emits `waiting: CrashLoopBackOff — back-off 5m0s restarting…`.
+
+`namespace` is optional everywhere and means "the whole cluster" when omitted,
+rather than defaulting to `default`.
