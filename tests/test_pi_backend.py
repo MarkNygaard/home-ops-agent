@@ -52,9 +52,19 @@ def test_write_auth_without_credentials_reports_failure():
     assert pi.write_auth(Credentials()) is False
 
 
+def test_auth_file_sits_under_dot_pi():
+    """pi reads ~/.pi/agent/auth.json, so the path must carry the .pi level.
+
+    Without it the file lands somewhere pi never looks and the run fails as
+    "No API key found" rather than as a missing credential.
+    """
+    assert pi.AUTH_FILE.parent.parent.name == ".pi"
+    assert pi.AUTH_FILE.parent.name == "agent"
+
+
 def test_write_auth_shape_and_permissions(tmp_path, monkeypatch):
     monkeypatch.setattr(pi, "PI_HOME", tmp_path)
-    monkeypatch.setattr(pi, "AUTH_FILE", tmp_path / "agent" / "auth.json")
+    monkeypatch.setattr(pi, "AUTH_FILE", tmp_path / ".pi" / "agent" / "auth.json")
 
     creds = Credentials(
         openai_access_token="access-token",
@@ -83,6 +93,51 @@ def test_text_of_joins_only_text_blocks():
         ]
     }
     assert pi._text_of(message) == "first second"
+
+
+@pytest.mark.asyncio
+async def test_subprocess_gets_a_writable_home(monkeypatch, tmp_path):
+    """pi resolves ~/.pi from HOME and has no override for it.
+
+    The container's HOME is a read-only filesystem, so leaving it alone kills pi
+    before it reaches the model with an ENOENT creating its session directory.
+    """
+    captured: dict = {}
+
+    class _FakeStdout:
+        def __aiter__(self):
+            async def gen():
+                if False:
+                    yield b""
+
+            return gen()
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _FakeStdout()
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **kwargs):
+        captured.update(kwargs.get("env") or {})
+        return _FakeProc()
+
+    monkeypatch.setattr(pi, "PI_HOME", tmp_path)
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+
+    async for _ in pi.stream(
+        "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
+    ):
+        pass
+
+    assert captured["HOME"] == str(tmp_path)
 
 
 @pytest.mark.asyncio
@@ -199,6 +254,8 @@ async def test_provider_rejection_raises_rather_than_returning_empty(monkeypatch
     monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
 
+    # The message must survive even though a Node crash puts a useless version
+    # banner on the last line.
     with pytest.raises(RuntimeError, match="not supported when using Codex"):
         async for _ in pi.stream(
             "sys", [{"role": "user", "content": "hi"}], "gpt-5.4", Credentials()
