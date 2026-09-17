@@ -115,10 +115,11 @@ async def test_openai_run_uses_low_level_create_not_stream_helper():
     client = _fake_client([[_completed_event(text="Hi from gpt")]])
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
-        result = await agent.run(
+        result = await agent._run_openai(
             system_prompt="sys",
             messages=[{"role": "user", "content": "hello"}],
             model="gpt-5.5",
+            max_turns=20,
         )
 
     assert result.response == "Hi from gpt"
@@ -134,8 +135,11 @@ async def test_openai_create_kwargs_stream_and_store():
     client = _fake_client([[_completed_event(text="ok")]])
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
-        await agent.run(
-            system_prompt="sys", messages=[{"role": "user", "content": "x"}], model="gpt-5.5"
+        await agent._run_openai(
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "x"}],
+            model="gpt-5.5",
+            max_turns=20,
         )
 
     _, kwargs = client.responses.create.call_args
@@ -171,10 +175,11 @@ async def test_openai_executes_tool_then_returns_text():
     )
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
-        result = await agent.run(
+        result = await agent._run_openai(
             system_prompt="sys",
             messages=[{"role": "user", "content": "go"}],
             model="codex-5.3",
+            max_turns=20,
         )
 
     assert result.response == "done"
@@ -202,10 +207,13 @@ async def test_openai_streaming_yields_deltas():
     deltas: list[str] = []
     final = None
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
-        async for chunk in agent.run_streaming(
+        async for chunk in agent._run_openai_streaming(
             system_prompt="sys",
             messages=[{"role": "user", "content": "hi"}],
             model="gpt-5.5",
+            max_turns=20,
+            on_tool_start=None,
+            on_tool_end=None,
         ):
             if isinstance(chunk, str):
                 deltas.append(chunk)
@@ -234,8 +242,11 @@ async def test_openai_handles_none_output_without_crashing():
     client = _fake_client([events])
 
     with patch.object(Agent, "_openai_client", AsyncMock(return_value=client)):
-        result = await agent.run(
-            system_prompt="sys", messages=[{"role": "user", "content": "x"}], model="gpt-5.5"
+        result = await agent._run_openai(
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "x"}],
+            model="gpt-5.5",
+            max_turns=20,
         )
 
     assert result.response == "partial answer"
