@@ -3,6 +3,8 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from home_ops_agent.workers.alert_subscriber import (
     _cooldowns,
     _format_alert_context,
@@ -282,3 +284,97 @@ def test_the_triage_prompt_says_unsure_is_not_ignore():
     from home_ops_agent.agent.prompts import DEFAULTS
 
     assert "Being unsure is not `ignore`" in DEFAULTS["alert_triage"]
+
+
+# --- the subscription itself ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_stream_does_not_wait_for_the_investigation():
+    """It used to await _investigate_alert inline, so nothing read the stream
+    for however long a fix took — minutes, on Sonnet."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._subscribe_topic)
+    assert "_investigate_alert" not in source
+    assert "put_nowait" in source
+
+
+@pytest.mark.asyncio
+async def test_a_full_queue_drops_rather_than_blocking():
+    """Blocking would undo the point of the queue, and a repeat of a dropped
+    alert is dropped by the cooldown anyway."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._subscribe_topic)
+    assert "QueueFull" in source
+    assert alert_subscriber.ALERT_QUEUE_SIZE > 0
+
+
+def test_one_worker_investigates_at_a_time():
+    """Two investigations at once on the same cluster is a race nobody asked
+    for, and doubles the model spend on an alert storm."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber.run_alert_subscriber)
+    assert source.count("_alert_worker") == 1
+
+
+def test_reconnects_ask_for_what_was_missed():
+    """Without `since`, ntfy sends only what arrives after the connection opens
+    — so anything published while the agent was away, including during every
+    deploy, was lost outright. ntfy keeps messages for 48h."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._subscribe_topic)
+    assert '"since": since' in source
+    assert alert_subscriber.COLD_START_REPLAY.endswith("m")
+
+
+@pytest.mark.asyncio
+async def test_the_cooldown_fails_open_when_the_database_is_unreachable(monkeypatch):
+    """The direction matters. Investigating twice costs a model call; treating
+    the failure as "on cooldown" drops the alert, which is the outcome this
+    whole path exists to avoid.
+    """
+    from home_ops_agent.workers import alert_subscriber
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(alert_subscriber, "async_session", _boom)
+    alert_subscriber._cooldowns.clear()
+
+    assert await alert_subscriber._is_on_cooldown("anything") is False
+
+
+@pytest.mark.asyncio
+async def test_the_cooldown_setting_falls_back_when_the_database_is_unreachable(monkeypatch):
+    from home_ops_agent.config import settings
+    from home_ops_agent.workers import alert_subscriber
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(alert_subscriber, "async_session", _boom)
+    assert await alert_subscriber._get_cooldown_seconds() == settings.alert_cooldown_seconds
+
+
+def test_triage_records_the_identity_the_cooldown_matches_on():
+    """The task's `trigger` is topic:title, which is deliberately not the
+    identity — that strips the FIRING/RESOLVED marker so a fire/clear pair
+    collapses onto one key. Matching on trigger would miss."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._triage_alert)
+    assert '"identity": alert_identity(alert)' in source
