@@ -139,6 +139,9 @@ class Agent:
         tool_def = self.tools.get(name)
         if tool_def is None:
             return json.dumps({"error": f"Unknown tool: {name}"})
+        from home_ops_agent.workers import progress
+
+        progress.note_tool(name)
         try:
             result = await tool_def.handler(tool_input)
             if not isinstance(result, str):

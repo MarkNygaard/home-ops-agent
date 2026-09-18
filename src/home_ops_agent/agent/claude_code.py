@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from home_ops_agent.agent import providers
+from home_ops_agent.workers import progress
 
 if TYPE_CHECKING:
     from home_ops_agent.agent.core import AgentResult, ToolDefinition
@@ -203,6 +204,10 @@ def _wrap_tool(tool_def: "ToolDefinition", ctx: _ToolContext):
         index = ctx.next_index()
         ctx.tool_calls.append({"tool": tool_def.name, "input": args})
         logger.info("Executing tool: %s", tool_def.name)
+        # Which tool the model reaches for is the only signal anyone has for the
+        # steps inside a review: they all happen within one model call, so the
+        # worker cannot report them.
+        progress.note_tool(tool_def.name)
         if ctx.on_tool_start:
             await ctx.on_tool_start(tool_def.name, index)
         try:

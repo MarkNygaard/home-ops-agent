@@ -130,11 +130,24 @@ export interface PrCheckResult {
   error?: string
 }
 
+/** Where a live run has got to, so the workflow diagram can show it moving.
+ *  Null when nothing is running — which is what makes the diagram fall back to
+ *  showing the shape of the flow rather than a stale highlight. */
+export interface RunProgress {
+  run_id: string
+  agent: string
+  step: string
+  detail: string
+  started_at: string
+  updated_at: string
+}
+
 export interface StatusResponse {
   has_credentials: boolean
   last_pr_check_at: string | null
   pr_check_running?: boolean
   last_pr_check_result?: PrCheckResult | null
+  run?: RunProgress | null
 }
 
 export interface UsageByModel {

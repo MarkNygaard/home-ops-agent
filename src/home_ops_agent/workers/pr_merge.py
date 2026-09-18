@@ -12,7 +12,7 @@ from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.database import AgentTask, Conversation, Message, async_session
-from home_ops_agent.workers import notifications
+from home_ops_agent.workers import notifications, progress
 from home_ops_agent.workers import verdict as verdict_mod
 from home_ops_agent.workers.pr_monitor import (
     MAX_REVIEWS_PER_CYCLE,
@@ -107,6 +107,7 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             continue
 
         # Merge it
+        progress.step("merge_safe", f"PR #{pr_number}")
         logger.info("Auto-merging PR #%s: %s", pr_number, pr["title"])
         result = await merge_pr({"pr_number": pr_number})
         merge_result = json.loads(result)
@@ -356,6 +357,7 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                 from home_ops_agent.agent.tools.github import merge_pr
 
                 logger.info("Opus approved PR #%s, auto-merging", pr_number)
+                progress.step("merge_after_deep", f"PR #{pr_number}")
                 merge_result_str = await merge_pr({"pr_number": pr_number})
                 merge_result = json.loads(merge_result_str)
 
@@ -417,6 +419,7 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                         await attempt_code_fix(pr, result.response, agent)
                         return
 
+                progress.step("notify_deep", f"PR #{pr_number}")
                 title = f"Deep review: PR #{pr_number} needs attention"
                 priority = "high"
                 tags = "warning"
@@ -546,8 +549,10 @@ async def wait_for_ci_and_merge(
                 # CI proves the manifests render. It does not prove the fix is
                 # right, so a second opinion stands between the edit and main.
                 if agent is not None:
+                    progress.step("re_review", f"PR #{pr_number}")
                     approved, summary = await review_fixed_pr(pr_number, agent)
                     if not approved:
+                        progress.step("notify_rereview", f"PR #{pr_number}")
                         logger.info(
                             "Fixed PR #%s passed CI but the re-review declined it", pr_number
                         )
@@ -570,6 +575,7 @@ async def wait_for_ci_and_merge(
                         return
 
                 # Merge it
+                progress.step("merge_after_fix", f"PR #{pr_number}")
                 merge_result_json = await merge_pr({"pr_number": pr_number})
                 merge_result = json.loads(merge_result_json)
 

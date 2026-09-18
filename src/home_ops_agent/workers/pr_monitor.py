@@ -15,6 +15,7 @@ from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
+from home_ops_agent.workers import progress
 from home_ops_agent.workers import verdict as verdict_mod
 
 logger = logging.getLogger(__name__)
@@ -373,6 +374,7 @@ async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
     from home_ops_agent.workers.pr_merge import deep_review_pr
 
     pr_number = pr["number"]
+    progress.step("decide", f"PR #{pr_number}")
     verdict = verdict_mod.parse(response)
 
     if not verdict.structured:
@@ -387,8 +389,10 @@ async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
         return
 
     if verdict.fixable:
+        progress.step("in_scope", f"PR #{pr_number}")
         blocked = await out_of_scope_paths(pr_number)
         if blocked:
+            progress.step("notify_scope", f"PR #{pr_number}")
             logger.info(
                 "PR #%s is fixable but touches %d path(s) a fix may not commit (%s); "
                 "escalating instead",
@@ -397,10 +401,12 @@ async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
                 ", ".join(blocked[:3]),
             )
         else:
+            progress.step("code_fix", f"PR #{pr_number}")
             await attempt_code_fix(pr, response, agent)
             return
 
     if pr_mode == "auto_merge_all":
+        progress.step("deep_review", f"PR #{pr_number}")
         await deep_review_pr(pr, response, agent)
 
 
@@ -448,6 +454,7 @@ async def check_prs() -> dict:
     reviewed_count = 0
     failed_count = 0
     rate_limited = False
+    progress.begin("pr_review", f"{len(prs)} open PR(s)")
     for pr in prs:
         if reviewed_count >= MAX_REVIEWS_PER_CYCLE:
             rate_limited = True
@@ -457,6 +464,7 @@ async def check_prs() -> dict:
             )
             break
 
+        progress.step("check_pr", f"PR #{pr['number']}")
         result = await _review_pr(pr, agent)
         if result is None:
             # _review_pr swallows its own exceptions, so a model without
@@ -483,6 +491,7 @@ async def check_prs() -> dict:
             if pr_mode != "comment_only":
                 await _route(pr, result.response, agent, pr_mode)
 
+    progress.finish()
     return {
         "status": "completed",
         "open_prs": len(prs),

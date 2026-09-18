@@ -54,6 +54,7 @@ async def health():
 @router.get("/api/status")
 async def agent_status():
     """Get agent status overview."""
+    from home_ops_agent.workers import progress
     from home_ops_agent.workers.pr_monitor import last_pr_check_at
 
     credentials = await build_credentials()
@@ -80,6 +81,10 @@ async def agent_status():
         "cluster_domain": settings.cluster_domain,
         "last_pr_check_at": last_pr_check_at.isoformat() if last_pr_check_at else None,
         "pr_check_running": _pr_check_in_flight(),
+        # Which step a live run has reached, for the workflow diagram. None when
+        # nothing is running, which is what makes the diagram fall back to
+        # showing the shape of the flow rather than a stale highlight.
+        "run": progress.snapshot(),
         "last_pr_check_result": _pr_check_last_result,
         "last_health_check_result": _health_check_last_result,
         "task_counts": task_counts,
