@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 
 if TYPE_CHECKING:
@@ -88,7 +89,10 @@ async def get_pod_logs(params: dict) -> str:
             container=container,
             tail_lines=tail_lines,
         )
-        return logs or "(no logs)"
+        # Application logs carry whatever a service was handed: a User-Agent, a
+        # filename, a search query. Alert triage reads these on every alert, so
+        # a log line is the cheapest way into a model that holds write tools.
+        return untrusted.wrap(f"pod logs {namespace}/{pod_name}", logs or "(no logs)")
     except ApiException as e:
         return json.dumps({"error": f"Failed to get logs: {e.reason}"})
 

@@ -12,6 +12,7 @@ import json
 
 import pytest
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.tools import websearch
 
 
@@ -48,7 +49,9 @@ async def test_results_are_returned_with_their_urls(httpx_mock):
             ]
         }
     )
-    result = json.loads(await websearch.web_search({"query": "cert-manager 1.19"}))
+    result = json.loads(
+        untrusted.unwrap(await websearch.web_search({"query": "cert-manager 1.19"}))
+    )
 
     assert result["count"] == 2
     assert result["results"][0]["url"] == "https://cert-manager.io/docs/releases/1.19/"
@@ -99,7 +102,7 @@ async def test_limit_is_clamped(httpx_mock):
     httpx_mock.add_response(
         json={"results": [{"title": str(i), "url": f"u{i}", "content": ""} for i in range(50)]}
     )
-    result = json.loads(await websearch.web_search({"query": "x", "limit": 999}))
+    result = json.loads(untrusted.unwrap(await websearch.web_search({"query": "x", "limit": 999})))
     assert result["count"] == websearch.MAX_LIMIT
 
 

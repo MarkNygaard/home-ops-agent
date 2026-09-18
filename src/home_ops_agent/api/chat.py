@@ -14,6 +14,7 @@ from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.credentials import build_credentials
+from home_ops_agent.config import settings
 from home_ops_agent.database import Conversation, Message, async_session
 
 logger = logging.getLogger(__name__)
@@ -29,9 +30,40 @@ def set_mcp_tools(tools: list):
     _mcp_tools = tools
 
 
+def _origin_allowed(origin: str | None) -> bool:
+    """Whether a browser at ``origin`` may open this socket.
+
+    WebSockets are not covered by the same-origin policy -- the browser will
+    happily connect to a different host and hand the page the result -- so the
+    server has to check `Origin` itself. Without this, any page open in a
+    browser on the trusted VLAN could drive the agent, and the chat can now call
+    every tool the agent has, including deleting pods and merging PRs.
+
+    A missing `Origin` is allowed. Browsers always send it on a WebSocket
+    handshake, so its absence means a non-browser client -- a script, a probe --
+    and those are not what cross-site request forgery is about. Refusing them
+    would break local tooling while stopping nothing.
+    """
+    if not origin:
+        return True
+
+    allowed = {"http://localhost:3000", "http://127.0.0.1:3000"}
+    if settings.base_url:
+        allowed.add(settings.base_url.rstrip("/"))
+    return origin.rstrip("/") in allowed
+
+
 @router.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
     """WebSocket endpoint for real-time chat with the agent."""
+    origin = websocket.headers.get("origin")
+    if not _origin_allowed(origin):
+        logger.warning("Refused a chat socket from origin %r", origin)
+        # Closed before accept, so the handshake fails rather than the page
+        # getting an open socket it is then told off for using.
+        await websocket.close(code=1008)
+        return
+
     await websocket.accept()
 
     conversation_id = None

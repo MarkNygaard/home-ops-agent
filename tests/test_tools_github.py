@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.tools.github import (
     ALLOWED_COMMIT_PATHS,
     PROTECTED_BRANCHES,
@@ -340,7 +341,7 @@ async def test_get_release_found(httpx_mock, mock_settings):
             "prerelease": False,
         },
     )
-    result = json.loads(await get_release({"repo": "test/repo", "tag": "v1.0.0"}))
+    result = json.loads(untrusted.unwrap(await get_release({"repo": "test/repo", "tag": "v1.0.0"})))
     assert result["tag"] == "v1.0.0"
     assert "Bug fixes" in result["body"]
 
@@ -358,14 +359,16 @@ async def test_get_release_404_fallback_v_prefix(httpx_mock, mock_settings):
             "prerelease": False,
         },
     )
-    result = json.loads(await get_release({"repo": "test/repo", "tag": "1.0.0"}))
+    result = json.loads(untrusted.unwrap(await get_release({"repo": "test/repo", "tag": "1.0.0"})))
     assert result["tag"] == "v1.0.0"
 
 
 async def test_get_release_not_found(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=404)
     httpx_mock.add_response(status_code=404)
-    result = json.loads(await get_release({"repo": "test/repo", "tag": "v99.0.0"}))
+    result = json.loads(
+        untrusted.unwrap(await get_release({"repo": "test/repo", "tag": "v99.0.0"}))
+    )
     assert "error" in result
     assert "not found" in result["error"]
 
