@@ -10,6 +10,7 @@ export interface ProviderStatus {
 export interface Settings {
   agent_enabled: boolean
   pr_mode: string
+  alert_mode: string
   providers: {
     claude_code: ProviderStatus
     kimi: ProviderStatus

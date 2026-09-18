@@ -68,6 +68,41 @@ WITHHELD_FROM_TRIAGE = WITHHELD_FROM_ALERT_AGENT | {
 }
 
 
+# How much an alert is allowed to do. `agent_enabled` was the only control, and
+# it is all-or-nothing -- turning the agent off to stop it acting also stops the
+# diagnosis you turned to it for. PR handling has had four graded modes all
+# along; alerts had none.
+#
+# `full` is the default because it is what the agent already did. A new setting
+# that silently changes behaviour is worse than no setting.
+ALERT_MODES = ("observe", "restart_only", "full")
+DEFAULT_ALERT_MODE = "full"
+
+# Withheld on top of WITHHELD_FROM_ALERT_AGENT in restart_only: the agent may put
+# the cluster back the way the manifests say, and may not change what they say.
+WITHHELD_IN_RESTART_ONLY = frozenset(
+    {
+        "github_create_pr",
+        "github_create_branch",
+        "github_create_commit",
+        "code_fix",
+    }
+)
+
+
+async def _get_alert_mode() -> str:
+    """How much this alert may do. Falls back to the default on any problem."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(Setting).where(Setting.key == "alert_mode"))
+            setting = result.scalar_one_or_none()
+            if setting and setting.value in ALERT_MODES:
+                return setting.value
+    except Exception:
+        logger.warning("Could not read alert_mode; using %s", DEFAULT_ALERT_MODE)
+    return DEFAULT_ALERT_MODE
+
+
 async def _get_cooldown_seconds() -> int:
     """Get alert cooldown from DB settings, falling back to env config.
 
@@ -402,6 +437,23 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
     logger.info("Alert fix completed: %s", alert.get("title"))
 
 
+async def _notify_triage(alert: dict, summary: str, prefix: str = "Alert") -> None:
+    """Send the triage diagnosis. Never raises -- a failed send is not a failed
+    investigation, and the record is already in the database either way."""
+    try:
+        await notifications.notify(
+            notifications.ATTENTION,
+            {
+                "title": f"{prefix}: {alert.get('title', 'Unknown')}",
+                "message": summary[:300],
+                "priority": "high",
+                "tags": "warning",
+            },
+        )
+    except Exception:
+        logger.exception("Failed to send alert notification")
+
+
 async def _review_the_new_pr(alert: dict) -> None:
     """Ask the PR monitor to run now, so an alert's proposed fix is reviewed.
 
@@ -461,8 +513,13 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
     triage_agent = Agent(credentials)
     triage_agent.register_tools([t for t in skill_tools if t.name not in WITHHELD_FROM_TRIAGE])
 
+    mode = await _get_alert_mode()
+    withheld_from_fix = set(WITHHELD_FROM_ALERT_AGENT)
+    if mode == "restart_only":
+        withheld_from_fix |= WITHHELD_IN_RESTART_ONLY
+
     fix_agent = Agent(credentials)
-    fix_agent.register_tools([t for t in skill_tools if t.name not in WITHHELD_FROM_ALERT_AGENT])
+    fix_agent.register_tools([t for t in skill_tools if t.name not in withheld_from_fix])
 
     try:
         # Stage 1: Triage (cheap, fast — Haiku)
@@ -476,27 +533,27 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
             logger.info("Alert ignored (transient/resolved): %s", alert.get("title"))
             return
 
+        if action == "fix" and mode == "observe":
+            # The diagnosis is still worth having -- it is the part you would
+            # have read anyway -- so this notifies rather than falling silent,
+            # and says a fix was available so the mode's cost is visible.
+            logger.info("Alert fixable but alert_mode is observe: %s", alert.get("title"))
+            progress.step("notify_user")
+            await _notify_triage(
+                alert,
+                triage_summary,
+                prefix="Alert needs you (a fix was available)",
+            )
+            return
+
         if action == "fix":
             # Stage 2: Fix (capable — Sonnet)
             logger.info("Escalating to fix agent: %s", alert.get("title"))
             progress.step("alert_fix")
             await _fix_alert(alert, triage_summary, fix_agent)
         else:
-            # Notify only — send the triage summary via ntfy
             progress.step("notify_user")
-
-            try:
-                await notifications.notify(
-                    notifications.ATTENTION,
-                    {
-                        "title": f"Alert: {alert.get('title', 'Unknown')}",
-                        "message": triage_summary[:300],
-                        "priority": "high",
-                        "tags": "warning",
-                    },
-                )
-            except Exception:
-                logger.exception("Failed to send alert notification")
+            await _notify_triage(alert, triage_summary)
 
     except Exception:
         logger.exception("Failed to investigate alert: %s", alert.get("title"))

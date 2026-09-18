@@ -53,6 +53,7 @@ async def get_settings():
     return {
         "agent_enabled": db_settings.get("agent_enabled", "true").lower() in ("true", "1", "yes"),
         "pr_mode": db_settings.get("pr_mode", "comment_only"),
+        "alert_mode": db_settings.get("alert_mode", "full"),
         # Per-provider auth status — all three can be configured simultaneously.
         "providers": {
             "kimi": {
@@ -99,29 +100,39 @@ async def get_settings():
     }
 
 
+# Every agent whose model is configurable. Derived rather than listed twice: the
+# UI offers a model selector per agent, and a key missing here is a dropdown that
+# silently refuses to save.
+_CONFIGURABLE_MODELS = {
+    "pr_review",
+    "alert_triage",
+    "alert_fix",
+    "code_fix",
+    "deep_review",
+    "chat",
+}
+
 ALLOWED_SETTING_KEYS = {
     "agent_enabled",
     "pr_mode",
+    "alert_mode",
     "kimi_api_key",
     "claude_code_oauth_token",
     "alert_cooldown_seconds",
     "ntfy_topics",
     "pr_check_interval_seconds",
-    "model_pr_review",
-    "prompt_cluster_context",
-    "prompt_pr_review",
-    "prompt_alert_response",
-    "prompt_chat",
-    "model_alert_triage",
-    "model_alert_fix",
-    "model_code_fix",
-    "model_deep_review",
-    "model_chat",
     "chat_suggestions",
     "notify_level",
     "ntfy_url",
     "ntfy_agent_topic",
     "ntfy_token",
+    *{f"model_{name}" for name in _CONFIGURABLE_MODELS},
+    # Derived from the prompts that actually exist, not hand-listed. Two Prompt
+    # buttons shipped against keys that were never added here -- code_fix and
+    # alert_triage -- so both were rejected with "Unknown setting" the first
+    # time anyone pressed Save. A list maintained by hand beside a list that
+    # grows is a list that goes stale.
+    *{f"prompt_{name}" for name in PROMPT_DEFAULTS},
 }
 
 

@@ -240,3 +240,27 @@ def test_reset_prompt_success(client):
     # Verify it's no longer customized
     response = client.get("/api/prompts")
     assert response.json()["chat"]["is_customized"] is False
+
+
+def test_every_prompt_with_a_button_in_the_ui_can_actually_be_saved():
+    """This is the bug this test exists for, not a hypothetical.
+
+    `prompt_code_fix` and `prompt_alert_triage` shipped with edit buttons in the
+    UI and were never added to the allowlist, so saving them returned "Unknown
+    setting" — a form that looked like it worked and silently did nothing. The
+    set is now derived from PROMPT_DEFAULTS rather than hand-maintained, so a new
+    prompt cannot be added without becoming saveable.
+    """
+    from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
+
+    for name in PROMPT_DEFAULTS:
+        assert f"prompt_{name}" in ALLOWED_SETTING_KEYS, name
+
+    assert "prompt_code_fix" in ALLOWED_SETTING_KEYS
+    assert "prompt_alert_triage" in ALLOWED_SETTING_KEYS
+
+
+def test_alert_mode_can_be_set():
+    """The setting the alert flow reads. Without it the UI radio group would be
+    the same silently-dead form as the prompt buttons above."""
+    assert "alert_mode" in ALLOWED_SETTING_KEYS
