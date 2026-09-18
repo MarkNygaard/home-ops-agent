@@ -98,10 +98,14 @@ on the developer's workstation, NOT a cluster upgrade. A `kubelet` mention in
 
 ### Verdict
 
-End your review with exactly these two lines, and nothing after them:
+End your review comment with exactly these two lines, and nothing after them:
 
     SAFE_TO_MERGE: yes|no
     FIXABLE: yes|no
+
+Then end your final message with the same two lines. They are read from the
+comment you posted, but a summary that disagrees with the comment above it is
+confusing to whoever reads the run afterwards.
 
 They are two independent questions, not a choice between labels:
 

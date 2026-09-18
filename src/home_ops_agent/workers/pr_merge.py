@@ -17,7 +17,6 @@ from home_ops_agent.workers import verdict as verdict_mod
 from home_ops_agent.workers.pr_monitor import (
     MAX_REVIEWS_PER_CYCLE,
     _already_reviewed,
-    _extract_verdict,
     _get_pr_mode,
     _get_review_summary,
     _is_safe_to_auto_merge,
@@ -328,7 +327,8 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                     status="completed",
                     conversation_id=conversation.id,
                     summary=(
-                        f"[Deep Review] {_extract_verdict(result.response)}{result.response[:450]}"
+                        f"[Deep Review] {verdict_mod.parse_result(result).label}"
+                        f"{result.response[:450]}"
                     ),
                     actions_taken={
                         "tool_calls": result.tool_calls,
@@ -350,7 +350,11 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
 
             # Notify
 
-            approved = is_approved_by_deep_review(result.response)
+            # From the comment it posted, not its closing summary: on PR #1072
+            # the comment ended SAFE_TO_MERGE: yes and the summary ended
+            # "I disagree with the `NEEDS_REVIEW` flag", so reading the summary
+            # turned an approval into a notification.
+            approved = verdict_mod.parse_result(result).safe_to_merge
 
             if approved:
                 # Auto-merge after Opus approval
@@ -399,7 +403,7 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                 # was wrong wrote it on the PR and stopped, and nothing ever
                 # picked it up: the next cycle skips any PR whose head SHA has
                 # already been reviewed, so the comment was never read again.
-                deep_verdict = verdict_mod.parse(result.response)
+                deep_verdict = verdict_mod.parse_result(result)
                 if deep_verdict.fixable:
                     from home_ops_agent.workers.pr_monitor import out_of_scope_paths
 
@@ -502,7 +506,7 @@ async def review_fixed_pr(pr_number: int, agent: Agent) -> tuple[bool, str]:
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
     )
-    approved = verdict_mod.parse(result.response).safe_to_merge
+    approved = verdict_mod.parse_result(result).safe_to_merge
     logger.info(
         "Re-review of fixed PR #%s: %s", pr_number, "approved" if approved else "not approved"
     )
