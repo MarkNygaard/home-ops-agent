@@ -243,24 +243,39 @@ function getLayoutedElements(
 
 /* ── Edge helpers ────────────────────────────────────────── */
 
+/*
+ * An accented (orange) edge means one thing, consistently: this route ends with
+ * an agent writing to the repository or the cluster. Gray routes end in a
+ * notification, or simply stop and wait for a person.
+ *
+ * It previously meant nothing in particular. The accent was set on the single
+ * edge *into* the code-fix branch and on nothing else, so the entry to the path
+ * was highlighted while the path itself — Code Fix, Write Fix, Push Fix, Merge —
+ * was drawn in the same gray as the branch that just notifies you. There was no
+ * rule a reader could infer, because there was not one.
+ *
+ * `animated` is kept separate and used only on the agent's entry edge, where
+ * movement reads as "this is where a run begins" rather than as emphasis.
+ */
 function mainEdge(
   id: string,
   source: string,
   target: string,
   animated?: boolean,
+  accent?: boolean,
 ): Edge {
   return {
     id,
     source,
     target,
     type: 'default',
-    ...(animated
+    ...(animated || accent
       ? {
-          animated: true,
+          ...(animated ? { animated: true } : {}),
           style: {
             stroke: 'var(--accent-orange)',
             strokeWidth: 2,
-            opacity: 0.5,
+            opacity: animated ? 0.5 : 0.4,
           },
         }
       : {}),
@@ -359,18 +374,21 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
       ],
       [
         ...reviewEdges,
-        branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
+        // Accented: every route that ends in a write. Merging is a write to
+        // main, so the SAFE branch is accented too.
+        branchEdge('e-s5-b1', 's5', 'b1', true, 'SAFE'),
         branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
         branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
-        branchEdge('e-g1-b3b', 'g1', 'b3b', false, 'NO'),
-        mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
-        mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
-        mainEdge('e-b2c-b2e', 'b2c', 'b2e'),
+        mainEdge('e-b2a-b2b', 'b2a', 'b2b', false, true),
+        mainEdge('e-b2b-b2c', 'b2b', 'b2c', false, true),
+        mainEdge('e-b2c-b2e', 'b2c', 'b2e', false, true),
         branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
+        branchEdge('e-b3-b3a', 'b3', 'b3a', true, 'OK'),
+        branchEdge('e-b3-g1', 'b3', 'g1', true, 'FIXABLE'),
+        // Gray: every route that stops and waits for a person.
+        branchEdge('e-g1-b3b', 'g1', 'b3b', false, 'NO'),
         branchEdge('e-b2e-b3b', 'b2e', 'b3b', false, 'RISK'),
         branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
-        branchEdge('e-b3-b3a', 'b3', 'b3a', false, 'OK'),
-        branchEdge('e-b3-g1', 'b3', 'g1', true, 'FIXABLE'),
         branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
       ],
     );
@@ -391,14 +409,16 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
     ],
     [
       ...reviewEdges,
-      branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
+      // Accented: routes that end in a write.
+      branchEdge('e-s5-b1', 's5', 'b1', true, 'SAFE'),
       branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
       branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
-      branchEdge('e-g1-b3', 'g1', 'b3', false, 'NO'),
-      mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
-      mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
-      mainEdge('e-b2c-b2e', 'b2c', 'b2e'),
+      mainEdge('e-b2a-b2b', 'b2a', 'b2b', false, true),
+      mainEdge('e-b2b-b2c', 'b2b', 'b2c', false, true),
+      mainEdge('e-b2c-b2e', 'b2c', 'b2e', false, true),
       branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
+      // Gray: routes that stop and wait for a person.
+      branchEdge('e-g1-b3', 'g1', 'b3', false, 'NO'),
       branchEdge('e-b2e-b3', 'b2e', 'b3', false, 'RISK'),
       branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
     ],
@@ -579,6 +599,27 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
             </p>
           </TooltipContent>
         </Tooltip>
+        {/* The accent colour carries meaning, so it needs saying somewhere.
+            Without this it reads as decoration and the distinction is lost. */}
+        {activeAgent === 'pr_review' && (
+          <div className="ml-auto flex items-center gap-4 text-[10px] tracking-wide text-muted-foreground/60">
+            <span className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-px w-4"
+                style={{ backgroundColor: 'var(--accent-orange)', opacity: 0.6 }}
+              />
+              ends in a write
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block h-px w-4 bg-muted-foreground/40"
+              />
+              waits for you
+            </span>
+          </div>
+        )}
       </div>
       <div className="relative overflow-hidden rounded-xl" style={{ height }}>
         <ReactFlow
