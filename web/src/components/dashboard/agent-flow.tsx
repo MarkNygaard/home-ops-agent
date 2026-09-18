@@ -483,7 +483,7 @@ function makePRReviewFlow(prMode: string): Flow {
       [
         ...reviewNodes,
         { id: 'c1', type: 'step', position: pos, data: { label: 'Comment', icon: 'IconMessage' } },
-        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell', step: 'notify_fixed' } },
+        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell' } },
       ],
       [
         ...reviewEdges,
@@ -646,7 +646,7 @@ function makeAlertFlow(): Flow {
       id: 'b1a',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Alert Fix', icon: 'IconBolt', subagent: true, step: 'alert_fix' },
+      data: { label: 'Alert Fix', icon: 'IconBolt', subagent: true, decision: true, step: 'alert_fix' },
     },
     {
       id: 'b1b',
@@ -673,7 +673,18 @@ function makeAlertFlow(): Flow {
       id: 'b1d',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Notify', icon: 'IconBell' },
+      data: { label: 'Notify', icon: 'IconBell', step: 'notify_fixed' },
+    },
+    {
+      id: 'b1e',
+      type: 'step',
+      position: { x: 0, y: 0 },
+      data: {
+        label: 'Open PR',
+        icon: 'IconGitPullRequest',
+        step: 'open_pr',
+        hint: 'When the cluster is behaving exactly as configured and the configuration is the problem, the fix is a manifest change rather than a restart. The agent opens a PR under kubernetes/apps/ and asks the PR Review agent to look at it immediately, instead of waiting up to an hour for the next scheduled check. It cannot merge it — a person decides.',
+      },
     },
     {
       id: 'b2',
@@ -704,6 +715,9 @@ function makeAlertFlow(): Flow {
     // the PR flow had -- the entry highlighted, the path itself drawn like the
     // branch that merely notifies you.
     branchEdge('e-s5-b1a', 's5', 'b1a', true, 'FIX'),
+    // Gray: a PR waits for a person whatever the review says. The agent is not
+    // renovate[bot], and auto-merge requires that author — deliberately.
+    branchEdge('e-b1a-b1e', 'b1a', 'b1e', false, 'CHANGE'),
     mainEdge('e-b1a-b1b', 'b1a', 'b1b', false, true),
     mainEdge('e-b1b-b1c', 'b1b', 'b1c', false, true),
     mainEdge('e-b1c-b1d', 'b1c', 'b1d', false, true),

@@ -167,11 +167,33 @@ your findings.
 - Restart a stuck pod (delete it to force recreation)
 - Trigger Flux reconciliation for a stuck HelmRelease or Kustomization
 - Resume a suspended Flux resource
+- **Open a pull request** with a manifest change, when the cluster is behaving
+  exactly as configured and the configuration is the problem
+
+### When a restart is not the answer
+
+A restart clears a stuck state. It does nothing about a limit that is too low, a
+probe whose timeout is too short, or a replica count that cannot schedule — and
+restarting in those cases buys minutes and hides a recurring alert behind an
+apparently successful fix.
+
+When the manifest is what is wrong, propose the change instead: create a branch,
+commit the edit under `kubernetes/apps/`, and open a PR explaining what the
+alert was and why this fixes it. Say in your reply that you opened one.
+
+You are not merging it, and you cannot: a human decides whether a change to the
+cluster's configuration lands. The PR will be reviewed automatically within a
+minute or two, and the review is advice to that human, not an approval.
+
+Prefer a restart when the state is genuinely stuck and the configuration is
+right. Prefer a PR when the same alert would fire again tomorrow. When it is
+both — a pod that is wedged *and* under-resourced — do both, and say so.
 
 ### Actions You CANNOT Take
 - Modify RBAC, secrets, or namespaces
 - Scale deployments
-- Apply raw manifests
+- Apply a manifest directly to the cluster (changing configuration goes through
+  a pull request, never through the API server)
 - Modify node configuration
 - Anything to a Talos or Kubernetes node upgrade (see below) — diagnose only
 

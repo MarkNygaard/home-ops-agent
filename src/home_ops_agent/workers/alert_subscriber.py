@@ -368,21 +368,61 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
     # send this itself, which is how the PR path ended up with four formats for
     # the same event -- and now that ntfy_publish is withheld, nothing would
     # announce a completed fix at all.
+    # A PR opened here would otherwise wait for the next scheduled check --
+    # up to a full interval, and the interval is an hour. Reviewing it now costs
+    # one cycle and makes the alert's proposed fix land in front of the operator
+    # while they are still reading the notification about it.
+    #
+    # Detected from the tool calls rather than from the model's prose: whether a
+    # PR exists is a fact, and asking the model to also tell us is a second
+    # source of truth that can disagree with the first.
+    opened_pr = any(c.get("tool") == "github_create_pr" for c in result.tool_calls)
+    if opened_pr:
+        await _review_the_new_pr(alert)
+
     progress.step("notify_fixed")
     try:
         await notifications.notify(
             notifications.OUTCOME,
             {
-                "title": f"Alert fixed: {alert.get('title', 'Unknown')}",
+                "title": (
+                    f"Alert: PR opened for {alert.get('title', 'Unknown')}"
+                    if opened_pr
+                    else f"Alert fixed: {alert.get('title', 'Unknown')}"
+                ),
                 "message": result.response[:300],
-                "priority": "default",
-                "tags": "wrench",
+                # A PR needs a person; a completed restart does not.
+                "priority": "high" if opened_pr else "default",
+                "tags": "memo" if opened_pr else "wrench",
             },
         )
     except Exception:
         logger.exception("Failed to send the alert fix notification")
 
     logger.info("Alert fix completed: %s", alert.get("title"))
+
+
+async def _review_the_new_pr(alert: dict) -> None:
+    """Ask the PR monitor to run now, so an alert's proposed fix is reviewed.
+
+    Imported inside the function on purpose: the trigger and its in-flight guard
+    live in the status API, which already imports from this package, so a module
+    level import would close a cycle.
+
+    Never fatal. The PR exists either way, and the scheduled check will reach it;
+    this only shortens the wait.
+    """
+    try:
+        from home_ops_agent.api.status import trigger_pr_check
+
+        result = await trigger_pr_check()
+        logger.info(
+            "Alert %s opened a PR; PR check %s",
+            alert.get("title"),
+            result.get("status", "triggered"),
+        )
+    except Exception:
+        logger.exception("Could not trigger a PR check after the alert opened one")
 
 
 async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
