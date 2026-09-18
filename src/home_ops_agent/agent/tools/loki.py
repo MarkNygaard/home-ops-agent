@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 
 if TYPE_CHECKING:
@@ -37,7 +38,9 @@ async def loki_query(params: dict, base_url: str = DEFAULT_URL) -> str:
         if data.get("status") != "success":
             return json.dumps({"error": data.get("error", "Query failed")})
 
-        return json.dumps(data["data"], default=str)
+        # Log lines, so: whatever a service was handed by whoever was
+        # talking to it.
+        return untrusted.wrap("loki", json.dumps(data["data"], default=str))
     except httpx.HTTPError as e:
         return json.dumps({"error": f"Loki query failed: {e}"})
 
@@ -63,7 +66,9 @@ async def loki_query_range(params: dict, base_url: str = DEFAULT_URL) -> str:
         if data.get("status") != "success":
             return json.dumps({"error": data.get("error", "Query failed")})
 
-        return json.dumps(data["data"], default=str)
+        # Log lines, so: whatever a service was handed by whoever was
+        # talking to it.
+        return untrusted.wrap("loki", json.dumps(data["data"], default=str))
     except httpx.HTTPError as e:
         return json.dumps({"error": f"Loki range query failed: {e}"})
 

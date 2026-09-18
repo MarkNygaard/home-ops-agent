@@ -5,6 +5,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.tools.kubernetes import (
     PROTECTED_NAMESPACES,
     _serialize,
@@ -188,7 +189,9 @@ async def test_get_pod_logs_empty(mock_core):
     mock_core.read_namespaced_pod_log.return_value = ""
 
     result = await get_pod_logs({"namespace": "default", "pod_name": "test-pod"})
-    assert result == "(no logs)"
+    # Wrapped now: application logs are attacker-influenced text going into a
+    # model that holds write tools, so they are marked as data.
+    assert untrusted.unwrap(result) == "(no logs)"
 
 
 @patch("home_ops_agent.agent.tools.kubernetes.core_v1")

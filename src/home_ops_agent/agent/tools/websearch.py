@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 
 if TYPE_CHECKING:
@@ -95,18 +96,23 @@ async def web_search(params: dict) -> str:
             {"results": [], "note": f"No results. Unresponsive engines: {dead or 'none'}"}
         )
 
-    return json.dumps(
-        {
-            "count": len(results),
-            "results": [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "snippet": (r.get("content") or "")[:SNIPPET_CHARS],
-                }
-                for r in results
-            ],
-        }
+    # Snippets are whatever a web page says. Marked so the model can tell a
+    # search result apart from an instruction.
+    return untrusted.wrap(
+        "web_search",
+        json.dumps(
+            {
+                "count": len(results),
+                "results": [
+                    {
+                        "title": r.get("title", ""),
+                        "url": r.get("url", ""),
+                        "snippet": (r.get("content") or "")[:SNIPPET_CHARS],
+                    }
+                    for r in results
+                ],
+            }
+        ),
     )
 
 

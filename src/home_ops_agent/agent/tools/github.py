@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.config import settings
 
@@ -435,15 +436,20 @@ async def get_release(params: dict) -> str:
         if len(body) > 5000:
             body = body[:5000] + "\n\n... (truncated)"
 
-        return json.dumps(
-            {
-                "tag": release["tag_name"],
-                "name": release.get("name", ""),
-                "published_at": release.get("published_at", ""),
-                "body": body,
-                "html_url": release["html_url"],
-                "prerelease": release.get("prerelease", False),
-            }
+        # Release notes are prose from another project's maintainers, and this
+        # tool deliberately reads any repository.
+        return untrusted.wrap(
+            f"release notes {repo}@{tag}",
+            json.dumps(
+                {
+                    "tag": release["tag_name"],
+                    "name": release.get("name", ""),
+                    "published_at": release.get("published_at", ""),
+                    "body": body,
+                    "html_url": release["html_url"],
+                    "prerelease": release.get("prerelease", False),
+                }
+            ),
         )
 
 
