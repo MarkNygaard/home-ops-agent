@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from home_ops_agent.agent.tools.github import (
     ALLOWED_COMMIT_PATHS,
     PROTECTED_BRANCHES,
@@ -409,3 +411,81 @@ async def test_create_pr_success(httpx_mock, mock_settings):
     result = json.loads(await create_pr({"title": "Fix things", "head": "fix/things"}))
     assert result["status"] == "ok"
     assert result["pr_number"] == 99
+
+
+@pytest.mark.asyncio
+async def test_file_content_defaults_to_this_repo(httpx_mock, mock_settings):
+    """Every existing caller omits `repo` and must keep working unchanged."""
+    from home_ops_agent.agent.tools.github import get_file_content
+
+    httpx_mock.add_response(
+        json={"path": "README.md", "size": 3, "sha": "abc", "content": "aGk=", "encoding": "base64"}
+    )
+    result = json.loads(await get_file_content({"path": "README.md"}))
+
+    assert result["repo"] == "test-owner/test-repo"
+    assert str(httpx_mock.get_requests()[0].url).startswith(
+        "https://api.github.com/repos/test-owner/test-repo/contents/README.md"
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_content_can_read_an_upstream_repo(httpx_mock, mock_settings):
+    """The point of the parameter.
+
+    A release body is frequently one line while the breaking change sits in the
+    upstream CHANGELOG, and a Helm chart's renamed value key is only visible by
+    fetching values.yaml at both tags.
+    """
+    from home_ops_agent.agent.tools.github import get_file_content
+
+    httpx_mock.add_response(
+        json={
+            "path": "CHANGELOG.md",
+            "size": 9,
+            "sha": "def",
+            "content": "IyMgMS4xOQ==",
+            "encoding": "base64",
+        }
+    )
+    result = json.loads(
+        await get_file_content(
+            {"repo": "cert-manager/cert-manager", "path": "CHANGELOG.md", "ref": "v1.19.0"}
+        )
+    )
+
+    assert result["repo"] == "cert-manager/cert-manager"
+    url = str(httpx_mock.get_requests()[0].url)
+    assert "/repos/cert-manager/cert-manager/contents/CHANGELOG.md" in url
+    assert "ref=v1.19.0" in url
+
+
+@pytest.mark.asyncio
+async def test_a_missing_upstream_ref_says_so(httpx_mock, mock_settings):
+    """Upstream tags are `v1.2.3` about as often as `1.2.3`, and the caller is
+    guessing — so a 404 should point at the tag rather than read as 'no such
+    file'."""
+    from home_ops_agent.agent.tools.github import get_file_content
+
+    httpx_mock.add_response(status_code=404, json={"message": "Not Found"})
+    result = json.loads(
+        await get_file_content({"repo": "siderolabs/talos", "path": "CHANGELOG.md", "ref": "1.14"})
+    )
+    assert "check the tag spelling" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_writing_is_still_confined_to_this_repo():
+    """Reading anywhere is fine; committing anywhere is not.
+
+    `repo` was added to the reader only — a write tool that accepted one would
+    let a review push to an upstream project.
+    """
+    import inspect
+
+    from home_ops_agent.agent.tools import github
+
+    for fn in (github.create_commit, github.create_branch, github.create_pr, github.merge_pr):
+        source = inspect.getsource(fn)
+        assert "settings.github_repo" in source, fn.__name__
+        assert 'params.get("repo")' not in source, fn.__name__

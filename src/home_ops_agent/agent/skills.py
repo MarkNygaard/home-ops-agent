@@ -182,6 +182,7 @@ def init_registry():
     from home_ops_agent.agent.tools.ntfy import SKILL as ntfy_skill
     from home_ops_agent.agent.tools.prometheus import SKILL as prometheus_skill
     from home_ops_agent.agent.tools.talos import SKILL as talos_skill
+    from home_ops_agent.agent.tools.websearch import SKILL as web_search_skill
 
     registry.register(kubernetes_skill)
     registry.register(github_skill)
@@ -191,3 +192,4 @@ def init_registry():
     registry.register(flux_skill)
     registry.register(talos_skill)
     registry.register(code_fix_skill)
+    registry.register(web_search_skill)
