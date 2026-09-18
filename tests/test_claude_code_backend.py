@@ -301,3 +301,25 @@ def test_stream_event_text_extracts_only_text_deltas():
         == ""
     )
     assert claude_code._stream_event_text({"type": "message_start"}) == ""
+
+
+def test_every_app_secret_is_masked_from_a_workspace_shell():
+    """A workspace enables `Bash`, so anything left in the environment is
+    readable by the model.
+
+    Pinned as a list rather than checked case by case, because the failure mode
+    is a secret added to the deployment and not added here — which is silent.
+    """
+    from home_ops_agent.agent.claude_code import _auth_env
+
+    env = _auth_env("oauth-token", workspace_attached=True)
+    for name in (
+        "DATABASE_URL",
+        "SESSION_SECRET",
+        "NTFY_TOKEN",
+        "GITHUB_TOKEN",
+        "KIMI_API_KEY",
+        "OPENAI_API_KEY",
+        "MCP_API_TOKEN",
+    ):
+        assert env.get(name) == "", name
