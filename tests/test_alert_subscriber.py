@@ -191,3 +191,94 @@ async def test_a_firing_alert_is_still_triaged(monkeypatch):
     )
 
     triage.assert_called_once()
+
+
+# --- the boundary between triage and fix ------------------------------------
+
+
+def test_triage_cannot_change_anything():
+    """Triage is the cheap read-only stage, and that is now enforced.
+
+    It ran on Haiku with every write tool registered, under a prompt telling it
+    to "attempt a fix if possible" — so "diagnose, then hand on" was advice
+    rather than a boundary. Across 84 alerts, ACTION: fix was chosen zero times,
+    which is what a model told to fix things reports when it believes the matter
+    is handled.
+    """
+    from home_ops_agent.workers.alert_subscriber import WITHHELD_FROM_TRIAGE
+
+    for name in (
+        "k8s_delete_pod",
+        "k8s_restart_workload",
+        "flux_reconcile",
+        "flux_suspend",
+        "flux_resume",
+        "code_fix",
+    ):
+        assert name in WITHHELD_FROM_TRIAGE, name
+
+
+def test_the_fix_stage_keeps_the_tools_it_needs():
+    """Withholding from triage must not disarm the stage that exists to act."""
+    from home_ops_agent.workers.alert_subscriber import WITHHELD_FROM_ALERT_AGENT
+
+    for name in ("k8s_delete_pod", "flux_reconcile", "k8s_restart_workload"):
+        assert name not in WITHHELD_FROM_ALERT_AGENT, name
+
+
+def test_neither_stage_sends_its_own_notification():
+    """Three of the last eight triages sent two notifications each, on top of
+    the one this module sends afterwards.
+
+    The PR agent has had `ntfy_publish` withheld for exactly this reason; the
+    alert path never got the same treatment.
+    """
+    from home_ops_agent.workers.alert_subscriber import (
+        WITHHELD_FROM_ALERT_AGENT,
+        WITHHELD_FROM_TRIAGE,
+    )
+
+    assert "ntfy_publish" in WITHHELD_FROM_ALERT_AGENT
+    assert "ntfy_publish" in WITHHELD_FROM_TRIAGE
+
+
+def test_a_completed_fix_is_still_announced():
+    """Withholding the tool removes the model's way of telling you. If the code
+    did not send one, a successful fix would happen in silence."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._fix_alert)
+    assert "notifications.notify" in source
+    assert "Alert fixed" in source
+
+
+def test_triage_has_its_own_prompt():
+    """It ran on the fix agent's prompt, which opens "attempt a fix if possible"
+    and then lists the corrective actions available."""
+    import inspect
+
+    from home_ops_agent.agent.prompts import DEFAULTS
+    from home_ops_agent.workers import alert_subscriber
+
+    assert "alert_triage" in DEFAULTS
+    assert DEFAULTS["alert_triage"] != DEFAULTS["alert_response"]
+    assert 'get_prompt("alert_triage")' in inspect.getsource(alert_subscriber._triage_alert)
+
+
+def test_the_triage_prompt_forbids_acting_and_names_the_three_actions():
+    from home_ops_agent.agent.prompts import DEFAULTS
+
+    text = DEFAULTS["alert_triage"]
+    assert "do not fix anything here" in text.lower()
+    for action in ("ACTION: fix", "ACTION: notify", "ACTION: ignore"):
+        assert action in text, action
+
+
+def test_the_triage_prompt_says_unsure_is_not_ignore():
+    """`ignore` sends nothing to anyone — it is the one outcome nobody hears
+    about, and it was chosen for 36 of the last 40 alerts."""
+    from home_ops_agent.agent.prompts import DEFAULTS
+
+    assert "Being unsure is not `ignore`" in DEFAULTS["alert_triage"]
