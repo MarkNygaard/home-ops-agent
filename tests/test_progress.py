@@ -40,6 +40,19 @@ def test_steps_without_a_run_are_ignored_rather_than_raising():
     assert progress.snapshot() is None
 
 
+def test_a_tool_means_different_things_in_different_flows():
+    """`k8s_get_pods` is "check pods" while triaging an alert, and is not a step
+    the PR diagram draws at all. A flat map lit the wrong circle whenever a
+    review happened to look at the cluster."""
+    progress.begin("alert")
+    progress.note_tool("k8s_get_pods")
+    assert progress.snapshot()["step"] == "check_pods"
+
+    progress.begin("pr_review")
+    progress.note_tool("k8s_get_pods")
+    assert progress.snapshot()["step"] == "start"
+
+
 def test_tool_calls_drive_the_steps_inside_a_review():
     """The worker cannot report these itself — they all happen inside one model
     call, and which tool is used when is the model's decision."""
@@ -148,7 +161,8 @@ def test_the_tool_map_only_names_tools_that_exist():
         for tool in skill.get_tools({}):
             known.add(tool.name)
 
-    assert set(progress.TOOL_STEPS) <= known, sorted(set(progress.TOOL_STEPS) - known)
+    named = {name for per_agent in progress.TOOL_STEPS.values() for name in per_agent}
+    assert named <= known, sorted(named - known)
 
 
 def test_the_indicator_does_not_go_backwards():
@@ -205,10 +219,43 @@ def test_every_ordered_step_is_one_a_worker_reports():
         reported |= set(
             re.findall(r'progress\.step\(\s*"([a-z_]+)"', path.read_text(encoding="utf-8"))
         )
-    reported |= set(progress.TOOL_STEPS.values())
+    for per_agent in progress.TOOL_STEPS.values():
+        reported |= set(per_agent.values())
     reported.add("start")
 
     assert set(progress.STEP_ORDER) == reported, {
         "ordered but never reported": sorted(set(progress.STEP_ORDER) - reported),
         "reported but unordered": sorted(reported - set(progress.STEP_ORDER)),
     }
+
+
+def test_both_flows_light_their_own_nodes():
+    """Every step the alert workers report needs a node in the alert diagram,
+    the same guarantee the PR flow has. A step with no node is a run the diagram
+    silently fails to show.
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "web"
+        / "src"
+        / "components"
+        / "dashboard"
+        / "agent-flow.tsx"
+    ).read_text(encoding="utf-8")
+    drawn = set(re.findall(r"(?:step|n\d): '([a-z_]+)'", source))
+
+    alert_steps = {
+        "check_pods",
+        "read_logs",
+        "metrics",
+        "triage",
+        "alert_fix",
+        "apply_fix",
+        "notify_fixed",
+        "notify_user",
+        "ignore",
+    }
+    assert alert_steps <= drawn, f"alert steps with no node: {sorted(alert_steps - drawn)}"
