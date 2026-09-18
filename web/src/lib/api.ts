@@ -8,6 +8,7 @@ import type {
   PromptsResponse,
   StatusResponse,
   AnalyticsResponse,
+  AuditResponse,
 } from "./types"
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -196,4 +197,17 @@ export function triggerPrCheck(): Promise<{
 export function fetchAnalytics(days?: number): Promise<AnalyticsResponse> {
   const url = days !== undefined ? `/api/analytics?days=${days}` : "/api/analytics"
   return fetchJson<AnalyticsResponse>(url)
+}
+
+// Audit — every mutating tool call, across every run.
+export function fetchAudit(params: {
+  days?: number
+  outcome?: string
+  source?: string
+}): Promise<AuditResponse> {
+  const q = new URLSearchParams()
+  if (params.days) q.set("days", String(params.days))
+  if (params.outcome) q.set("outcome", params.outcome)
+  if (params.source) q.set("source", params.source)
+  return fetchJson<AuditResponse>("/api/audit?" + q.toString())
 }

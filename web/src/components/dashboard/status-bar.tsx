@@ -94,6 +94,13 @@ export function StatusBar() {
   const prMode = settings?.pr_mode ?? "comment_only"
   const prInterval = settings?.pr_check_interval_seconds ?? 1800
   const lastCheckAt = statusData?.last_pr_check_at ?? null
+  // A dead background worker leaves the HTTP server answering, so nothing else
+  // on this page would look any different. It is worth a line of its own.
+  const workers = statusData?.workers ?? []
+  const troubled = workers.filter((w) => !w.alive || w.restarts > 0)
+  const troubledDetail = troubled
+    .map((w) => w.name + ": " + (w.last_error ?? "restarted"))
+    .join(" | ")
   const countdown = useCountdown(prInterval, lastCheckAt)
 
   return (
@@ -130,6 +137,20 @@ export function StatusBar() {
                 : "Disconnected"}
           </span>
         </div>
+
+        {troubled.length > 0 && (
+          <>
+            <span className="text-border">|</span>
+            <div className="flex items-center gap-2" title={troubledDetail}>
+              <span className="size-2 rounded-full bg-red-500" />
+              <span className="text-sm text-muted-foreground">
+                {troubled.length === 1
+                  ? `Worker restarted: ${troubled[0].name}`
+                  : `${troubled.length} workers restarted`}
+              </span>
+            </div>
+          </>
+        )}
 
         <span className="text-border">|</span>
 

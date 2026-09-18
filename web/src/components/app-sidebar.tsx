@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import {
   IconLayoutDashboard,
   IconMessageChatbot,
+  IconClipboardCheck,
   IconHistory,
   IconBrain,
   IconSettings,
@@ -46,6 +47,7 @@ const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: IconLayoutDashboard },
   { href: "/chat", label: "Chat", icon: IconMessageChatbot },
   { href: "/history", label: "History", icon: IconHistory },
+  { href: "/audit", label: "Write Audit", icon: IconClipboardCheck },
   { href: "/memories", label: "Memories", icon: IconBrain },
 ] as const
 

@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from home_ops_agent.agent.skills import init_registry
 from home_ops_agent.api.analytics import router as analytics_router
+from home_ops_agent.api.audit import router as audit_router
 from home_ops_agent.api.chat import router as chat_router
 from home_ops_agent.api.chat import set_mcp_tools
 from home_ops_agent.api.settings import router as settings_router
@@ -22,6 +23,7 @@ from home_ops_agent.mcp.client import MCPClient
 from home_ops_agent.mcp.server import MCP_PATH as mcp_path
 from home_ops_agent.mcp.server import lifespan as mcp_server_lifespan
 from home_ops_agent.mcp.server import mount as mount_mcp_server
+from home_ops_agent.workers import supervisor
 from home_ops_agent.workers.alert_subscriber import run_alert_subscriber
 from home_ops_agent.workers.health_check import run_health_monitor
 from home_ops_agent.workers.pr_monitor import run_pr_monitor
@@ -79,11 +81,16 @@ async def lifespan(app: FastAPI):
     set_mcp_tools(mcp_tools)
     logger.info("Registered %d MCP tools", len(mcp_tools))
 
-    # Start background workers
-    pr_task = asyncio.create_task(run_pr_monitor())
-    alert_task = asyncio.create_task(run_alert_subscriber(mcp_tools))
-    health_task = asyncio.create_task(run_health_monitor())
-    logger.info("Background workers started")
+    # Start background workers, supervised. Unsupervised, an exception in any
+    # of these ends the task silently: the HTTP server keeps answering, the pod
+    # stays Ready, and Gatus only checks HTTP — so the agent would stop
+    # reviewing PRs or receiving alerts and everything would report fine.
+    pr_task = asyncio.create_task(supervisor.supervise("pr_monitor", run_pr_monitor))
+    alert_task = asyncio.create_task(
+        supervisor.supervise("alert_subscriber", lambda: run_alert_subscriber(mcp_tools))
+    )
+    health_task = asyncio.create_task(supervisor.supervise("health_monitor", run_health_monitor))
+    logger.info("Background workers started (supervised)")
 
     # Starlette does not run a mounted app's lifespan, so the MCP session
     # manager is started here. No-op when the endpoint is disabled.
@@ -111,6 +118,7 @@ app.include_router(chat_router)
 app.include_router(settings_router)
 app.include_router(skills_router)
 app.include_router(analytics_router)
+app.include_router(audit_router)
 
 # Read-only MCP endpoint. Mounted before the static catch-all below, which would
 # otherwise swallow /mcp. No-op unless MCP_API_TOKEN is set.

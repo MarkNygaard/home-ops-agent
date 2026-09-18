@@ -107,6 +107,31 @@ class AgentTask(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ToolWrite(Base):
+    """One mutating tool call: what changed, who changed it, and what came back.
+
+    Separate from `messages` because those are a transcript and this is a
+    register. You read a transcript to understand one run; you read this to
+    find out what has happened to the cluster since you last looked.
+    """
+
+    __tablename__ = "tool_writes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Free text rather than structured columns: a namespace/name pair, a branch
+    # and a PR number are not the same shape, and the value of this row is that
+    # a person can read it.
+    target: Mapped[str] = mapped_column(String(200), default="")
+    source: Mapped[str] = mapped_column(String(50), default="unknown")
+    outcome: Mapped[str] = mapped_column(String(20), default="ok")
+    detail: Mapped[str] = mapped_column(String(300), default="")
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ApiUsage(Base):
     """Tracks Anthropic API token usage and cost per agent run."""
 

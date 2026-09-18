@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import anthropic
 
+from home_ops_agent import audit
 from home_ops_agent.agent import claude_code, pi, providers
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
@@ -146,10 +147,14 @@ class Agent:
             result = await tool_def.handler(tool_input)
             if not isinstance(result, str):
                 result = json.dumps(result, default=str)
-            return result
         except Exception as e:
             logger.exception("Tool %s failed", name)
-            return json.dumps({"error": str(e)})
+            result = json.dumps({"error": str(e)})
+
+        # After the handler either way: a write that raised is exactly the kind
+        # you want in the log, and `record` ignores everything that is not one.
+        await audit.record(name, tool_input, result, source=progress.current_agent())
+        return result
 
     # --- public entry points ---
 
