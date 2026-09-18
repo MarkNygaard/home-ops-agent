@@ -199,10 +199,21 @@ const nodeTypes = {
 
 /* ── Auto-layout with Dagre ──────────────────────────────── */
 
-function getLayoutedElements(
-  nodes: Node[],
-  edges: Edge[],
-): { nodes: Node[]; edges: Edge[] } {
+/** A laid-out graph, plus the box it occupies.
+ *
+ * The bounds come back because the container height used to be a fixed 450px
+ * whatever the flow was. These graphs are wide and short, so `fitView` scaled
+ * them down until the *width* fitted and left the leftover height as dead
+ * space — a strip of diagram across the top of a large empty panel. Sizing the
+ * panel to the graph's own proportions removes it.
+ */
+type Flow = {
+  nodes: Node[];
+  edges: Edge[];
+  bounds: { width: number; height: number };
+};
+
+function getLayoutedElements(nodes: Node[], edges: Edge[]): Flow {
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
 
   g.setGraph({
@@ -244,7 +255,22 @@ function getLayoutedElements(
     };
   });
 
-  return { nodes: layoutedNodes, edges };
+  // The union of every node's box. Dagre reports a graph size too, but it
+  // ignores the widths we hand it for nodes it has already placed, so measuring
+  // the result is the honest number.
+  const xs = layoutedNodes.map((n) => n.position.x);
+  const ys = layoutedNodes.map((n) => n.position.y);
+  const rights = layoutedNodes.map((n) => n.position.x + sizeOf(n).width);
+  const bottoms = layoutedNodes.map((n) => n.position.y + sizeOf(n).height);
+
+  return {
+    nodes: layoutedNodes,
+    edges,
+    bounds: {
+      width: Math.max(...rights) - Math.min(...xs),
+      height: Math.max(...bottoms) - Math.min(...ys),
+    },
+  };
 }
 
 /* ── Edge helpers ────────────────────────────────────────── */
@@ -326,7 +352,7 @@ function branchEdge(
 
 /* ── Flow definitions (no positions needed!) ─────────────── */
 
-function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
+function makePRReviewFlow(prMode: string): Flow {
   const pos = { x: 0, y: 0 };
 
   // Common review chain shared by all modes
@@ -431,7 +457,7 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
   );
 }
 
-function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
+function makeAlertFlow(): Flow {
   const nodes: Node[] = [
     {
       id: 'agent',
@@ -529,7 +555,7 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
 }
 
 
-const FLOW_BUILDERS: Record<string, (prMode?: string) => { nodes: Node[]; edges: Edge[] }> = {
+const FLOW_BUILDERS: Record<string, (prMode?: string) => Flow> = {
   pr_review: (prMode) => makePRReviewFlow(prMode ?? 'comment_only'),
   alert: () => makeAlertFlow(),
 };
@@ -576,14 +602,21 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
   const { data: settings } = useSettings();
   const prMode = settings?.pr_mode ?? 'comment_only';
   const builder = FLOW_BUILDERS[activeAgent];
-  const { nodes, edges } = useMemo(
-    () => (builder ? builder(prMode) : { nodes: [], edges: [] }),
+  const { nodes, edges, bounds } = useMemo(
+    () =>
+      builder
+        ? builder(prMode)
+        : { nodes: [], edges: [], bounds: { width: 1, height: 1 } },
     [builder, prMode]
   );
 
   if (!builder) return null;
 
-  const height = 450;
+  // Proportional to the graph rather than fixed, so the panel is the size of
+  // what is in it. Clamped because a very wide flow on a narrow screen would
+  // otherwise collapse to a sliver, and a short one on a wide screen would
+  // stretch the nodes apart.
+  const aspect = bounds.width / Math.max(bounds.height, 1);
   const description =
     activeAgent === 'pr_review'
       ? PR_MODE_DESCRIPTIONS[prMode ?? 'comment_only'] ?? AGENT_DESCRIPTIONS[activeAgent]
@@ -634,7 +667,10 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           </div>
         )}
       </div>
-      <div className="relative overflow-hidden rounded-xl" style={{ height }}>
+      <div
+        className="relative overflow-hidden rounded-xl"
+        style={{ aspectRatio: aspect, minHeight: 200, maxHeight: 460 }}
+      >
         <ReactFlow
           key={`${activeAgent}-${prMode}`}
           nodes={nodes}
