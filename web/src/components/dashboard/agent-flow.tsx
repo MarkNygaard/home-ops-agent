@@ -483,7 +483,7 @@ function makePRReviewFlow(prMode: string): Flow {
       [
         ...reviewNodes,
         { id: 'c1', type: 'step', position: pos, data: { label: 'Comment', icon: 'IconMessage' } },
-        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell' } },
+        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell', step: 'notify_fixed' } },
       ],
       [
         ...reviewEdges,
@@ -605,6 +605,7 @@ function makeAlertFlow(): Flow {
       data: {
         label: 'Check Pods',
         icon: 'IconBox',
+        step: 'check_pods',
         hint: 'Looks at the state of the pods the alert names — phase, restarts and container state.',
       },
     },
@@ -615,6 +616,7 @@ function makeAlertFlow(): Flow {
       data: {
         label: 'Read Logs',
         icon: 'IconFileAnalytics',
+        step: 'read_logs',
         hint: 'Reads the container log, including the previous terminated container — the only place a CrashLoopBackOff explains itself.',
       },
     },
@@ -625,6 +627,7 @@ function makeAlertFlow(): Flow {
       data: {
         label: 'Metrics',
         icon: 'IconChartLine',
+        step: 'metrics',
         hint: 'Queries Prometheus for the series behind the alert, to tell a spike apart from a trend.',
       },
     },
@@ -634,6 +637,7 @@ function makeAlertFlow(): Flow {
       position: { x: 0, y: 0 },
       data: {
         label: 'Triage',
+        step: 'triage',
         icon: 'IconReport',
         decision: true,
       },
@@ -642,7 +646,7 @@ function makeAlertFlow(): Flow {
       id: 'b1a',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Alert Fix', icon: 'IconBolt', subagent: true },
+      data: { label: 'Alert Fix', icon: 'IconBolt', subagent: true, step: 'alert_fix' },
     },
     {
       id: 'b1b',
@@ -651,6 +655,7 @@ function makeAlertFlow(): Flow {
       data: {
         label: 'Apply Fix',
         icon: 'IconBolt',
+        step: 'apply_fix',
         hint: 'Restarts a stuck pod, reconciles a Flux resource, or resumes a suspended one. Node upgrades are diagnosed only, never acted on.',
       },
     },
@@ -674,7 +679,7 @@ function makeAlertFlow(): Flow {
       id: 'b2',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Notify User', icon: 'IconBell' },
+      data: { label: 'Notify User', icon: 'IconBell', step: 'notify_user' },
     },
     {
       id: 'b3',
@@ -683,6 +688,7 @@ function makeAlertFlow(): Flow {
       data: {
         label: 'Ignore',
         icon: 'IconPlayerSkipForward',
+        step: 'ignore',
         hint: 'Transient or already resolved. Nothing is sent — the alert is dropped silently.',
       },
     },

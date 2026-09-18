@@ -53,6 +53,7 @@ STALE_AFTER = timedelta(minutes=20)
 # work; it just will not be ordered against the others.
 STEP_ORDER: tuple[str, ...] = (
     "start",
+    # PR review
     "check_pr",
     "read_diff",
     "release_notes",
@@ -67,16 +68,46 @@ STEP_ORDER: tuple[str, ...] = (
     "notify_scope",
     "notify_rereview",
     "notify_deep",
+    # Alerts. Distinct names rather than shared ones, so the ordering can differ
+    # per flow without either constraining the other.
+    "check_pods",
+    "read_logs",
+    "metrics",
+    "triage",
+    "alert_fix",
+    "apply_fix",
+    "notify_fixed",
+    "notify_user",
+    "ignore",
 )
 
-TOOL_STEPS: dict[str, str] = {
-    "github_get_pr": "check_pr",
-    "github_list_prs": "check_pr",
-    "github_get_check_runs": "check_pr",
-    "github_get_pr_files": "read_diff",
-    "github_get_file_content": "read_diff",
-    "github_get_release": "release_notes",
-    "web_search": "release_notes",
+TOOL_STEPS: dict[str, dict[str, str]] = {
+    "pr_review": {
+        "github_get_pr": "check_pr",
+        "github_list_prs": "check_pr",
+        "github_get_check_runs": "check_pr",
+        "github_get_pr_files": "read_diff",
+        "github_get_file_content": "read_diff",
+        "github_get_release": "release_notes",
+        "web_search": "release_notes",
+    },
+    # Keyed by agent, because the same tool means different things in different
+    # flows: `k8s_get_pods` is "check pods" while triaging an alert and is not a
+    # step the PR diagram draws at all. A flat map would have lit the wrong
+    # circle whenever a review happened to look at the cluster.
+    "alert": {
+        "k8s_get_pods": "check_pods",
+        "k8s_describe_resource": "check_pods",
+        "k8s_get_events": "check_pods",
+        "k8s_get_pod_logs": "read_logs",
+        "loki_query": "read_logs",
+        "prometheus_query": "metrics",
+        "prometheus_query_range": "metrics",
+        "k8s_delete_pod": "apply_fix",
+        "k8s_restart_workload": "apply_fix",
+        "flux_reconcile": "apply_fix",
+        "flux_resume": "apply_fix",
+    },
 }
 
 
@@ -146,8 +177,10 @@ def step(name: str, detail: str | None = None) -> None:
 
 
 def note_tool(tool_name: str) -> None:
-    """Report a step for a tool call, when that tool maps to one."""
-    mapped = TOOL_STEPS.get(tool_name)
+    """Report a step for a tool call, when that tool maps to one in this flow."""
+    if _current is None:
+        return
+    mapped = TOOL_STEPS.get(_current.agent, {}).get(tool_name)
     if mapped:
         step(mapped)
 

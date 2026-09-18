@@ -16,7 +16,7 @@ from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
-from home_ops_agent.workers import notifications
+from home_ops_agent.workers import notifications, progress
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,12 @@ async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
             trigger=f"{alert.get('topic', '')}:{alert.get('title', '')}",
             status="completed",
             conversation_id=conversation.id,
-            summary=response[:500],
+            # Prefixed so the outcome survives truncation. The action was
+            # already stored in actions_taken, but the History list shows the
+            # summary -- and the ACTION line is the last thing the model writes,
+            # so it was always cut off. 36 of the last 40 alerts were ignored
+            # and nothing on screen said so.
+            summary=f"[{action.upper()}] " + response[:500],
             actions_taken={
                 "tool_calls": result.tool_calls,
                 "tokens": result.total_tokens,
@@ -294,6 +299,7 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
     # send this itself, which is how the PR path ended up with four formats for
     # the same event -- and now that ntfy_publish is withheld, nothing would
     # announce a completed fix at all.
+    progress.step("notify_fixed")
     try:
         await notifications.notify(
             notifications.OUTCOME,
@@ -328,6 +334,7 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         return
 
     _cooldowns[alert_key] = datetime.now(UTC)
+    progress.begin("alert", alert.get("title", "alert"), step="check_pods")
 
     credentials = await build_credentials()
     if not credentials.has_any():
@@ -352,18 +359,22 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         # Stage 1: Triage (cheap, fast — Haiku)
         logger.info("Triaging alert: %s", alert.get("title"))
         triage_summary, action = await _triage_alert(alert, triage_agent)
+        progress.step("triage")
         logger.info("Alert triaged: %s — action: %s", alert.get("title"), action)
 
         if action == "ignore":
+            progress.step("ignore")
             logger.info("Alert ignored (transient/resolved): %s", alert.get("title"))
             return
 
         if action == "fix":
             # Stage 2: Fix (capable — Sonnet)
             logger.info("Escalating to fix agent: %s", alert.get("title"))
+            progress.step("alert_fix")
             await _fix_alert(alert, triage_summary, fix_agent)
         else:
             # Notify only — send the triage summary via ntfy
+            progress.step("notify_user")
 
             try:
                 await notifications.notify(
@@ -380,6 +391,9 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
 
     except Exception:
         logger.exception("Failed to investigate alert: %s", alert.get("title"))
+    finally:
+        # Always, so a failed investigation does not leave a circle pulsing.
+        progress.finish()
 
 
 async def _subscribe_topic(topic: str, mcp_tools: list | None = None):
