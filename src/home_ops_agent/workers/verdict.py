@@ -117,3 +117,40 @@ def parse(response: str) -> Verdict:
         structured=False,
         stated=refused or approved,
     )
+
+
+# The verdict lives in the comment the run posted on the PR, not in whatever it
+# said to the terminal afterwards. The prompt asks for the block at the end of
+# the review, and the model does exactly that -- then writes a human-facing
+# summary as its final message, which is the text everything here used to read.
+#
+# On PR #1072 that cost a correct call: the deep review posted
+# "SAFE_TO_MERGE: yes" on the PR and closed with "I disagree with the
+# `NEEDS_REVIEW` flag". No structured block in the final message, so the legacy
+# fallback matched the word NEEDS_REVIEW inside the sentence disputing it, and
+# the PR was filed as needing attention by the review that had just cleared it.
+REVIEW_COMMENT_TOOLS = ("github_create_pr_comment",)
+
+
+def posted_review(tool_calls: list[dict] | None) -> str:
+    """The body of the last review comment this run posted, if any."""
+    for call in reversed(tool_calls or []):
+        if call.get("tool") in REVIEW_COMMENT_TOOLS:
+            body = (call.get("input") or {}).get("body")
+            if isinstance(body, str) and body.strip():
+                return body
+    return ""
+
+
+def parse_result(result) -> Verdict:
+    """Read a run's conclusion, preferring what it published over what it said.
+
+    Falls back to the response text when nothing was posted (a review that
+    failed before commenting) or when the comment carried no structured block.
+    """
+    posted = posted_review(getattr(result, "tool_calls", None))
+    if posted:
+        verdict = parse(posted)
+        if verdict.structured:
+            return verdict
+    return parse(getattr(result, "response", "") or "")

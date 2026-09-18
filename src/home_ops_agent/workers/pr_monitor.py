@@ -282,9 +282,11 @@ async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_
     """
     from home_ops_agent.workers import notifications
 
-    # Determine risk level from the response
-    response_lower = result.response.lower()
-    if "needs_review" in response_lower or "high risk" in response_lower:
+    # From the parsed verdict, not a substring of the prose. A review that
+    # wrote "I disagree with the `NEEDS_REVIEW` flag" was announced as needing
+    # review because the word appeared in the sentence disputing it.
+    verdict = verdict_mod.parse_result(result)
+    if not verdict.safe_to_merge and not verdict.fixable:
         priority = "high"
         tag = "warning"
         title = f"PR #{pr['number']} needs your review"
@@ -296,7 +298,7 @@ async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_
         # premature -- and ATTENTION is exactly the class no notify_level can
         # filter, so "outcomes only" could not save the user from it.
         kind = notifications.ROUTINE if pr_mode == "auto_merge_all" else notifications.ATTENTION
-    elif "safe_to_merge" in response_lower:
+    elif verdict.safe_to_merge:
         priority = "default"
         tag = "white_check_mark"
         title = f"PR #{pr['number']} reviewed - safe to merge"
@@ -394,7 +396,7 @@ async def out_of_scope_paths(pr_number: int) -> list[str]:
     return blocked_paths([f.get("filename", "") for f in files if isinstance(f, dict)])
 
 
-async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
+async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> None:
     """Decide what happens to a PR after its review.
 
     Routing is on the parsed verdict plus facts the code can check -- the file
@@ -409,7 +411,8 @@ async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
 
     pr_number = pr["number"]
     progress.step("decide", f"PR #{pr_number}")
-    verdict = verdict_mod.parse(response)
+    verdict = verdict_mod.parse_result(result)
+    response = result.response
 
     if not verdict.structured:
         # Not fatal -- the legacy markers still routed this -- but it means the
@@ -549,7 +552,7 @@ async def check_prs() -> dict:
 
             # Post-review actions depend on the current PR mode
             if pr_mode != "comment_only":
-                await _route(pr, result.response, agent, pr_mode)
+                await _route(pr, result, agent, pr_mode)
 
     progress.finish()
     return {

@@ -15,6 +15,22 @@ from home_ops_agent.workers import pr_monitor
 PR = {"number": 1046, "title": "chore: bump a chart", "author": "renovate[bot]"}
 
 
+def _result(response: str, posted: str | None = None):
+    """A review result. `posted` is the comment body it wrote on the PR.
+
+    The router reads the posted comment first, so a test that only sets the
+    response is exercising the fallback.
+    """
+    from home_ops_agent.agent.core import AgentResult
+
+    calls = (
+        [{"tool": "github_create_pr_comment", "input": {"pr_number": 1046, "body": posted}}]
+        if posted is not None
+        else []
+    )
+    return AgentResult(response=response, tool_calls=calls)
+
+
 def _files(*names):
     async def _get_pr_files(_params):
         return json.dumps([{"filename": n} for n in names])
@@ -44,7 +60,9 @@ async def test_fixable_and_in_scope_goes_to_the_fixer(routed, monkeypatch):
         "home_ops_agent.agent.tools.github.get_pr_files",
         _files("kubernetes/apps/media/jellyfin/app/helmrelease.yaml"),
     )
-    await pr_monitor._route(PR, "SAFE_TO_MERGE: no\nFIXABLE: yes", object(), "auto_merge_all")
+    await pr_monitor._route(
+        PR, _result("SAFE_TO_MERGE: no\nFIXABLE: yes"), object(), "auto_merge_all"
+    )
 
     assert "fix" in routed
     assert "deep" not in routed
@@ -63,7 +81,9 @@ async def test_fixable_but_out_of_scope_never_reaches_the_fixer(routed, monkeypa
         "home_ops_agent.agent.tools.github.get_pr_files",
         _files("talos/talenv.yaml", "kubernetes/apps/media/jellyfin/app/helmrelease.yaml"),
     )
-    await pr_monitor._route(PR, "SAFE_TO_MERGE: no\nFIXABLE: yes", object(), "auto_merge_all")
+    await pr_monitor._route(
+        PR, _result("SAFE_TO_MERGE: no\nFIXABLE: yes"), object(), "auto_merge_all"
+    )
 
     assert "fix" not in routed
     assert "deep" in routed
@@ -76,7 +96,9 @@ async def test_safe_is_left_to_the_merge_gate(routed, monkeypatch):
     monkeypatch.setattr(
         "home_ops_agent.agent.tools.github.get_pr_files", _files("kubernetes/apps/x.yaml")
     )
-    await pr_monitor._route(PR, "SAFE_TO_MERGE: yes\nFIXABLE: no", object(), "auto_merge_all")
+    await pr_monitor._route(
+        PR, _result("SAFE_TO_MERGE: yes\nFIXABLE: no"), object(), "auto_merge_all"
+    )
 
     assert routed == {}
 
@@ -86,10 +108,12 @@ async def test_not_fixable_escalates_only_in_auto_merge_all(routed, monkeypatch)
     monkeypatch.setattr(
         "home_ops_agent.agent.tools.github.get_pr_files", _files("kubernetes/apps/x.yaml")
     )
-    await pr_monitor._route(PR, "SAFE_TO_MERGE: no\nFIXABLE: no", object(), "auto_merge")
+    await pr_monitor._route(PR, _result("SAFE_TO_MERGE: no\nFIXABLE: no"), object(), "auto_merge")
     assert routed == {}
 
-    await pr_monitor._route(PR, "SAFE_TO_MERGE: no\nFIXABLE: no", object(), "auto_merge_all")
+    await pr_monitor._route(
+        PR, _result("SAFE_TO_MERGE: no\nFIXABLE: no"), object(), "auto_merge_all"
+    )
     assert "deep" in routed
 
 
@@ -101,7 +125,9 @@ async def test_a_passing_mention_no_longer_starts_a_fix(routed, monkeypatch):
     )
     await pr_monitor._route(
         PR,
-        "I considered NEEDS_FIX but the change is cosmetic.\nSAFE_TO_MERGE: yes\nFIXABLE: no",
+        _result(
+            "I considered NEEDS_FIX but the change is cosmetic.\nSAFE_TO_MERGE: yes\nFIXABLE: no"
+        ),
         object(),
         "auto_merge_all",
     )
@@ -130,3 +156,71 @@ async def test_the_scope_gate_uses_the_same_rule_as_the_commit_guard(monkeypatch
     monkeypatch.setattr("home_ops_agent.agent.tools.github.get_pr_files", _files(*paths))
 
     assert await pr_monitor.out_of_scope_paths(1046) == blocked_paths(paths)
+
+
+@pytest.mark.asyncio
+async def test_the_verdict_comes_from_the_comment_not_the_closing_summary(routed, monkeypatch):
+    """PR #1072, exactly.
+
+    The deep review posted `SAFE_TO_MERGE: yes` on the PR and then closed with
+    "I disagree with the `NEEDS_REVIEW` flag". Reading the summary found no
+    structured block, fell back to markers, matched NEEDS_REVIEW inside the
+    sentence disputing it, and filed the PR as needing attention — by the
+    review that had just cleared it.
+    """
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.get_pr_files",
+        _files("kubernetes/apps/kube-system/snapshot-controller/app/ocirepository.yaml"),
+    )
+
+    await pr_monitor._route(
+        PR,
+        _result(
+            "Verdict: safe to merge. I disagree with the `NEEDS_REVIEW` flag.",
+            posted="## Review\n\nAll green.\n\nSAFE_TO_MERGE: yes\nFIXABLE: no",
+        ),
+        object(),
+        "auto_merge_all",
+    )
+
+    # Safe: left to the merge gate, neither escalated nor fixed.
+    assert routed == {}
+
+
+@pytest.mark.asyncio
+async def test_a_comment_without_a_verdict_falls_back_to_the_response(routed, monkeypatch):
+    """A review that commented without the block must still route on whatever
+    it did say."""
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.get_pr_files",
+        _files("kubernetes/apps/media/jellyfin/app/helmrelease.yaml"),
+    )
+
+    await pr_monitor._route(
+        PR,
+        _result("SAFE_TO_MERGE: no\nFIXABLE: yes", posted="I looked at it and it is fine."),
+        object(),
+        "auto_merge_all",
+    )
+
+    assert "fix" in routed
+
+
+def test_the_posted_comment_is_the_last_one():
+    """A run may comment more than once; the verdict is the one it ended on."""
+    from home_ops_agent.workers import verdict
+
+    calls = [
+        {"tool": "github_create_pr_comment", "input": {"body": "SAFE_TO_MERGE: no\nFIXABLE: no"}},
+        {"tool": "github_get_pr", "input": {"pr_number": 1}},
+        {"tool": "github_create_pr_comment", "input": {"body": "SAFE_TO_MERGE: yes\nFIXABLE: no"}},
+    ]
+    assert "yes" in verdict.posted_review(calls)
+
+
+def test_no_comment_means_no_posted_verdict():
+    from home_ops_agent.workers import verdict
+
+    assert verdict.posted_review([]) == ""
+    assert verdict.posted_review(None) == ""
+    assert verdict.posted_review([{"tool": "k8s_get_pods", "input": {}}]) == ""
