@@ -21,7 +21,7 @@ export const AGENTS = [
       "Takes corrective action when an issue is found. Can restart pods, reconcile Flux resources, and send enriched diagnostics via ntfy.",
   },
   {
-    promptKey: null,
+    promptKey: "code_fix",
     modelKey: "code_fix",
     name: "Code Fix",
     description:
@@ -162,4 +162,6 @@ export const PROMPT_DESCRIPTIONS: Record<string, string> = {
   alert_response:
     "Instructions for how the Alert Fix agent investigates and resolves alerts.",
   chat: "Instructions for how the Chat agent responds to interactive questions.",
+  code_fix:
+    "Instructions for the agent that fixes code on a PR branch. It runs unattended, in a git checkout, and can push a commit — so this is the prompt that decides when it should commit nothing instead of guessing.",
 }
