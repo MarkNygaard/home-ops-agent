@@ -45,6 +45,11 @@ function describeCheck(result: PrCheckResult | null | undefined): string | null 
       return `Check failed: ${result.error ?? "unknown error"}`
     case "completed": {
       const parts = [`${result.reviewed ?? 0} reviewed`]
+      if (result.merged) parts.push(`${result.merged} merged`)
+      // Skipped PRs were already reviewed at this head. Shown because the
+      // count used to be filed under "failed", which made a healthy cycle
+      // read as a broken one.
+      if (result.skipped) parts.push(`${result.skipped} already reviewed`)
       if (result.failed) parts.push(`${result.failed} failed`)
       if (result.rate_limited) parts.push("rate limited")
       return parts.join(", ")

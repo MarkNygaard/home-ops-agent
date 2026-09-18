@@ -319,3 +319,74 @@ def test_an_unfinished_review_says_so_in_its_summary():
     from home_ops_agent.workers import pr_monitor
 
     assert "[RAN OUT OF TURNS]" in inspect.getsource(pr_monitor._save_task)
+
+
+async def test_an_already_reviewed_pr_is_skipped_not_failed(monkeypatch):
+    """The status line said "3 reviewed, 3 failed" on a cycle where nothing
+    failed.
+
+    `_review_pr` returned None for three different situations — the review
+    failed, the PR was already reviewed at this head, a review comment already
+    existed — and the caller counted every None as a failure. A status line
+    that cries failure on a healthy cycle trains you to ignore it.
+    """
+    import json as _json
+
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import pr_monitor
+
+    prs = [
+        {"number": 1, "title": "a", "author": "renovate[bot]", "head_sha": "aaa"},
+        {"number": 2, "title": "b", "author": "renovate[bot]", "head_sha": "bbb"},
+    ]
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        pr_monitor, "build_credentials", AsyncMock(return_value=Credentials(kimi_api_key="k"))
+    )
+    monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.list_prs", AsyncMock(return_value=_json.dumps(prs))
+    )
+    monkeypatch.setattr(pr_monitor, "_get_pr_mode", AsyncMock(return_value="comment_only"))
+    # Both already reviewed at their current head.
+    monkeypatch.setattr(pr_monitor, "_needs_review", AsyncMock(return_value=False))
+    # And the reviewer is never reached, which is the point.
+    monkeypatch.setattr(
+        pr_monitor, "_review_pr", AsyncMock(side_effect=AssertionError("should not review"))
+    )
+
+    result = await pr_monitor.check_prs()
+
+    assert result["skipped"] == 2
+    assert result["failed"] == 0
+    assert result["reviewed"] == 0
+
+
+async def test_a_genuinely_failed_review_is_still_counted(monkeypatch):
+    """The counter still has to catch the thing it was added for: `_review_pr`
+    swallows its own exceptions, so an unusable model would otherwise look like
+    a quiet cycle."""
+    import json as _json
+
+    from home_ops_agent.auth.credentials import Credentials
+    from home_ops_agent.workers import pr_monitor
+
+    prs = [{"number": 1, "title": "a", "author": "renovate[bot]", "head_sha": "aaa"}]
+
+    monkeypatch.setattr(pr_monitor, "_is_enabled", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        pr_monitor, "build_credentials", AsyncMock(return_value=Credentials(kimi_api_key="k"))
+    )
+    monkeypatch.setattr(pr_monitor.registry, "get_all_enabled_tools", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.list_prs", AsyncMock(return_value=_json.dumps(prs))
+    )
+    monkeypatch.setattr(pr_monitor, "_get_pr_mode", AsyncMock(return_value="comment_only"))
+    monkeypatch.setattr(pr_monitor, "_needs_review", AsyncMock(return_value=True))
+    monkeypatch.setattr(pr_monitor, "_review_pr", AsyncMock(return_value=None))
+
+    result = await pr_monitor.check_prs()
+
+    assert result["failed"] == 1
+    assert result["skipped"] == 0

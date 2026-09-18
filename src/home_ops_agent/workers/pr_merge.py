@@ -123,14 +123,17 @@ async def merge_now(pr: dict) -> bool:
     return True
 
 
-async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
+async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent) -> int:
     """Try to auto-merge already-reviewed PRs that are safe to merge.
 
     This handles the case where PRs were reviewed in comment-only mode
     and the user later switches to auto-merge mode.
     """
 
+    # Two counters on purpose: `merged_count` is the cycle budget, which a deep
+    # review also consumes, and `merges` is what actually merged.
     merged_count = 0
+    merges = 0
     for pr in prs:
         if merged_count >= MAX_REVIEWS_PER_CYCLE:
             break
@@ -185,6 +188,11 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
         # Merge it
         if await merge_now(pr):
             merged_count += 1
+            merges += 1
+
+    # Counted for the cycle summary. A deep review counts towards the cycle
+    # limit but is not a merge, so this is not `merged_count`.
+    return merges
 
 
 async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):

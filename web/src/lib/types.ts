@@ -129,6 +129,8 @@ export interface PrCheckResult {
   failed?: number
   rate_limited?: boolean
   error?: string
+  skipped?: number
+  merged?: number
 }
 
 /** Where a live run has got to, so the workflow diagram can show it moving.
