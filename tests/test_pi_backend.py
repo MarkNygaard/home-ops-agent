@@ -381,15 +381,18 @@ def test_every_shipped_extension_is_loadable_as_one():
 
     So a shared helper or a types file dropped in that directory is not a
     neighbour of the extensions — it is loaded *as* an extension, and pi reports
-    `Failed to load extension` for it on every single run. Anything shared has
-    to be inlined or live in a subdirectory, which is why `cluster.ts` carries
-    its own Kubernetes client rather than importing one.
+    `Failed to load extension` for it on every single run.
+
+    There is one extension now. The tools that used to be written here are the
+    agent's own, reached over the bridge, because a third of them carry
+    credentials this process must not hold and the rest would otherwise exist
+    twice.
     """
     from pathlib import Path
 
     extensions = Path(__file__).resolve().parents[1] / "extensions"
     shipped = sorted(p.name for p in extensions.glob("*.ts"))
-    assert shipped == ["cluster.ts", "searxng.ts", "workspace.ts"]
+    assert shipped == ["bridge.ts"]
     for path in extensions.glob("*.ts"):
         assert "export default" in path.read_text(encoding="utf-8"), path.name
 
@@ -419,7 +422,7 @@ class _Silent:
         return 0
 
 
-async def _capture_env(monkeypatch, workspace):
+async def _capture_env(monkeypatch, workspace, tools=None):
     """Run stream() to completion and return the env pi was launched with."""
     captured: dict = {}
 
@@ -432,50 +435,55 @@ async def _capture_env(monkeypatch, workspace):
     monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
 
     async for _ in pi.stream(
-        "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials(), workspace
+        "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials(), workspace, tools
     ):
         pass
     return captured
 
 
 @pytest.mark.asyncio
-async def test_no_workspace_means_no_commit_channel(monkeypatch):
-    """Most runs are a chat about cluster state and have nothing to commit.
+async def test_no_tools_means_no_socket(monkeypatch):
+    """A run given no tools opens nothing.
 
-    The socket must not exist for those, so the tool is not registered and there
-    is no live push channel sitting open during an ordinary conversation.
+    Not merely tidiness: the socket is a live path into the agent's registry,
+    and it should exist for exactly as long as something needs it.
     """
-    from home_ops_agent.agent import workspace_bridge
+    from home_ops_agent.agent import tool_bridge
 
-    env = await _capture_env(monkeypatch, None)
-    assert workspace_bridge.SOCKET_ENV not in env
-    assert workspace_bridge.TOKEN_ENV not in env
+    env = await _capture_env(monkeypatch, None, tools=[])
+    assert tool_bridge.SOCKET_ENV not in env
+    assert tool_bridge.TOKEN_ENV not in env
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     sys.platform == "win32", reason="the bridge is a Unix socket; the agent runs on Linux"
 )
-async def test_a_workspace_gets_a_bridge_and_still_no_push_token(monkeypatch, tmp_path):
-    """The point of the whole bridge, pinned against the *real* variable.
+async def test_tools_are_served_and_no_secret_goes_with_them(monkeypatch, tmp_path):
+    """The point of the bridge, pinned.
 
-    An earlier version of this test asserted only that the Workspace's own token
-    value did not appear in the environment. It passed while pi was being handed
-    `{**os.environ}` -- which carries GITHUB_TOKEN -- so it proved nothing and
-    the guarantee it claimed to enforce was hollow. It now sets GITHUB_TOKEN the
-    way the deployment does and checks that.
+    pi has a `bash` tool, so anything in this environment is readable by the
+    model. A GitHub token here would let it push directly, past
+    ALLOWED_COMMIT_PATHS — which is what handing the registry over as native
+    TypeScript would have required.
     """
-    from home_ops_agent.agent import workspace_bridge
+    from home_ops_agent.agent import tool_bridge
+    from home_ops_agent.agent.core import ToolDefinition
     from home_ops_agent.agent.workspace import Workspace
 
     secret = "ghp_thisisthepushtoken"
     monkeypatch.setenv("GITHUB_TOKEN", secret)
+
+    async def _handler(_params):
+        return "ok"
+
+    tool = ToolDefinition(name="k8s_get_pods", description="d", input_schema={}, handler=_handler)
     ws = Workspace(path=tmp_path, branch="renovate/chart", token=secret)
 
-    env = await _capture_env(monkeypatch, ws)
+    env = await _capture_env(monkeypatch, ws, tools=[tool])
 
-    assert env[workspace_bridge.SOCKET_ENV].endswith(".sock")
-    assert env[workspace_bridge.TOKEN_ENV]
+    assert env[tool_bridge.SOCKET_ENV].endswith(".sock")
+    assert env[tool_bridge.TOKEN_ENV]
     assert "GITHUB_TOKEN" not in env
     assert not any(secret in str(v) for v in env.values())
 
@@ -488,43 +496,18 @@ async def test_the_socket_does_not_outlive_the_run(monkeypatch, tmp_path):
     """A token read out of the environment must be worthless afterwards."""
     from pathlib import Path
 
-    from home_ops_agent.agent import workspace_bridge
-    from home_ops_agent.agent.workspace import Workspace
+    from home_ops_agent.agent import tool_bridge
+    from home_ops_agent.agent.core import ToolDefinition
+
+    async def _handler(_params):
+        return "ok"
 
     env = await _capture_env(
-        monkeypatch, Workspace(path=tmp_path, branch="renovate/chart", token="t")
+        monkeypatch,
+        None,
+        tools=[ToolDefinition(name="t", description="d", input_schema={}, handler=_handler)],
     )
-    assert not Path(env[workspace_bridge.SOCKET_ENV]).exists()
-
-
-def test_the_agents_prompt_replaces_pis_own():
-    """`--system-prompt`, not `--append-system-prompt`, for the agent's prompt.
-
-    pi's built-in prompt is mostly directions to pi's own README, docs and
-    examples -- useful to someone working on pi, an invitation to go reading
-    irrelevant documentation for an agent asked why a Kustomization is stuck.
-    """
-    argv = pi.build_argv("gpt-6-astra", "CLUSTER PROMPT", "hello")
-    assert argv[argv.index("--system-prompt") + 1] == "CLUSTER PROMPT"
-
-
-def test_no_workspace_note_without_a_workspace():
-    """A chat about cluster state has no worktree; telling it to commit is noise."""
-    assert "--append-system-prompt" not in pi.build_argv("gpt-6-astra", "sys", "hello")
-
-
-def test_the_workspace_note_is_appended_not_substituted():
-    """Both must survive: pi appends the second to the first in either branch, so
-    the agent's prompt is not the price of telling the model how to commit."""
-    argv = pi.build_argv("gpt-6-astra", "CLUSTER PROMPT", "hello", append_prompt=pi.WORKSPACE_NOTE)
-    assert argv[argv.index("--system-prompt") + 1] == "CLUSTER PROMPT"
-    assert argv[argv.index("--append-system-prompt") + 1] == pi.WORKSPACE_NOTE
-
-
-def test_the_workspace_note_names_the_only_way_out():
-    """pi has a `bash` tool, so a model that does not know about workspace_commit
-    will reach for `git commit` and silently achieve nothing."""
-    assert "workspace_commit" in pi.WORKSPACE_NOTE
+    assert not Path(env[tool_bridge.SOCKET_ENV]).exists()
 
 
 def test_tool_calls_use_the_same_key_as_every_other_backend():

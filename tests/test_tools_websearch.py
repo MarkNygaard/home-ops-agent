@@ -110,18 +110,15 @@ def test_the_skill_is_registered():
     assert registry.get("web_search") is not None
 
 
-def test_both_backends_offer_the_same_tool_name():
-    """The pi extension and this must agree on the name.
+def test_there_is_only_one_web_search_implementation():
+    """`searxng.ts` is gone.
 
-    They are separate implementations on purpose — thirty lines each beats a
-    bridge — but a model moved between backends should not have to learn a
-    different tool.
+    It and this file were the same query against the same instance, written
+    twice — and two implementations of one tool drift. The extension directory
+    now holds only the bridge, so both backends run this code.
     """
     from pathlib import Path
 
-    extension = (Path(__file__).resolve().parents[1] / "extensions" / "searxng.ts").read_text(
-        encoding="utf-8"
-    )
-
-    assert 'name: "web_search"' in extension
-    assert websearch._get_tools({})[0].name == "web_search"
+    extensions = Path(__file__).resolve().parents[1] / "extensions"
+    for path in extensions.glob("*.ts"):
+        assert "web_search" not in path.read_text(encoding="utf-8"), path.name
