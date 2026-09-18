@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from home_ops_agent import audit
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.config import settings
 
@@ -149,6 +150,7 @@ def _clean_title(title: object) -> str:
     return " ".join(text.split())[:250] or "Home-Ops Agent"
 
 
+@audit.records("ntfy_publish")
 async def publish(params: dict) -> str:
     """Publish a notification to an ntfy topic."""
     config = await resolve_config()

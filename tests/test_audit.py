@@ -117,21 +117,98 @@ async def test_recording_is_skipped_entirely_for_reads(monkeypatch):
     await audit.record("k8s_get_pods", {"namespace": "media"}, "[]")
 
 
-def test_both_tool_paths_record():
-    """pi reaches the same registry over a Unix socket rather than through
-    `core._execute_tool`. Recording in only one place would make the log blind
-    to every GPT run — the runs where the tools came from elsewhere."""
+def test_every_write_tool_records_itself():
+    """The test that would have caught the first version of this log.
+
+    Recording used to live in the dispatchers. There are *three* -- the
+    Anthropic loop, the pi socket bridge, and the Claude Code SDK wrapper --
+    and the workers call handlers like `merge_pr` directly with no dispatcher
+    at all. Two paths were wired, the busiest was not, and the log recorded
+    nothing at all through two real PR reviews while looking like it worked.
+
+    So the check is on the handler, which is where all four paths end.
+    """
+    from home_ops_agent.agent.tools import code_fix, flux, github, kubernetes, ntfy
+
+    tools = {}
+    for factory in (
+        kubernetes.get_kubernetes_tools(),
+        flux._get_tools({}),
+        github._get_tools({}),
+        ntfy._get_tools({}),
+        code_fix._get_tools({}),
+    ):
+        tools.update({t.name: t for t in factory})
+
+    for name, tool in tools.items():
+        marked = getattr(tool.handler, "__audit_tool__", None)
+        if name in audit.WRITE_TOOLS:
+            assert marked == name, f"{name} mutates and is not recorded"
+        else:
+            # And the reverse: a read that records would bury the writes.
+            assert marked is None, f"{name} is a read and should not be recorded"
+
+
+def test_the_tools_that_are_not_always_registered_are_decorated_too():
+    """workspace_commit exists only while a checkout is open and code_fix can
+    be disabled, so neither shows up in a registry snapshot. They are the two
+    that change the repository, so they are checked directly."""
+
+    from home_ops_agent.agent import workspace
+    from home_ops_agent.agent.tools import code_fix
+
+    assert '@audit.records("workspace_commit")' in inspect.getsource(workspace)
+    assert '@audit.records("code_fix")' in inspect.getsource(code_fix)
+
+
+def test_the_dispatchers_do_not_also_record():
+    """Recording in both places would double every row. The handler is the
+    single point on purpose."""
+
     from home_ops_agent.agent import core, tool_bridge
 
-    assert "audit.record" in inspect.getsource(core.Agent._execute_tool)
-    assert "audit.record" in inspect.getsource(tool_bridge._handle)
+    assert "audit.record(" not in inspect.getsource(core.Agent._execute_tool)
+    assert "audit.record(" not in inspect.getsource(tool_bridge._handle)
 
 
-def test_a_failing_write_is_still_recorded():
-    """The error path is the one worth having. A restart that raised is a
-    change that was attempted, and the log exists to show attempts."""
-    src = inspect.getsource(
-        __import__("home_ops_agent.agent.core", fromlist=["x"]).Agent._execute_tool
-    )
-    # The record call sits after the try/except, not inside the success branch.
-    assert src.index("except Exception") < src.index("audit.record")
+@pytest.mark.asyncio
+async def test_a_worker_calling_a_handler_directly_is_still_recorded(monkeypatch):
+    """`pr_merge` imports `merge_pr` and calls it — no agent, no dispatcher.
+    That is how the PR that merged today was merged, and it left no trace."""
+
+    recorded: list[tuple] = []
+
+    async def _capture(tool, args, result, **_kw):
+        recorded.append((tool, args, result))
+
+    monkeypatch.setattr(audit, "record", _capture)
+
+    async def _fake_merge(params):
+        return json.dumps({"status": "ok", "message": "merged"})
+
+    # The decorator is applied at import time, so re-wrap the inner function
+    # the same way the module does.
+    wrapped = audit.records("github_merge_pr")(_fake_merge)
+    await wrapped({"pr_number": 1069})
+
+    assert recorded and recorded[0][0] == "github_merge_pr"
+    assert recorded[0][1] == {"pr_number": 1069}
+
+
+@pytest.mark.asyncio
+async def test_a_handler_that_raises_is_recorded_and_still_raises(monkeypatch):
+    recorded: list[str] = []
+
+    async def _capture(tool, _args, result, **_kw):
+        recorded.append(result)
+
+    monkeypatch.setattr(audit, "record", _capture)
+
+    async def _boom(_params):
+        raise RuntimeError("github is down")
+
+    wrapped = audit.records("github_merge_pr")(_boom)
+    with pytest.raises(RuntimeError):
+        await wrapped({"pr_number": 1})
+
+    assert "github is down" in recorded[0]

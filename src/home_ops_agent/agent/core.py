@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 import anthropic
 
-from home_ops_agent import audit
 from home_ops_agent.agent import claude_code, pi, providers
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
@@ -151,9 +150,9 @@ class Agent:
             logger.exception("Tool %s failed", name)
             result = json.dumps({"error": str(e)})
 
-        # After the handler either way: a write that raised is exactly the kind
-        # you want in the log, and `record` ignores everything that is not one.
-        await audit.record(name, tool_input, result, source=progress.current_agent())
+        # Writes are recorded by the handlers themselves (`audit.records`), not
+        # here: there are three dispatchers and the workers also call handlers
+        # directly, so per-dispatcher recording missed most of them.
         return result
 
     # --- public entry points ---

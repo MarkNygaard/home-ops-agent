@@ -29,6 +29,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from home_ops_agent import audit
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.agent.tools import github
 
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 MAX_TURNS = 30
 
 
+@audit.records("code_fix")
 async def code_fix(params: dict) -> str:
     """Fix the code on a PR's branch, in a real checkout."""
     from home_ops_agent.agent.core import Agent
