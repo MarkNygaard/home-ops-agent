@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Maximum number of PRs to review per cycle (rate limit)
 MAX_REVIEWS_PER_CYCLE = 3
 
+# Turn budget for one review. See the call site for why it is not 10.
+REVIEW_MAX_TURNS = 20
+
 # Tools deliberately withheld from the PR agent, so that merging and telling
 # you about it stay in code rather than in a model's improvisation.
 #
@@ -237,7 +240,12 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
             system_prompt=prompt,
             messages=messages,
             model=model,
-            max_turns=10,
+            # Raised from 10. A review reads the PR, its files, its checks and
+            # then the release notes for each changed component -- and with web
+            # search available it will follow a changelog that is not on the
+            # release. Ten turns were spent before the first sentence was
+            # written on the PR that ran out of them.
+            max_turns=REVIEW_MAX_TURNS,
         )
         return result
     except Exception:
@@ -314,13 +322,18 @@ async def _notify_review(pr: dict, result: AgentResult, pr_mode: str = "comment_
     )
 
 
-async def _save_task(pr: dict, result: AgentResult):
-    """Save PR review task to the database."""
+async def _save_task(pr: dict, result: AgentResult, status: str = "completed"):
+    """Save PR review task to the database.
+
+    ``status="failed"`` records a review that did not finish. The text is still
+    saved -- it says what had been established before the budget ran out, which
+    is most of the value and all of the diagnosis.
+    """
     async with async_session() as session:
         conversation = Conversation(
             title=f"PR Review: #{pr['number']} {pr['title'][:100]}",
             source="pr_review",
-            status="completed",
+            status="completed" if status == "completed" else "failed",
         )
         session.add(conversation)
         await session.flush()
@@ -333,12 +346,17 @@ async def _save_task(pr: dict, result: AgentResult):
         )
         session.add(msg)
 
+        # An unfinished review is labelled as one in the summary, because the
+        # summary is what the history page shows and a truncated review reads
+        # like a confident one right up to where it stops.
+        prefix = "[RAN OUT OF TURNS] " if status == "failed" else _extract_verdict(result.response)
+
         task = AgentTask(
             task_type="pr_review",
             trigger=f"PR #{pr['number']}",
-            status="completed",
+            status=status,
             conversation_id=conversation.id,
-            summary=_extract_verdict(result.response) + result.response[:500],
+            summary=prefix + result.response[:500],
             actions_taken={
                 "tool_calls": result.tool_calls,
                 "tokens": result.total_tokens,
@@ -492,6 +510,27 @@ async def check_prs() -> dict:
             # credentials or a failing tool looks the same as "nothing to do"
             # unless it is counted here.
             failed_count += 1
+        if result and result.stopped_early:
+            # Kept, not discarded: the partial text says what it had found, and
+            # it is recorded against the PR so the next cycle's reader is not
+            # guessing. But it stops here -- an unfinished review must never
+            # reach _route, where a stray "SAFE_TO_MERGE: yes" written before
+            # the budget ran out would merge on half an investigation.
+            failed_count += 1
+            logger.warning(
+                "PR #%s review ran out of turns after %d tool calls; not routing it",
+                pr["number"],
+                len(result.tool_calls),
+            )
+            await _save_task(pr, result, status="failed")
+            await record_usage(
+                model=result.model,
+                task_type="pr_review",
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+            )
+            continue
+
         if result:
             await _save_task(pr, result)
             await record_usage(

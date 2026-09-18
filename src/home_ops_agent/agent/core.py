@@ -50,6 +50,10 @@ class AgentResult:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
+    # True when the run hit its turn budget rather than finishing. The text is
+    # whatever the model had produced, which is worth keeping -- but it is not
+    # a conclusion, and nothing may treat it as one.
+    stopped_early: bool = False
 
 
 class Agent:

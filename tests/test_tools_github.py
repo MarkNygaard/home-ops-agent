@@ -366,11 +366,100 @@ async def test_get_release_404_fallback_v_prefix(httpx_mock, mock_settings):
 async def test_get_release_not_found(httpx_mock, mock_settings):
     httpx_mock.add_response(status_code=404)
     httpx_mock.add_response(status_code=404)
+    # And the release list, which is now consulted before giving up.
+    httpx_mock.add_response(status_code=200, json=[])
     result = json.loads(
         untrusted.unwrap(await get_release({"repo": "test/repo", "tag": "v99.0.0"}))
     )
     assert "error" in result
     assert "not found" in result["error"]
+    # The hint is the point: no release tag carries this version, so the model
+    # should stop guessing tags and look somewhere else.
+    assert "changelog" in result["hint"].lower()
+
+
+async def test_get_release_finds_a_component_tagged_release(httpx_mock, mock_settings):
+    """The lookup that cost a review its turn budget.
+
+    piraeusdatastore publishes `snapshot-controller-5.3.0`, so `5.3.0` and
+    `v5.3.0` both 404 while the release sits in the list. Four turns went on
+    those 404s before the model gave up and searched the web.
+    """
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(
+        status_code=200,
+        json=[
+            {"tag_name": "snapshot-controller-5.2.0", "html_url": "u", "body": "old"},
+            {
+                "tag_name": "snapshot-controller-5.3.0",
+                "name": "snapshot-controller 5.3.0",
+                "html_url": "https://example/releases/snapshot-controller-5.3.0",
+                "body": "the notes",
+            },
+        ],
+    )
+
+    result = json.loads(
+        untrusted.unwrap(
+            await get_release({"repo": "piraeusdatastore/helm-charts", "tag": "5.3.0"})
+        )
+    )
+
+    assert result["tag"] == "snapshot-controller-5.3.0"
+    assert result["body"] == "the notes"
+
+
+async def test_a_version_does_not_match_a_longer_one(httpx_mock, mock_settings):
+    """`5.3.0` must not be answered with `5.30.0`, and a release must not be
+    answered with its own release candidate."""
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(status_code=404)
+    httpx_mock.add_response(
+        status_code=200,
+        json=[
+            {"tag_name": "chart-5.30.0", "html_url": "u", "body": "wrong"},
+            {"tag_name": "chart-5.3.0-rc1", "html_url": "u", "body": "also wrong"},
+        ],
+    )
+
+    result = json.loads(untrusted.unwrap(await get_release({"repo": "x/y", "tag": "5.3.0"})))
+
+    assert "error" in result
+
+
+async def test_check_runs_accepts_a_pr_number(httpx_mock, mock_settings):
+    """The model has a PR number in front of it and this endpoint wants a
+    commit-ish, so it answered 422 on every review -- and on the review that
+    ran out of turns, that was one of the six wasted."""
+    httpx_mock.add_response(
+        status_code=200, json={"head": {"sha": "d40740a2cfa0880c832049aa79ec8f4bbcd18a85"}}
+    )
+    httpx_mock.add_response(
+        status_code=200,
+        json={
+            "check_runs": [
+                {"name": "lint", "status": "completed", "conclusion": "success"},
+            ]
+        },
+    )
+
+    result = json.loads(await get_check_runs({"ref": "1072"}))
+
+    assert result[0]["name"] == "lint"
+    # The second request must be for the resolved SHA, not the PR number.
+    assert "d40740a2cfa0880c832049aa79ec8f4bbcd18a85" in str(httpx_mock.get_requests()[-1].url)
+
+
+async def test_check_runs_returns_a_bad_ref_instead_of_raising(httpx_mock, mock_settings):
+    """An exception costs the model a turn to discover what a returned error
+    tells it immediately."""
+    httpx_mock.add_response(status_code=422)
+
+    result = json.loads(await get_check_runs({"ref": "nonsense"}))
+
+    assert "error" in result
+    assert "422" in result["error"]
 
 
 async def test_create_commit_allowed_path(httpx_mock, mock_settings):
