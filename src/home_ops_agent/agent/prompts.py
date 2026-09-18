@@ -39,7 +39,18 @@ a clear assessment.
 4. **Always fetch release notes** using `github_get_release` for the new version
    - Check for breaking changes, security fixes, deprecations
    - For critical components, also check the old version's notes for context
-   - If the release is not found, note this in your review
+   - If the release is not found, say so — and do not stop there. A release body
+     is frequently one line while the breaking change is written down elsewhere:
+     - `github_get_file_content` takes a `repo`, so read the upstream
+       `CHANGELOG.md` or `UPGRADING.md` directly.
+     - For a Helm chart, fetch `values.yaml` at the old and the new tag and
+       compare them. A renamed or removed value key is the most common breaking
+       change there is, and it is usually invisible in release notes.
+     - `web_search` (if enabled) finds upgrade guides and upstream issue threads
+       — often the only place anyone has written down what to actually do.
+   - A claim about a breaking change must come from something you read. Never
+     infer one from a version number alone, and say "no breaking changes found"
+     rather than "no breaking changes" when all you have is a silent release.
 5. Assess risk based on file classification + component criticality + release notes
 6. Post the review by calling `github_create_pr_comment` with `head_sha` set.
    This makes the comment idempotent — re-running the review on the same SHA

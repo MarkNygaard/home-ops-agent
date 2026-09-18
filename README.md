@@ -33,7 +33,7 @@ Single Python container. Single async process. Background workers as asyncio tas
 - [CloudNativePG](https://cloudnative-pg.io/) (PostgreSQL) — for conversations, memories, settings, and task logs
 - [ntfy](https://ntfy.sh/) — for alert subscriptions and notifications
 - Prometheus + Loki — for metrics and log queries (optional, via skills system)
-- [SearXNG](https://docs.searxng.org/) — optional, for the `web_search` tool on the [pi backend](#providers). Needs the JSON format enabled and `SEARXNG_URL` set; without it the tool is simply not registered.
+- [SearXNG](https://docs.searxng.org/) — optional, for the `web_search` tool on **both** backends. Needs the JSON format enabled and `SEARXNG_URL` set; without it the tool is simply not registered. Worth having: without it the review agents can read a GitHub Release and nothing else, which is half an answer for a breaking change.
 - **A Claude Pro/Max subscription** (via `claude setup-token`) — or a Kimi for Coding key, or imported ChatGPT tokens. See [Providers](#providers). There is no metered API-key option.
 - GitHub personal access token — fine-grained (scoped to your repo with `Contents: Read/Write` and `Pull requests: Read/Write`) or classic with `repo` scope (required if using a dedicated bot account)
 
@@ -321,7 +321,7 @@ The two backends do not offer the same tools, and the difference is worth knowin
 |---|---|---|
 | Kubernetes, Flux | yes (Python tools) | yes (`extensions/cluster.ts`) |
 | GitHub, Prometheus, Loki, Talos, ntfy | yes | **no** |
-| Web search | **no** | yes, with `SEARXNG_URL` set |
+| Web search | yes, with `SEARXNG_URL` set | yes, with `SEARXNG_URL` set |
 | Files and shell | Claude Code only, inside a git worktree | always (pi's own `read`/`bash`/`edit`/`write`) |
 | Commit and push | yes, via the guarded `workspace_commit` | yes, via the same guarded `workspace_commit` |
 

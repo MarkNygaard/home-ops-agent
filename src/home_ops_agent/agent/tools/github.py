@@ -277,16 +277,35 @@ async def merge_pr(params: dict) -> str:
 
 
 async def get_file_content(params: dict) -> str:
-    """Get a file's content from the repo."""
-    if error := repo_configured():
-        return error
+    """Get a file's content from this repo, or from any repo on GitHub.
+
+    ``repo`` defaults to the configured repository, which is what every existing
+    caller wants. It is a parameter because a review of a breaking change needs
+    to read *upstream*: a project's CHANGELOG.md or UPGRADING.md often carries
+    the breaking change while the GitHub Release body says one line, and a Helm
+    chart's renamed value key is only visible by fetching values.yaml at the two
+    tags and comparing them. ``github_get_release`` already takes a repo for the
+    same reason; this was the half that did not.
+
+    Read-only, and bounded by whatever the token can see -- widening it does not
+    grant access the token did not already have.
+    """
+    repo = (params.get("repo") or "").strip() or settings.github_repo
+    if not repo:
+        return json.dumps({"error": "No repository configured and none given."})
 
     path = params["path"]
     ref = params.get("ref", "main")
 
     async with httpx.AsyncClient() as client:
-        url = f"{GITHUB_API}/repos/{settings.github_repo}/contents/{path}"
+        url = f"{GITHUB_API}/repos/{repo}/contents/{path}"
         resp = await client.get(url, headers=_headers(), params={"ref": ref})
+        if resp.status_code == 404:
+            # A miss here is usually the ref, not the path: upstream tags are
+            # `v1.2.3` about as often as `1.2.3`, and the caller is guessing.
+            return json.dumps(
+                {"error": f"{path} not found in {repo} at ref '{ref}' (check the tag spelling)"}
+            )
         resp.raise_for_status()
 
         data = resp.json()
@@ -304,6 +323,7 @@ async def get_file_content(params: dict) -> str:
         truncated = len(content) > limit
         return json.dumps(
             {
+                "repo": repo,
                 "path": data["path"],
                 "size": data["size"],
                 "sha": data["sha"],
@@ -596,14 +616,27 @@ def get_github_tools() -> list[ToolDefinition]:
         ),
         ToolDefinition(
             name="github_get_file_content",
-            description="Get the content of a file from the repository at a specific ref/branch.",
+            description=(
+                "Read a file from this repository, or from any repository on GitHub. "
+                "Use it on an upstream repo to research a breaking change: CHANGELOG.md "
+                "and UPGRADING.md often carry what the release notes leave out, and a "
+                "Helm chart's renamed value key is only visible by fetching values.yaml "
+                "at the old and new tags and comparing them."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "File path in the repo"},
+                    "path": {"type": "string", "description": "File path within the repo"},
                     "ref": {
                         "type": "string",
-                        "description": "Branch or commit SHA (default: main)",
+                        "description": "Branch, tag or commit SHA (default: main)",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": (
+                            "owner/name of another repository, e.g. 'siderolabs/talos'. "
+                            "Omit for this cluster's own repository."
+                        ),
                     },
                 },
                 "required": ["path"],
