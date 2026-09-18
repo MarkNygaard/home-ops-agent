@@ -54,6 +54,9 @@ type StepNodeData = {
   icon: string;
   subagent?: boolean;
   decision?: boolean;
+  /** Shown on hover. Where a node stands for several underlying steps, this is
+   *  where those went — the diagram is short of width, not of detail. */
+  hint?: string;
 };
 
 const ICONS: Record<string, typeof IconRobot> = {
@@ -142,15 +145,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
     ? 'text-accent-orange'
     : 'text-muted-foreground';
 
-  return (
-    <div className="relative flex flex-col items-center gap-2">
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ top: handleTop }}
-        className="bg-transparent! border-0! w-0! h-0!"
-      />
-      {subagent ? (
+  const circle = subagent ? (
         <div
           className={cn(
             'flex items-center justify-center rounded-full',
@@ -166,18 +161,37 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
             <Icon className={cn(iconSize, iconClass)} />
           </div>
         </div>
+  ) : (
+    <div
+      className={cn(
+        'flex items-center justify-center rounded-full bg-muted/30 transition-colors',
+        circleSize,
+        decision
+          ? 'border border-dashed border-foreground/25'
+          : 'ring-1 ring-foreground/10',
+      )}
+    >
+      <Icon className={cn(iconSize, iconClass)} />
+    </div>
+  );
+
+  return (
+    <div className="relative flex flex-col items-center gap-2">
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ top: handleTop }}
+        className="bg-transparent! border-0! w-0! h-0!"
+      />
+      {data.hint ? (
+        <Tooltip>
+          <TooltipTrigger className="cursor-help">{circle}</TooltipTrigger>
+          <TooltipContent side="bottom" className="max-w-xs">
+            <p className="text-sm">{data.hint}</p>
+          </TooltipContent>
+        </Tooltip>
       ) : (
-        <div
-          className={cn(
-            'flex items-center justify-center rounded-full bg-muted/30 transition-colors',
-            circleSize,
-            decision
-              ? 'border border-dashed border-foreground/25'
-              : 'ring-1 ring-foreground/10',
-          )}
-        >
-          <Icon className={cn(iconSize, iconClass)} />
-        </div>
+        circle
       )}
       <span className="max-w-24 text-center text-xs leading-tight text-muted-foreground">
         {data.label}
@@ -222,7 +236,7 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]): Flow {
     // step-to-step gap and is what gives the edge labels their room now that
     // node widths no longer vary to make it.
     nodesep: 36,
-    ranksep: 72,
+    ranksep: 56,
     marginx: 20,
     marginy: 20,
   });
@@ -355,18 +369,59 @@ function branchEdge(
 function makePRReviewFlow(prMode: string): Flow {
   const pos = { x: 0, y: 0 };
 
-  // Common review chain shared by all modes
+  // Common review chain shared by all modes.
+  //
+  // Every rank costs width, and width is the only thing this diagram is short
+  // of: at thirteen ranks the captions rendered at 7px. "Trigger" was the
+  // cheapest to lose — it said the schedule had fired, which the agent node and
+  // the countdown in the header both already say, and it is the one step you
+  // can neither act on nor learn anything from.
   const reviewNodes: Node[] = [
     { id: 'agent', type: 'agent', position: pos, data: { label: 'PR Review' } },
-    { id: 's1', type: 'step', position: pos, data: { label: 'Trigger', icon: 'IconGitPullRequest' } },
-    { id: 's2', type: 'step', position: pos, data: { label: 'Check PR', icon: 'IconFileSearch' } },
-    { id: 's3', type: 'step', position: pos, data: { label: 'Read Diff', icon: 'IconFileText' } },
-    { id: 's4', type: 'step', position: pos, data: { label: 'Release Notes', icon: 'IconNotes' } },
-    { id: 's5', type: 'step', position: pos, data: { label: 'Decide', icon: 'IconReport', decision: true } },
+    {
+      id: 's2',
+      type: 'step',
+      position: pos,
+      data: {
+        label: 'Check PR',
+        icon: 'IconFileSearch',
+        hint: 'Reads the PR: author, labels, CI status and head SHA. Skips it if this SHA was already reviewed.',
+      },
+    },
+    {
+      id: 's3',
+      type: 'step',
+      position: pos,
+      data: {
+        label: 'Read Diff',
+        icon: 'IconFileText',
+        hint: 'Reads the changed files and classifies them — tooling-only, cluster OS, cluster workloads or bootstrap — before judging risk by component name.',
+      },
+    },
+    {
+      id: 's4',
+      type: 'step',
+      position: pos,
+      data: {
+        label: 'Release Notes',
+        icon: 'IconNotes',
+        hint: 'Fetches the upstream release notes, and where those are silent, the upstream CHANGELOG or a chart values.yaml at both tags. Can search the web when the Web Search skill is on.',
+      },
+    },
+    {
+      id: 's5',
+      type: 'step',
+      position: pos,
+      data: {
+        label: 'Decide',
+        icon: 'IconReport',
+        decision: true,
+        hint: 'Ends the review with two lines: SAFE_TO_MERGE and FIXABLE. The routing reads those, not the prose.',
+      },
+    },
   ];
   const reviewEdges: Edge[] = [
-    mainEdge('e-a-s1', 'agent', 's1', true),
-    mainEdge('e-s1-s2', 's1', 's2'),
+    mainEdge('e-a-s2', 'agent', 's2', true),
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
@@ -395,9 +450,20 @@ function makePRReviewFlow(prMode: string): Flow {
         ...reviewNodes,
         { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
         { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
-        { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', subagent: true } },
-        { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText' } },
-        { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend' } },
+        // Write Fix and Push Fix used to be siblings here. They are steps *inside*
+        // the Code Fix sub-agent, not stages of the review flow, and they cost two
+        // of the thirteen ranks that made every caption 7px. The detail is on hover.
+        {
+          id: 'b2a',
+          type: 'step',
+          position: pos,
+          data: {
+            label: 'Code Fix',
+            icon: 'IconCode',
+            subagent: true,
+            hint: 'Checks the branch out into a git worktree, searches the repository, edits as many files as the fix needs, validates with kubeconform, then pushes one commit through the guarded commit tool. Only files under kubernetes/apps/ can be committed.',
+          },
+        },
         { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
         { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
         { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', subagent: true, decision: true } },
@@ -411,9 +477,7 @@ function makePRReviewFlow(prMode: string): Flow {
         branchEdge('e-s5-b1', 's5', 'b1', true, 'SAFE'),
         branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
         branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
-        mainEdge('e-b2a-b2b', 'b2a', 'b2b', false, true),
-        mainEdge('e-b2b-b2c', 'b2b', 'b2c', false, true),
-        mainEdge('e-b2c-b2e', 'b2c', 'b2e', false, true),
+        mainEdge('e-b2a-b2e', 'b2a', 'b2e', false, true),
         branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
         branchEdge('e-b3-b3a', 'b3', 'b3a', true, 'OK'),
         branchEdge('e-b3-g1', 'b3', 'g1', true, 'FIXABLE'),
@@ -432,9 +496,20 @@ function makePRReviewFlow(prMode: string): Flow {
       ...reviewNodes,
       { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
       { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
-      { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', subagent: true } },
-      { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText' } },
-      { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend' } },
+      // Write Fix and Push Fix used to be siblings here. They are steps *inside*
+      // the Code Fix sub-agent, not stages of the review flow, and they cost two
+      // of the thirteen ranks that made every caption 7px. The detail is on hover.
+      {
+        id: 'b2a',
+        type: 'step',
+        position: pos,
+        data: {
+          label: 'Code Fix',
+          icon: 'IconCode',
+          subagent: true,
+          hint: 'Checks the branch out into a git worktree, searches the repository, edits as many files as the fix needs, validates with kubeconform, then pushes one commit through the guarded commit tool. Only files under kubernetes/apps/ can be committed.',
+        },
+      },
       { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
       { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
       { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle' } },
@@ -445,9 +520,7 @@ function makePRReviewFlow(prMode: string): Flow {
       branchEdge('e-s5-b1', 's5', 'b1', true, 'SAFE'),
       branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
       branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
-      mainEdge('e-b2a-b2b', 'b2a', 'b2b', false, true),
-      mainEdge('e-b2b-b2c', 'b2b', 'b2c', false, true),
-      mainEdge('e-b2c-b2e', 'b2c', 'b2e', false, true),
+      mainEdge('e-b2a-b2e', 'b2a', 'b2e', false, true),
       branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
       // Gray: routes that stop and wait for a person.
       branchEdge('e-g1-b3', 'g1', 'b3', false, 'NO'),
@@ -464,12 +537,6 @@ function makeAlertFlow(): Flow {
       type: 'agent',
       position: { x: 0, y: 0 },
       data: { label: 'Alert Triage' },
-    },
-    {
-      id: 's1',
-      type: 'step',
-      position: { x: 0, y: 0 },
-      data: { label: 'Alert', icon: 'IconAlertTriangle' },
     },
     {
       id: 's2',
@@ -538,8 +605,7 @@ function makeAlertFlow(): Flow {
   ];
 
   const edges: Edge[] = [
-    mainEdge('e-a-s1', 'agent', 's1', true),
-    mainEdge('e-s1-s2', 's1', 's2'),
+    mainEdge('e-a-s2', 'agent', 's2', true),
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
