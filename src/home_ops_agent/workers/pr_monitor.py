@@ -422,7 +422,24 @@ async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> N
         )
 
     if verdict.safe_to_merge:
-        # Merging is handled by auto_merge_reviewed_prs against the same gate.
+        # In fully autonomous mode, merge it here rather than at the start of
+        # the next cycle. The gate is the same function either way, and the
+        # review has just read CI -- deferring only meant a clean PR sat for up
+        # to an interval while the dashboard said it was safe to merge. The
+        # deep-review path has always merged inline; this makes the ordinary
+        # path agree with it.
+        #
+        # The other auto-merge modes keep the next-cycle behaviour
+        # deliberately: they are the cautious settings, and this is the change
+        # that makes the agent act sooner.
+        if pr_mode == "auto_merge_all":
+            from home_ops_agent.workers.pr_merge import merge_now
+
+            if await _is_safe_to_auto_merge(pr, response):
+                await merge_now(pr)
+                return
+
+        # Otherwise auto_merge_reviewed_prs picks it up against the same gate.
         return
 
     if verdict.fixable:
