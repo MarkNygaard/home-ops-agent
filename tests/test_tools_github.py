@@ -98,6 +98,8 @@ async def test_list_prs_with_results(httpx_mock, mock_settings):
                 "mergeable_state": "clean",
                 "draft": False,
                 "html_url": "https://github.com/test/42",
+                "head": {"sha": "abc1234", "ref": "renovate/cilium"},
+                "base": {"ref": "main"},
             }
         ],
     )
@@ -106,6 +108,11 @@ async def test_list_prs_with_results(httpx_mock, mock_settings):
     assert result[0]["number"] == 42
     assert result[0]["author"] == "renovate[bot]"
     assert result[0]["labels"] == ["type/patch"]
+    # The monitor consumes these without re-fetching. Their absence meant every
+    # PR was reviewed once and never again, and a code fix could never open a
+    # checkout.
+    assert result[0]["head_sha"] == "abc1234"
+    assert result[0]["head_ref"] == "renovate/cilium"
 
 
 async def test_list_prs_filter_author(httpx_mock, mock_settings):
@@ -489,3 +496,28 @@ async def test_writing_is_still_confined_to_this_repo():
         source = inspect.getsource(fn)
         assert "settings.github_repo" in source, fn.__name__
         assert 'params.get("repo")' not in source, fn.__name__
+
+
+@pytest.mark.asyncio
+async def test_list_prs_survives_a_payload_without_head(httpx_mock, mock_settings):
+    """A KeyError here would fail the whole review cycle.
+
+    Empty is the safe direction now: the callers treat an unknown SHA as "not
+    reviewed yet" and review it again, rather than as a match that skips it.
+    """
+    httpx_mock.add_response(
+        json=[
+            {
+                "number": 43,
+                "title": "odd payload",
+                "user": {"login": "renovate[bot]"},
+                "labels": [],
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T01:00:00Z",
+                "draft": False,
+                "html_url": "https://github.com/test/43",
+            }
+        ],
+    )
+    result = json.loads(await list_prs({"state": "open"}))
+    assert result[0]["head_sha"] == ""

@@ -73,7 +73,16 @@ async def _get_pr_mode() -> str:
 
 
 async def _already_reviewed(pr_number: int, head_sha: str) -> bool:
-    """Check if we already reviewed this PR at this SHA (DB-backed, survives restarts)."""
+    """Check if we already reviewed this PR at this SHA (DB-backed, survives restarts).
+
+    An unknown SHA is never a match. Without this, an empty string compares equal
+    to the empty string stored by an earlier run, so the answer is "yes, at the
+    commit I do not know about" -- and the PR is skipped forever, whatever is
+    pushed to it. That is exactly what happened while `list_prs` omitted
+    `head_sha`: every PR was reviewed once and never again.
+    """
+    if not head_sha:
+        return False
     async with async_session() as session:
         result = await session.execute(
             select(AgentTask).where(
@@ -92,6 +101,11 @@ async def _already_reviewed(pr_number: int, head_sha: str) -> bool:
 async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
     """The most recent review for this PR at this SHA.
 
+    Returns None for an unknown SHA, rather than matching a review of some other
+    commit. That mattered more than the skip: this summary is what
+    `auto_merge_reviewed_prs` merges on, so a stale SAFE_TO_MERGE from an earlier
+    version of a force-pushed PR could approve code nothing had looked at.
+
     Newest first, and the ordering is the point. A PR can have several reviews
     stored against one SHA -- an initial review and the deep review it was
     escalated to -- and the later one supersedes the earlier by definition,
@@ -103,6 +117,8 @@ async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
     said NEEDS_REVIEW. The escalation ran, cost its tokens, reached the right
     answer, and was then ignored.
     """
+    if not head_sha:
+        return None
     async with async_session() as session:
         result = await session.execute(
             select(AgentTask)
