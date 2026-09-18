@@ -590,7 +590,7 @@ function makePRReviewFlow(prMode: string): Flow {
   );
 }
 
-function makeAlertFlow(): Flow {
+function makeAlertFlow(alertMode: string): Flow {
   const nodes: Node[] = [
     {
       id: 'agent',
@@ -727,13 +727,35 @@ function makeAlertFlow(): Flow {
     branchEdge('e-s5-b3', 's5', 'b3', false, 'IGNORE'),
   ];
 
+  // Observe: triage still runs and still tells you what it found -- the whole
+  // point of the mode is that you keep the diagnosis. What goes is everything
+  // downstream of FIX, because in this mode the agent cannot take any of it.
+  if (alertMode === 'observe') {
+    const dropped = new Set(['b1a', 'b1b', 'b1c', 'b1d', 'b1e']);
+    return getLayoutedElements(
+      nodes.filter((n) => !dropped.has(n.id)),
+      edges.filter((e) => !dropped.has(e.source) && !dropped.has(e.target)),
+    );
+  }
+
+  // Restart only: it may put the cluster back the way the manifests say, and
+  // may not change what they say.
+  if (alertMode === 'restart_only') {
+    return getLayoutedElements(
+      nodes.filter((n) => n.id !== 'b1e'),
+      edges.filter((e) => e.source !== 'b1e' && e.target !== 'b1e'),
+    );
+  }
+
   return getLayoutedElements(nodes, edges);
 }
 
 
-const FLOW_BUILDERS: Record<string, (prMode?: string) => Flow> = {
-  pr_review: (prMode) => makePRReviewFlow(prMode ?? 'comment_only'),
-  alert: () => makeAlertFlow(),
+// Each flow is drawn for the mode it is actually running in, so the diagram is
+// not a picture of what the agent could do in some other configuration.
+const FLOW_BUILDERS: Record<string, (mode?: string) => Flow> = {
+  pr_review: (mode) => makePRReviewFlow(mode ?? 'comment_only'),
+  alert: (mode) => makeAlertFlow(mode ?? 'full'),
 };
 
 const PR_MODE_DESCRIPTIONS: Record<string, string> = {
@@ -747,10 +769,18 @@ const PR_MODE_DESCRIPTIONS: Record<string, string> = {
     'Fully autonomous: merges all safe PRs including critical components. A review that knows the fix hands it to the Code Fix agent, if the PR only touches paths a fix may commit. Everything else goes to Opus for Deep Review, which can hand a fix over itself once it has read the changelogs. Every pushed fix is re-reviewed before it merges.',
 };
 
+const ALERT_MODE_DESCRIPTIONS: Record<string, string> = {
+  observe:
+    'Triage (Haiku) diagnoses every alert and notifies you — including when a fix was available, so you can see what the mode is costing you. Nothing on the cluster is touched.',
+  restart_only:
+    'Two-stage pipeline: Triage (Haiku) diagnoses, then Alert Fix (Sonnet) may restart a workload or reconcile Flux. It cannot change the manifests — no pull requests.',
+  full:
+    'Two-stage pipeline: Triage (Haiku) diagnoses severity, then Alert Fix (Sonnet) takes corrective action — up to opening a pull request when the configuration itself is the problem. It never merges it.',
+};
+
 const AGENT_DESCRIPTIONS: Record<string, string> = {
   pr_review: PR_MODE_DESCRIPTIONS.comment_only,
-  alert:
-    'Two-stage pipeline: Triage (Haiku) diagnoses severity, then Alert Fix (Sonnet) takes corrective action when needed.',
+  alert: ALERT_MODE_DESCRIPTIONS.full,
 };
 
 const defaultEdgeOptions = {
@@ -777,6 +807,8 @@ interface AgentFlowProps {
 export function AgentFlow({ activeAgent }: AgentFlowProps) {
   const { data: settings } = useSettings();
   const prMode = settings?.pr_mode ?? 'comment_only';
+  const alertMode = settings?.alert_mode ?? 'full';
+  const mode = activeAgent === 'alert' ? alertMode : prMode;
   const builder = FLOW_BUILDERS[activeAgent];
 
   // Shares react-query's cache with the status bar, so this adds no request of
@@ -796,7 +828,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
 
   const { nodes, edges, bounds } = useMemo(() => {
     const flow = builder
-      ? builder(prMode)
+      ? builder(mode)
       : { nodes: [], edges: [], bounds: { width: 1, height: 1 } };
     if (!activeStep) return flow;
     return {
@@ -807,7 +839,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           : node
       ),
     };
-  }, [builder, prMode, activeStep]);
+  }, [builder, mode, activeStep]);
 
   if (!builder) return null;
 
@@ -818,8 +850,10 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
   const aspect = bounds.width / Math.max(bounds.height, 1);
   const description =
     activeAgent === 'pr_review'
-      ? PR_MODE_DESCRIPTIONS[prMode ?? 'comment_only'] ?? AGENT_DESCRIPTIONS[activeAgent]
-      : AGENT_DESCRIPTIONS[activeAgent] ?? 'Autonomous cluster operator';
+      ? (PR_MODE_DESCRIPTIONS[mode] ?? AGENT_DESCRIPTIONS[activeAgent])
+      : activeAgent === 'alert'
+        ? (ALERT_MODE_DESCRIPTIONS[mode] ?? AGENT_DESCRIPTIONS[activeAgent])
+        : (AGENT_DESCRIPTIONS[activeAgent] ?? 'Autonomous cluster operator');
 
   return (
     <div className="flex flex-col gap-4">
@@ -881,7 +915,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
         style={{ aspectRatio: aspect, minHeight: 200, maxHeight: 520 }}
       >
         <ReactFlow
-          key={`${activeAgent}-${prMode}`}
+          key={`${activeAgent}-${mode}`}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}

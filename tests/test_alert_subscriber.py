@@ -451,3 +451,64 @@ def test_the_notification_says_a_pr_is_waiting():
     source = inspect.getsource(alert_subscriber._fix_alert)
     assert "PR opened for" in source
     assert '"high" if opened_pr else "default"' in source
+
+
+@pytest.mark.asyncio
+async def test_the_alert_mode_falls_back_to_full_when_the_database_is_unreachable(monkeypatch):
+    """Same direction as the cooldown: a database outage must not quietly
+    downgrade the agent to observe-only. The operator set a mode; a failure to
+    read it is not consent to a different one."""
+    from home_ops_agent.workers import alert_subscriber
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(alert_subscriber, "async_session", _boom)
+    assert await alert_subscriber._get_alert_mode() == alert_subscriber.DEFAULT_ALERT_MODE
+
+
+def test_the_default_mode_is_what_the_agent_already_did():
+    """A new setting that changes behaviour on upgrade is worse than no
+    setting — nobody chose the new value."""
+    from home_ops_agent.workers import alert_subscriber
+
+    assert alert_subscriber.DEFAULT_ALERT_MODE == "full"
+
+
+def test_observe_notifies_instead_of_fixing_and_says_so():
+    """Observe must not become "ignore". The diagnosis is the part you wanted,
+    and the notification says a fix was available so the mode's cost is
+    visible rather than being a silence you have to notice."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    src = inspect.getsource(alert_subscriber._investigate_alert)
+    observe = src.split('if action == "fix" and mode == "observe"')[1].split("return")[0]
+    assert "_notify_triage" in observe
+    assert "a fix was available" in observe
+    # And it must sit before the branch that acts, or it never runs.
+    assert src.index('mode == "observe"') < src.index('if action == "fix":\n')
+
+
+def test_restart_only_withholds_the_tools_that_change_manifests():
+    """The distinction the mode draws: put the cluster back the way the
+    manifests say, never change what they say."""
+    from home_ops_agent.workers import alert_subscriber
+
+    assert "github_create_pr" in alert_subscriber.WITHHELD_IN_RESTART_ONLY
+    assert "code_fix" in alert_subscriber.WITHHELD_IN_RESTART_ONLY
+    # Restarting and reconciling are the point of the mode — not withheld.
+    assert "k8s_restart_workload" not in alert_subscriber.WITHHELD_IN_RESTART_ONLY
+    assert "flux_reconcile" not in alert_subscriber.WITHHELD_IN_RESTART_ONLY
+
+
+def test_the_mode_is_read_before_the_fix_agent_is_built():
+    """Withholding tools after handing them to the agent would be decorative."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    src = inspect.getsource(alert_subscriber._investigate_alert)
+    assert src.index("_get_alert_mode()") < src.index("fix_agent = Agent(")
+    assert src.index("WITHHELD_IN_RESTART_ONLY") < src.index("fix_agent.register_tools")

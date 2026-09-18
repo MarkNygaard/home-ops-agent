@@ -18,6 +18,7 @@ export default function SettingsGeneralPage() {
 
   // Derive values from settings with local overrides
   const prMode = overrides.pr_mode ?? settings?.pr_mode ?? "comment_only"
+  const alertMode = overrides.alert_mode ?? settings?.alert_mode ?? "full"
   const alertCooldown = overrides.alert_cooldown ?? String(settings?.alert_cooldown_seconds ?? "900")
   const ntfyTopics = overrides.ntfy_topics ?? settings?.ntfy_topics ?? "alertmanager,gatus"
   const prInterval = overrides.pr_interval ?? String(settings?.pr_check_interval_seconds ?? "1800")
@@ -35,6 +36,7 @@ export default function SettingsGeneralPage() {
   async function handleSave() {
     await Promise.all([
       updateSetting("pr_mode", prMode),
+      updateSetting("alert_mode", alertMode),
       updateSetting("alert_cooldown_seconds", alertCooldown),
       updateSetting("ntfy_topics", ntfyTopics),
       updateSetting("pr_check_interval_seconds", prInterval),
@@ -110,6 +112,57 @@ export default function SettingsGeneralPage() {
                 Fully Autonomous
                 <span className="text-muted-foreground">
                   — All PRs, including critical. Uses Opus for deep review on high-risk.
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-medium">Alert Response Mode</h3>
+            <p className="text-sm text-muted-foreground">
+              How far an alert may go on its own. Triage always runs — you get the
+              diagnosis either way.
+            </p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="alert_mode"
+                  value="observe"
+                  checked={alertMode === "observe"}
+                  onChange={(e) => setField("alert_mode", e.target.value)}
+                />
+                Observe
+                <span className="text-muted-foreground">
+                  — Diagnose and notify only. Never acts on the cluster.
+                </span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="alert_mode"
+                  value="restart_only"
+                  checked={alertMode === "restart_only"}
+                  onChange={(e) => setField("alert_mode", e.target.value)}
+                />
+                Restart Only
+                <span className="text-muted-foreground">
+                  — May restart workloads and reconcile Flux, but not open PRs.
+                </span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="alert_mode"
+                  value="full"
+                  checked={alertMode === "full"}
+                  onChange={(e) => setField("alert_mode", e.target.value)}
+                />
+                Full
+                <span className="text-muted-foreground">
+                  — Also proposes manifest changes as a pull request.
                 </span>
               </label>
             </div>
