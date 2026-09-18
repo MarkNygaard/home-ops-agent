@@ -175,8 +175,16 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     return any(label in safe_labels for label in labels)
 
 
-async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
-    """Run the agent to review a single PR."""
+async def _needs_review(pr: dict) -> bool:
+    """Whether this PR wants reviewing at its current head.
+
+    Split out of `_review_pr` so that "nothing to do here" and "the review
+    failed" stop being the same return value. They were both `None`, and the
+    caller counted every `None` as a failure -- so a cycle that reviewed three
+    PRs and correctly skipped three already-reviewed ones reported "3 reviewed,
+    3 failed" with nothing wrong anywhere. A status line that cries failure on
+    a healthy cycle is worse than no status line: it trains you to ignore it.
+    """
     from home_ops_agent.agent.tools.github import pr_review_comment_exists
 
     pr_number = pr["number"]
@@ -184,7 +192,7 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
 
     if await _already_reviewed(pr_number, head_sha):
         logger.debug("PR #%s already reviewed at SHA %s (DB), skipping", pr_number, head_sha[:8])
-        return None
+        return False
 
     # Belt-and-suspenders: even if the DB lost track, if a previous run posted
     # an agent review comment for this exact SHA, skip. Prevents the redundant-
@@ -196,8 +204,13 @@ async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
             pr_number,
             head_sha[:8],
         )
-        return None
+        return False
 
+    return True
+
+
+async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
+    """Run the agent to review a single PR. None means the review failed."""
     pr_mode = await _get_pr_mode()
     if pr_mode == "comment_only":
         mode_instruction = "You are in COMMENT-ONLY mode. Post a review comment but do NOT merge."
@@ -396,7 +409,7 @@ async def out_of_scope_paths(pr_number: int) -> list[str]:
     return blocked_paths([f.get("filename", "") for f in files if isinstance(f, dict)])
 
 
-async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> None:
+async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> bool:
     """Decide what happens to a PR after its review.
 
     Routing is on the parsed verdict plus facts the code can check -- the file
@@ -436,11 +449,10 @@ async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> N
             from home_ops_agent.workers.pr_merge import merge_now
 
             if await _is_safe_to_auto_merge(pr, response):
-                await merge_now(pr)
-                return
+                return await merge_now(pr)
 
         # Otherwise auto_merge_reviewed_prs picks it up against the same gate.
-        return
+        return False
 
     if verdict.fixable:
         progress.step("in_scope", f"PR #{pr_number}")
@@ -457,11 +469,13 @@ async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> N
         else:
             progress.step("code_fix", f"PR #{pr_number}")
             await attempt_code_fix(pr, response, agent)
-            return
+            return False
 
     if pr_mode == "auto_merge_all":
         progress.step("deep_review", f"PR #{pr_number}")
         await deep_review_pr(pr, response, agent)
+
+    return False
 
 
 async def check_prs() -> dict:
@@ -508,11 +522,13 @@ async def check_prs() -> dict:
 
     # Auto-merge previously reviewed PRs if in auto-merge mode
     pr_mode = await _get_pr_mode()
+    merged_count = 0
     if pr_mode in ("auto_merge", "auto_merge_minor", "auto_merge_all"):
-        await auto_merge_reviewed_prs(prs, agent)
+        merged_count += await auto_merge_reviewed_prs(prs, agent) or 0
 
     reviewed_count = 0
     failed_count = 0
+    skipped_count = 0
     rate_limited = False
     for pr in prs:
         if reviewed_count >= MAX_REVIEWS_PER_CYCLE:
@@ -523,12 +539,16 @@ async def check_prs() -> dict:
             )
             break
 
+        if not await _needs_review(pr):
+            # Already reviewed at this head. Not a failure, and not work either.
+            skipped_count += 1
+            continue
+
         progress.step("check_pr", f"PR #{pr['number']}")
         result = await _review_pr(pr, agent)
         if result is None:
             # _review_pr swallows its own exceptions, so a model without
-            # credentials or a failing tool looks the same as "nothing to do"
-            # unless it is counted here.
+            # credentials or a failing tool would otherwise be invisible.
             failed_count += 1
         if result and result.stopped_early:
             # Kept, not discarded: the partial text says what it had found, and
@@ -568,8 +588,8 @@ async def check_prs() -> dict:
             )
 
             # Post-review actions depend on the current PR mode
-            if pr_mode != "comment_only":
-                await _route(pr, result, agent, pr_mode)
+            if pr_mode != "comment_only" and await _route(pr, result, agent, pr_mode):
+                merged_count += 1
 
     progress.finish()
     return {
@@ -577,6 +597,10 @@ async def check_prs() -> dict:
         "open_prs": len(prs),
         "reviewed": reviewed_count,
         "failed": failed_count,
+        # Reported separately so a quiet cycle over already-reviewed PRs reads
+        # as quiet rather than broken.
+        "skipped": skipped_count,
+        "merged": merged_count,
         "rate_limited": rate_limited,
         "pr_mode": pr_mode,
     }
