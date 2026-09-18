@@ -24,6 +24,32 @@ logger = logging.getLogger(__name__)
 _cooldowns: dict[str, datetime] = {}
 
 
+# Notifications are built in code, not improvised by a model. The PR agent has
+# had `ntfy_publish` withheld for exactly this reason -- "every notification the
+# model sent was unprompted", which is why four consecutive merges arrived under
+# four different title formats. The alert path never got the same treatment, and
+# three of the last eight triages sent two notifications each, on top of the one
+# this module sends afterwards.
+WITHHELD_FROM_ALERT_AGENT = frozenset({"ntfy_publish"})
+
+# Triage decides; it does not act. Everything that changes cluster state is
+# withheld from it, so the two-stage design is enforced rather than requested.
+# The fix stage keeps all of these.
+WITHHELD_FROM_TRIAGE = WITHHELD_FROM_ALERT_AGENT | {
+    "k8s_delete_pod",
+    "k8s_restart_workload",
+    "flux_reconcile",
+    "flux_suspend",
+    "flux_resume",
+    "github_merge_pr",
+    "github_create_commit",
+    "github_create_pr",
+    "github_create_branch",
+    "github_create_pr_comment",
+    "code_fix",
+}
+
+
 async def _get_cooldown_seconds() -> int:
     """Get alert cooldown from DB settings, falling back to env config."""
     async with async_session() as session:
@@ -139,7 +165,7 @@ async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
     ]
 
     model = await get_model_for_task("alert_triage")
-    prompt = await get_prompt("alert_response")
+    prompt = await get_prompt("alert_triage")
     result = await agent.run(
         system_prompt=prompt,
         messages=messages,
@@ -207,8 +233,11 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
                 "- Restart a stuck pod (delete it to force recreation)\n"
                 "- Trigger Flux reconciliation for a stuck HelmRelease or Kustomization\n"
                 "- Resume a suspended Flux resource\n\n"
-                "After taking action, verify the fix worked, then send an ntfy notification "
-                "to the 'home-ops-agent' topic explaining what was wrong and what you did."
+                "After taking action, verify it worked — re-check the thing you "
+                "changed rather than assuming.\n\n"
+                "Do not try to send a notification. One is sent for you from your "
+                "reply, so that every alert is announced in the same format. Say "
+                "what was wrong, what you did, and whether it is now healthy."
             ),
         }
     ]
@@ -261,6 +290,23 @@ async def _fix_alert(alert: dict, triage_summary: str, agent: Agent):
         output_tokens=result.output_tokens,
     )
 
+    # Built here rather than left to the model. The fix agent used to be told to
+    # send this itself, which is how the PR path ended up with four formats for
+    # the same event -- and now that ntfy_publish is withheld, nothing would
+    # announce a completed fix at all.
+    try:
+        await notifications.notify(
+            notifications.OUTCOME,
+            {
+                "title": f"Alert fixed: {alert.get('title', 'Unknown')}",
+                "message": result.response[:300],
+                "priority": "default",
+                "tags": "wrench",
+            },
+        )
+    except Exception:
+        logger.exception("Failed to send the alert fix notification")
+
     logger.info("Alert fix completed: %s", alert.get("title"))
 
 
@@ -288,16 +334,24 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         logger.warning("No model credentials, forwarding raw alert")
         return
 
-    agent = Agent(credentials)
     skill_tools = await registry.get_all_enabled_tools()
-    agent.register_tools(skill_tools)
     if mcp_tools:
-        agent.register_tools(mcp_tools)
+        skill_tools = [*skill_tools, *mcp_tools]
+
+    # Two agents, not one with two prompts. Triage is the cheap read-only stage
+    # and had every write tool registered, on Haiku, under a prompt telling it
+    # to fix things -- so "diagnose, then hand on" was advice rather than a
+    # boundary.
+    triage_agent = Agent(credentials)
+    triage_agent.register_tools([t for t in skill_tools if t.name not in WITHHELD_FROM_TRIAGE])
+
+    fix_agent = Agent(credentials)
+    fix_agent.register_tools([t for t in skill_tools if t.name not in WITHHELD_FROM_ALERT_AGENT])
 
     try:
         # Stage 1: Triage (cheap, fast — Haiku)
         logger.info("Triaging alert: %s", alert.get("title"))
-        triage_summary, action = await _triage_alert(alert, agent)
+        triage_summary, action = await _triage_alert(alert, triage_agent)
         logger.info("Alert triaged: %s — action: %s", alert.get("title"), action)
 
         if action == "ignore":
@@ -307,7 +361,7 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         if action == "fix":
             # Stage 2: Fix (capable — Sonnet)
             logger.info("Escalating to fix agent: %s", alert.get("title"))
-            await _fix_alert(alert, triage_summary, agent)
+            await _fix_alert(alert, triage_summary, fix_agent)
         else:
             # Notify only — send the triage summary via ntfy
 

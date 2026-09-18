@@ -602,19 +602,31 @@ function makeAlertFlow(): Flow {
       id: 's2',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Check Pods', icon: 'IconBox' },
+      data: {
+        label: 'Check Pods',
+        icon: 'IconBox',
+        hint: 'Looks at the state of the pods the alert names — phase, restarts and container state.',
+      },
     },
     {
       id: 's3',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Read Logs', icon: 'IconFileAnalytics' },
+      data: {
+        label: 'Read Logs',
+        icon: 'IconFileAnalytics',
+        hint: 'Reads the container log, including the previous terminated container — the only place a CrashLoopBackOff explains itself.',
+      },
     },
     {
       id: 's4',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Metrics', icon: 'IconChartLine' },
+      data: {
+        label: 'Metrics',
+        icon: 'IconChartLine',
+        hint: 'Queries Prometheus for the series behind the alert, to tell a spike apart from a trend.',
+      },
     },
     {
       id: 's5',
@@ -636,13 +648,21 @@ function makeAlertFlow(): Flow {
       id: 'b1b',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Apply Fix', icon: 'IconBolt' },
+      data: {
+        label: 'Apply Fix',
+        icon: 'IconBolt',
+        hint: 'Restarts a stuck pod, reconciles a Flux resource, or resumes a suspended one. Node upgrades are diagnosed only, never acted on.',
+      },
     },
     {
       id: 'b1c',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Verify', icon: 'IconCheck' },
+      data: {
+        label: 'Verify',
+        icon: 'IconCheck',
+        hint: 'Re-checks the thing it changed, so the notification says what actually happened rather than what was attempted.',
+      },
     },
     {
       id: 'b1d',
@@ -660,7 +680,11 @@ function makeAlertFlow(): Flow {
       id: 'b3',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Ignore', icon: 'IconPlayerSkipForward' },
+      data: {
+        label: 'Ignore',
+        icon: 'IconPlayerSkipForward',
+        hint: 'Transient or already resolved. Nothing is sent — the alert is dropped silently.',
+      },
     },
   ];
 
@@ -669,10 +693,16 @@ function makeAlertFlow(): Flow {
     mainEdge('e-s2-s3', 's2', 's3'),
     mainEdge('e-s3-s4', 's3', 's4'),
     mainEdge('e-s4-s5', 's4', 's5'),
+    // Accented: the route that changes the cluster. The accent was on the FIX
+    // edge alone and not on the chain after it, which is the same inconsistency
+    // the PR flow had -- the entry highlighted, the path itself drawn like the
+    // branch that merely notifies you.
     branchEdge('e-s5-b1a', 's5', 'b1a', true, 'FIX'),
-    mainEdge('e-b1a-b1b', 'b1a', 'b1b'),
-    mainEdge('e-b1b-b1c', 'b1b', 'b1c'),
-    mainEdge('e-b1c-b1d', 'b1c', 'b1d'),
+    mainEdge('e-b1a-b1b', 'b1a', 'b1b', false, true),
+    mainEdge('e-b1b-b1c', 'b1b', 'b1c', false, true),
+    mainEdge('e-b1c-b1d', 'b1c', 'b1d', false, true),
+    // Gray: routes that stop. NOTIFY waits for you; IGNORE does not even do
+    // that -- it drops the alert without telling anyone.
     branchEdge('e-s5-b2', 's5', 'b2', false, 'NOTIFY'),
     branchEdge('e-s5-b3', 's5', 'b3', false, 'IGNORE'),
   ];
@@ -797,9 +827,11 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
           </span>
         )}
         {/* The accent colour carries meaning, so it needs saying somewhere.
-            Without this it reads as decoration and the distinction is lost. */}
-        {activeAgent === 'pr_review' && (
-          <div className="ml-auto flex items-center gap-4 text-[10px] tracking-wide text-muted-foreground/60">
+            Without this it reads as decoration and the distinction is lost.
+            Shown for every flow: the convention is the diagram's, not one
+            agent's, and a legend on only one of them implies the other is
+            coloured arbitrarily. */}
+        <div className="ml-auto flex items-center gap-4 text-[10px] tracking-wide text-muted-foreground/60">
             <span className="flex items-center gap-1.5">
               <span
                 aria-hidden
@@ -822,8 +854,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
               />
               branches
             </span>
-          </div>
-        )}
+        </div>
       </div>
       <div
         className="relative overflow-hidden rounded-xl"

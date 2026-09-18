@@ -7,7 +7,7 @@ export const AGENTS = [
       "Reviews open Renovate PRs. Reads diffs, checks CI status and labels, posts a review comment with risk assessment.",
   },
   {
-    promptKey: null,
+    promptKey: "alert_triage",
     modelKey: "alert_triage",
     name: "Alert Triage",
     description:
@@ -162,6 +162,8 @@ export const PROMPT_DESCRIPTIONS: Record<string, string> = {
   alert_response:
     "Instructions for how the Alert Fix agent investigates and resolves alerts.",
   chat: "Instructions for how the Chat agent responds to interactive questions.",
+  alert_triage:
+    "Instructions for the first, cheap stage of alert handling. It decides fix / notify / ignore and deliberately cannot change anything — the tools that would are withheld from it.",
   code_fix:
     "Instructions for the agent that fixes code on a PR branch. It runs unattended, in a git checkout, and can push a commit — so this is the prompt that decides when it should commit nothing instead of guessing.",
 }

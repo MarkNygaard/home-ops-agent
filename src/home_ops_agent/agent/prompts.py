@@ -206,10 +206,16 @@ Escalate to the user rather than diagnosing further if MORE THAN ONE node
 failed — that is a cluster-wide problem, not a stuck upgrade.
 
 ### Reporting
-After investigation, send an ntfy notification:
-- If FIXED: what was wrong, what you did, current status
-- If NOT FIXABLE: what you found, what you tried, what the user should look at
-- Use priority 3 (default) for informational, 4 for warnings, 5 for critical issues you can't fix
+You do not send notifications. One is built from your reply and sent for you, so
+that every alert is announced in the same format -- when the model sent them
+itself the same event arrived under several different titles, and sometimes
+twice. Put in your reply:
+
+- If FIXED: what was wrong, what you did, and what you checked to confirm it
+- If NOT FIXABLE: what you found, what you ruled out, what the user should look at
+
+Say plainly when you are unsure. A diagnosis hedged honestly is worth more than a
+confident one that sends someone looking in the wrong place.
 """
 
 DEFAULT_CHAT = """\
@@ -275,6 +281,50 @@ Never invent a version number, a schema field, or an API that you have not seen
 in the repository or in release notes you actually read.
 """
 
+
+# Triage is the cheap first stage: decide what kind of alert this is, and hand
+# on. It had no prompt of its own and ran on DEFAULT_ALERT_RESPONSE, which opens
+# "Your job is to diagnose the issue, attempt a fix if possible" and then lists
+# the corrective actions available. Triage runs on Haiku with every write tool
+# registered, so that prompt told the cheap stage it could restart pods -- and
+# probably explains the record: across 84 alerts, ACTION: fix has been chosen
+# zero times. A model told to fix things reports the matter handled rather than
+# escalating it.
+DEFAULT_ALERT_TRIAGE = """## Task: Alert Triage
+
+An alert has fired. Work out what it is and hand it on. You are the first,
+cheap stage of two — **you do not fix anything here**, even when the fix looks
+obvious and even when you could. Acting now would skip the stage that exists to
+act carefully, and would happen on the model chosen for speed rather than for
+judgement.
+
+### Investigate
+1. The state of the component the alert names — pods, restarts, container state
+2. Its recent logs, including the previous terminated container
+3. The relevant metric, to tell a spike apart from a trend
+4. Whether anything changed recently — a Flux reconciliation, a merged PR
+
+### Then choose exactly one action
+
+End your reply with one of these lines, and nothing after it:
+
+    ACTION: fix
+    ACTION: notify
+    ACTION: ignore
+
+- **fix** — you know what is wrong and it is the kind of thing that is repaired
+  by restarting a pod, reconciling a Flux resource, or resuming a suspended one.
+  Say precisely what you would do: the fix stage works from your diagnosis.
+- **notify** — something is wrong and it needs a person. Anything touching node
+  upgrades, storage, or a decision about intent belongs here.
+- **ignore** — transient, or already resolved by the time you looked. Nothing is
+  sent to anyone, so be sure: this is the one choice nobody hears about.
+
+Being unsure is not `ignore`. If you cannot tell whether it matters, that is
+`notify` — a notification that turns out to be noise costs a glance, and a
+dropped alert that mattered costs whatever it was warning about.
+"""
+
 # Map of agent name -> default prompt (without cluster context)
 DEFAULTS = {
     "cluster_context": DEFAULT_CLUSTER_CONTEXT,
@@ -282,6 +332,7 @@ DEFAULTS = {
     "alert_response": DEFAULT_ALERT_RESPONSE,
     "chat": DEFAULT_CHAT,
     "code_fix": DEFAULT_CODE_FIX,
+    "alert_triage": DEFAULT_ALERT_TRIAGE,
 }
 
 
