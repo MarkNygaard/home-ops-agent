@@ -129,14 +129,23 @@ async def record(
     args: Any,
     result: str,
     *,
-    source: str = "unknown",
+    source: str | None = None,
     conversation_id: int | None = None,
 ) -> None:
-    """File one write. Swallows every failure by design -- see the module docstring."""
+    """File one write. Swallows every failure by design -- see the module docstring.
+
+    ``source`` defaults to whichever agent is running. Asking the caller for it
+    is what produced a log of writes all attributed to "unknown": the decorator
+    that does the recording sits on the handler and has no idea who called it.
+    """
     if not is_write(tool):
         return
 
     try:
+        if source is None:
+            from home_ops_agent.workers import progress
+
+            source = progress.current_agent()
         from sqlalchemy import insert
 
         from home_ops_agent.database import ToolWrite, async_session

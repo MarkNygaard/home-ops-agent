@@ -462,6 +462,12 @@ async def check_prs() -> dict:
 
     logger.info("Found %d open PRs to check", len(prs))
 
+    # Declared before the merge pass, not after it. This pass merges what the
+    # *previous* cycle reviewed, and it was running outside any declared run:
+    # its `merge_safe` step lit nothing on the diagram, and every write it made
+    # was filed in the audit under "unknown".
+    progress.begin("pr_review", f"{len(prs)} open PR(s)")
+
     # Auto-merge previously reviewed PRs if in auto-merge mode
     pr_mode = await _get_pr_mode()
     if pr_mode in ("auto_merge", "auto_merge_minor", "auto_merge_all"):
@@ -470,7 +476,6 @@ async def check_prs() -> dict:
     reviewed_count = 0
     failed_count = 0
     rate_limited = False
-    progress.begin("pr_review", f"{len(prs)} open PR(s)")
     for pr in prs:
         if reviewed_count >= MAX_REVIEWS_PER_CYCLE:
             rate_limited = True

@@ -212,3 +212,53 @@ async def test_a_handler_that_raises_is_recorded_and_still_raises(monkeypatch):
         await wrapped({"pr_number": 1})
 
     assert "github is down" in recorded[0]
+
+
+@pytest.mark.asyncio
+async def test_a_write_is_attributed_without_the_caller_saying_who(monkeypatch):
+    """The first real rows in this log all read "unknown".
+
+    The decorator that records sits on the handler and has no idea who called
+    it, so a `source` argument defaulting to "unknown" meant every row was
+    anonymous — which makes the per-agent filter useless and the log much
+    harder to read.
+    """
+    from home_ops_agent.workers import progress
+
+    captured: dict = {}
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def execute(self, stmt):
+            captured.update(stmt.compile().params)
+
+        async def commit(self):
+            return None
+
+    import home_ops_agent.database as database
+
+    monkeypatch.setattr(database, "async_session", lambda: _Session())
+    progress.begin("pr_review", "1 open PR(s)")
+    try:
+        await audit.record("github_merge_pr", {"pr_number": 1069}, '{"status": "ok"}')
+    finally:
+        progress.finish()
+
+    assert captured.get("source") == "pr_review"
+
+
+def test_the_merge_pass_runs_inside_a_declared_run():
+    """It merges what the previous cycle reviewed, and it used to run before
+    `progress.begin` — so its step lit nothing on the flow diagram and its
+    writes were filed under "unknown"."""
+    import inspect
+
+    from home_ops_agent.workers import pr_monitor
+
+    src = inspect.getsource(pr_monitor.check_prs)
+    assert src.index('progress.begin("pr_review"') < src.index("auto_merge_reviewed_prs(prs")
