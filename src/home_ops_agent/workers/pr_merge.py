@@ -45,13 +45,90 @@ def is_approved_by_deep_review(response: str) -> bool:
     return verdict_mod.parse(response).safe_to_merge
 
 
+async def merge_now(pr: dict) -> bool:
+    """Merge one PR, announce it, and record it. Returns whether it merged.
+
+    The single implementation of "merge this and write it down", called from
+    both the next-cycle pass and the router. It assumes the gate has already
+    said yes; it does not re-check the verdict.
+    """
+    from home_ops_agent.agent.tools.github import merge_pr
+
+    pr_number = pr["number"]
+    progress.step("merge_safe", f"PR #{pr_number}")
+    logger.info("Auto-merging PR #%s: %s", pr_number, pr["title"])
+    merge_result = json.loads(await merge_pr({"pr_number": pr_number}))
+
+    if merge_result.get("status") != "merged":
+        # Previously log-only: the agent decided to merge, could not, and said
+        # nothing. Successes were announced twice while the one outcome
+        # actually needing a human was silent.
+        logger.warning(
+            "Failed to merge PR #%s: %s", pr_number, merge_result.get("message", "unknown error")
+        )
+        try:
+            await notifications.notify(
+                notifications.FAILURE,
+                {
+                    "title": f"Auto-merge failed: PR #{pr_number}",
+                    "message": (f"{pr['title']}\n\n{merge_result.get('message', 'unknown error')}")[
+                        :400
+                    ],
+                    "priority": "high",
+                    "tags": "x",
+                    "click_url": pr.get("html_url", ""),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to send merge-failure notification for PR #%s", pr_number)
+        return False
+
+    logger.info("Successfully merged PR #%s", pr_number)
+
+    # Notify first — DB errors should not prevent notification.
+    try:
+        await notifications.notify(
+            notifications.OUTCOME,
+            {
+                "title": f"Auto-merged PR #{pr_number}",
+                "message": pr["title"],
+                "priority": "default",
+                "tags": "merged",
+                "click_url": pr.get("html_url", ""),
+            },
+        )
+    except Exception:
+        logger.exception("Failed to send merge notification for PR #%s", pr_number)
+
+    try:
+        async with async_session() as session:
+            session.add(
+                AgentTask(
+                    task_type="pr_merge",
+                    trigger=f"PR #{pr_number}",
+                    status="completed",
+                    summary=f"Auto-merged: {pr['title']}",
+                    actions_taken={
+                        "action": "merge",
+                        "head_sha": pr.get("head_sha", ""),
+                        "merge_sha": merge_result.get("sha"),
+                    },
+                    completed_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+    except Exception:
+        logger.exception("Failed to save merge task for PR #%s", pr_number)
+
+    return True
+
+
 async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
     """Try to auto-merge already-reviewed PRs that are safe to merge.
 
     This handles the case where PRs were reviewed in comment-only mode
     and the user later switches to auto-merge mode.
     """
-    from home_ops_agent.agent.tools.github import merge_pr
 
     merged_count = 0
     for pr in prs:
@@ -106,76 +183,8 @@ async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
             continue
 
         # Merge it
-        progress.step("merge_safe", f"PR #{pr_number}")
-        logger.info("Auto-merging PR #%s: %s", pr_number, pr["title"])
-        result = await merge_pr({"pr_number": pr_number})
-        merge_result = json.loads(result)
-
-        if merge_result.get("status") == "merged":
+        if await merge_now(pr):
             merged_count += 1
-            logger.info("Successfully merged PR #%s", pr_number)
-
-            # Notify first — DB errors should not prevent notification
-            try:
-                await notifications.notify(
-                    notifications.OUTCOME,
-                    {
-                        "title": f"Auto-merged PR #{pr_number}",
-                        "message": pr["title"],
-                        "priority": "default",
-                        "tags": "merged",
-                        "click_url": pr.get("html_url", ""),
-                    },
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to send merge notification for PR #%s",
-                    pr_number,
-                )
-
-            # Save merge task to DB so it appears in history
-            try:
-                async with async_session() as session:
-                    task = AgentTask(
-                        task_type="pr_merge",
-                        trigger=f"PR #{pr_number}",
-                        status="completed",
-                        summary=f"Auto-merged: {pr['title']}",
-                        actions_taken={
-                            "action": "merge",
-                            "head_sha": head_sha,
-                            "merge_sha": merge_result.get("sha"),
-                        },
-                        completed_at=datetime.now(UTC),
-                    )
-                    session.add(task)
-                    await session.commit()
-            except Exception:
-                logger.exception(
-                    "Failed to save merge task for PR #%s",
-                    pr_number,
-                )
-        else:
-            # Previously log-only: the agent decided to merge, could not, and
-            # said nothing. Successes were announced twice while the one
-            # outcome actually needing a human was silent.
-            await notifications.notify(
-                notifications.FAILURE,
-                {
-                    "title": f"Auto-merge failed: PR #{pr_number}",
-                    "message": (f"{pr['title']}\n\n{merge_result.get('message', 'unknown error')}")[
-                        :400
-                    ],
-                    "priority": "high",
-                    "tags": "x",
-                    "click_url": pr.get("html_url", ""),
-                },
-            )
-            logger.warning(
-                "Failed to merge PR #%s: %s",
-                pr_number,
-                merge_result.get("message", "unknown error"),
-            )
 
 
 async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):

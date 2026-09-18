@@ -49,8 +49,20 @@ def routed(monkeypatch):
     async def _deep(pr, response, _agent):
         calls["deep"] = (pr["number"], response)
 
+    async def _merge(pr):
+        calls["merge"] = pr["number"]
+        return True
+
+    async def _gate(_pr, _summary):
+        # The gate itself is tested in test_pr_monitor; here it is the router's
+        # decision to consult it at all that matters.
+        calls["gated"] = True
+        return True
+
     monkeypatch.setattr("home_ops_agent.workers.pr_fix.attempt_code_fix", _fix)
     monkeypatch.setattr("home_ops_agent.workers.pr_merge.deep_review_pr", _deep)
+    monkeypatch.setattr("home_ops_agent.workers.pr_merge.merge_now", _merge)
+    monkeypatch.setattr(pr_monitor, "_is_safe_to_auto_merge", _gate)
     return calls
 
 
@@ -90,9 +102,14 @@ async def test_fixable_but_out_of_scope_never_reaches_the_fixer(routed, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_safe_is_left_to_the_merge_gate(routed, monkeypatch):
-    """Merging happens in auto_merge_reviewed_prs, against _is_safe_to_auto_merge.
-    The router must not start a second path to the same place."""
+async def test_safe_merges_in_its_own_cycle_when_fully_autonomous(routed, monkeypatch):
+    """Deferring the merge to the next cycle surprised the operator three times.
+
+    The gate is the same function either way and the review has just read CI,
+    so a clean PR sat for up to an interval while the dashboard said it was
+    safe to merge. The deep-review path always merged inline; this makes the
+    ordinary path agree.
+    """
     monkeypatch.setattr(
         "home_ops_agent.agent.tools.github.get_pr_files", _files("kubernetes/apps/x.yaml")
     )
@@ -100,7 +117,25 @@ async def test_safe_is_left_to_the_merge_gate(routed, monkeypatch):
         PR, _result("SAFE_TO_MERGE: yes\nFIXABLE: no"), object(), "auto_merge_all"
     )
 
-    assert routed == {}
+    assert routed.get("merge") == PR["number"]
+    assert routed.get("gated") is True
+    # And it is still not a fix or a deep review.
+    assert "fix" not in routed
+    assert "deep" not in routed
+
+
+@pytest.mark.asyncio
+async def test_the_cautious_modes_still_wait_for_the_next_cycle(routed, monkeypatch):
+    """Only fully autonomous merges in-cycle. The other auto-merge modes are
+    the cautious settings, and this is the change that makes the agent act
+    sooner — so it is not applied to them."""
+    monkeypatch.setattr(
+        "home_ops_agent.agent.tools.github.get_pr_files", _files("kubernetes/apps/x.yaml")
+    )
+    for mode in ("auto_merge", "auto_merge_minor"):
+        await pr_monitor._route(PR, _result("SAFE_TO_MERGE: yes\nFIXABLE: no"), object(), mode)
+
+    assert "merge" not in routed
 
 
 @pytest.mark.asyncio
@@ -183,8 +218,10 @@ async def test_the_verdict_comes_from_the_comment_not_the_closing_summary(routed
         "auto_merge_all",
     )
 
-    # Safe: left to the merge gate, neither escalated nor fixed.
-    assert routed == {}
+    # Safe: merged, neither escalated nor fixed.
+    assert routed.get("merge") == PR["number"]
+    assert "deep" not in routed
+    assert "fix" not in routed
 
 
 @pytest.mark.asyncio
