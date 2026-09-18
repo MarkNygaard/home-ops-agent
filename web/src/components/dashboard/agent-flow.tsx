@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSettings } from '@/hooks/use-settings';
+import { fetchStatus } from '@/lib/api';
 import {
   ReactFlow,
   type Node,
@@ -57,6 +59,12 @@ type StepNodeData = {
   /** Shown on hover. Where a node stands for several underlying steps, this is
    *  where those went — the diagram is short of width, not of detail. */
   hint?: string;
+  /** The progress step this node stands for. The backend reports steps by what
+   *  happened; the mapping to a circle lives here, because this is the thing
+   *  that knows about circles. */
+  step?: string;
+  /** Set during a live run when `step` matches where it has got to. */
+  active?: boolean;
 };
 
 const ICONS: Record<string, typeof IconRobot> = {
@@ -140,10 +148,13 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
   // fudge in the layout, so it was invisible; now it is the one thing a reader
   // most needs to pick out, drawn as a dashed edge rather than another size.
   const decision = data.decision ?? false;
+  const active = data.active ?? false;
 
-  const iconClass = subagent
+  const iconClass = active
     ? 'text-accent-orange'
-    : 'text-muted-foreground';
+    : subagent
+      ? 'text-accent-orange'
+      : 'text-muted-foreground';
 
   const circle = subagent ? (
         <div
@@ -151,6 +162,7 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
             'flex items-center justify-center rounded-full',
             circleSize,
             decision && 'outline outline-1 outline-offset-2 outline-dashed outline-foreground/25',
+            active && 'animate-pulse ring-2 ring-accent-orange ring-offset-2 ring-offset-background',
           )}
           style={{
             background: 'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
@@ -169,6 +181,8 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
         decision
           ? 'border border-dashed border-foreground/25'
           : 'ring-1 ring-foreground/10',
+        active &&
+          'animate-pulse bg-accent-orange/15 ring-2 ring-accent-orange ring-offset-2 ring-offset-background',
       )}
     >
       <Icon className={cn(iconSize, iconClass)} />
@@ -193,7 +207,12 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
       ) : (
         circle
       )}
-      <span className="max-w-24 text-center text-xs leading-tight text-muted-foreground">
+      <span
+        className={cn(
+          'max-w-24 text-center text-xs leading-tight',
+          active ? 'font-medium text-foreground' : 'text-muted-foreground',
+        )}
+      >
         {data.label}
       </span>
       <Handle
@@ -373,6 +392,12 @@ function branchEdge(
  * Review to untangle that, which is what put Deep Review's Merge underneath the
  * line to it. Merge is already duplicated three times for exactly this reason.
  */
+const NOTIFY_STEPS: Record<string, string> = {
+  n1: 'notify_scope',
+  n2: 'notify_rereview',
+  n3: 'notify_deep',
+};
+
 function notifyNodes(ids: string[]): Node[] {
   return ids.map((id) => ({
     id,
@@ -381,6 +406,7 @@ function notifyNodes(ids: string[]): Node[] {
     data: {
       label: 'Notify',
       icon: 'IconAlertCircle',
+      step: NOTIFY_STEPS[id],
       hint: 'Sends an ntfy notification and stops. The PR is left for you; nothing further happens to it automatically.',
     },
   }));
@@ -405,6 +431,7 @@ function makePRReviewFlow(prMode: string): Flow {
       data: {
         label: 'Check PR',
         icon: 'IconFileSearch',
+        step: 'check_pr',
         hint: 'Reads the PR: author, labels, CI status and head SHA. Skips it if this SHA was already reviewed.',
       },
     },
@@ -415,6 +442,7 @@ function makePRReviewFlow(prMode: string): Flow {
       data: {
         label: 'Read Diff',
         icon: 'IconFileText',
+        step: 'read_diff',
         hint: 'Reads the changed files and classifies them — tooling-only, cluster OS, cluster workloads or bootstrap — before judging risk by component name.',
       },
     },
@@ -425,6 +453,7 @@ function makePRReviewFlow(prMode: string): Flow {
       data: {
         label: 'Release Notes',
         icon: 'IconNotes',
+        step: 'release_notes',
         hint: 'Fetches the upstream release notes, and where those are silent, the upstream CHANGELOG or a chart values.yaml at both tags. Can search the web when the Web Search skill is on.',
       },
     },
@@ -436,6 +465,7 @@ function makePRReviewFlow(prMode: string): Flow {
         label: 'Decide',
         icon: 'IconReport',
         decision: true,
+        step: 'decide',
         hint: 'Ends the review with two lines: SAFE_TO_MERGE and FIXABLE. The routing reads those, not the prose.',
       },
     },
@@ -468,8 +498,8 @@ function makePRReviewFlow(prMode: string): Flow {
     return getLayoutedElements(
       [
         ...reviewNodes,
-        { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
-        { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
+        { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', step: 'merge_safe' } },
+        { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true, step: 'in_scope' } },
         // Write Fix and Push Fix used to be siblings here. They are steps *inside*
         // the Code Fix sub-agent, not stages of the review flow, and they cost two
         // of the thirteen ranks that made every caption 7px. The detail is on hover.
@@ -481,13 +511,14 @@ function makePRReviewFlow(prMode: string): Flow {
             label: 'Code Fix',
             icon: 'IconCode',
             subagent: true,
+            step: 'code_fix',
             hint: 'Checks the branch out into a git worktree, searches the repository, edits as many files as the fix needs, validates with kubeconform, then pushes one commit through the guarded commit tool. Only files under kubernetes/apps/ can be committed.',
           },
         },
-        { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
-        { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
-        { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', subagent: true, decision: true } },
-        { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+        { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true, step: 're_review' } },
+        { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', step: 'merge_after_fix' } },
+        { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', subagent: true, decision: true, step: 'deep_review' } },
+        { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', step: 'merge_after_deep' } },
         // One Notify per branch rather than a single node every branch reaches
         // across the chart into. Three long edges converged on it, crossing
         // everything between, and dagre lifted it above Deep Review to
@@ -522,8 +553,8 @@ function makePRReviewFlow(prMode: string): Flow {
   return getLayoutedElements(
     [
       ...reviewNodes,
-      { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
-      { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
+      { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', step: 'merge_safe' } },
+      { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true, step: 'in_scope' } },
       // Write Fix and Push Fix used to be siblings here. They are steps *inside*
       // the Code Fix sub-agent, not stages of the review flow, and they cost two
       // of the thirteen ranks that made every caption 7px. The detail is on hover.
@@ -535,11 +566,12 @@ function makePRReviewFlow(prMode: string): Flow {
           label: 'Code Fix',
           icon: 'IconCode',
           subagent: true,
+          step: 'code_fix',
           hint: 'Checks the branch out into a git worktree, searches the repository, edits as many files as the fix needs, validates with kubeconform, then pushes one commit through the guarded commit tool. Only files under kubernetes/apps/ can be committed.',
         },
       },
-      { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
-      { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+      { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true, step: 're_review' } },
+      { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', step: 'merge_after_fix' } },
       ...notifyNodes(['n1', 'n2', 'n3']),
     ],
     [
@@ -696,13 +728,36 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
   const { data: settings } = useSettings();
   const prMode = settings?.pr_mode ?? 'comment_only';
   const builder = FLOW_BUILDERS[activeAgent];
-  const { nodes, edges, bounds } = useMemo(
-    () =>
-      builder
-        ? builder(prMode)
-        : { nodes: [], edges: [], bounds: { width: 1, height: 1 } },
-    [builder, prMode]
-  );
+
+  // Shares react-query's cache with the status bar, so this adds no request of
+  // its own — it only asks for a faster refetch while something is running.
+  // Polling rather than a socket: the only WebSocket in the app is per-connection
+  // and chat-shaped, and background workers have no broadcast channel, so pushing
+  // would mean building a hub to move one short string.
+  const { data: statusData } = useQuery({
+    queryKey: ['status'],
+    queryFn: fetchStatus,
+    refetchInterval: (query) =>
+      query.state.data?.run || query.state.data?.pr_check_running ? 2000 : 30000,
+  });
+
+  const run = statusData?.run ?? null;
+  const activeStep = run?.step ?? null;
+
+  const { nodes, edges, bounds } = useMemo(() => {
+    const flow = builder
+      ? builder(prMode)
+      : { nodes: [], edges: [], bounds: { width: 1, height: 1 } };
+    if (!activeStep) return flow;
+    return {
+      ...flow,
+      nodes: flow.nodes.map((node) =>
+        (node.data as StepNodeData).step === activeStep
+          ? { ...node, data: { ...node.data, active: true } }
+          : node
+      ),
+    };
+  }, [builder, prMode, activeStep]);
 
   if (!builder) return null;
 
@@ -732,6 +787,15 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
             </p>
           </TooltipContent>
         </Tooltip>
+        {/* Says the highlight is live rather than a static emphasis, and what it
+            is working on — a pulsing circle with no explanation invites the
+            question this answers. */}
+        {run && (
+          <span className="flex items-center gap-1.5 text-[11px] text-accent-orange">
+            <span className="inline-block size-1.5 animate-pulse rounded-full bg-accent-orange" />
+            running{run.detail ? ` · ${run.detail}` : ''}
+          </span>
+        )}
         {/* The accent colour carries meaning, so it needs saying somewhere.
             Without this it reads as decoration and the distinction is lost. */}
         {activeAgent === 'pr_review' && (
