@@ -275,3 +275,47 @@ async def test_an_unknown_sha_has_no_review_summary():
     from home_ops_agent.workers.pr_monitor import _get_review_summary
 
     assert await _get_review_summary(1057, "") is None
+
+
+def test_a_review_that_ran_out_of_turns_is_never_routed():
+    """The failure this exists for: a review of PR #1072 spent its ten turns on
+    a 422 and six 404s, hit the limit, and the SDK raised — losing everything.
+
+    Keeping the partial text is right. Acting on it is not: a
+    `SAFE_TO_MERGE: yes` written before the budget ran out would merge a PR on
+    half an investigation. So the cut-short branch must record and `continue`,
+    never reaching `_route`.
+    """
+    import inspect
+
+    from home_ops_agent.workers import pr_monitor
+
+    src = inspect.getsource(pr_monitor.check_prs)
+    early = src.index("result.stopped_early")
+    routed = src.index("await _route(")
+    assert early < routed, "the early-stop check must come first"
+
+    branch = src[early : src.index("if result:", early)]
+    # Comments in that branch mention _route by name, so read the code alone.
+    code = " ".join(line for line in branch.splitlines() if not line.strip().startswith("#"))
+    assert "continue" in code
+    assert "_route" not in code
+    assert 'status="failed"' in code
+
+
+def test_the_review_budget_is_bigger_than_the_run_that_failed():
+    """Ten turns were spent before the first sentence was written: the PR, its
+    files, the checks, a 422 retry, four release 404s, a search."""
+    from home_ops_agent.workers import pr_monitor
+
+    assert pr_monitor.REVIEW_MAX_TURNS > 10
+
+
+def test_an_unfinished_review_says_so_in_its_summary():
+    """The history page shows the summary, and a truncated review reads like a
+    confident one right up to where it stops."""
+    import inspect
+
+    from home_ops_agent.workers import pr_monitor
+
+    assert "[RAN OUT OF TURNS]" in inspect.getsource(pr_monitor._save_task)

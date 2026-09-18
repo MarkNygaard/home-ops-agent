@@ -162,12 +162,26 @@ async def get_check_runs(params: dict) -> str:
     if error := repo_configured():
         return error
 
-    ref = params["ref"]  # SHA or branch name
+    ref = str(params["ref"])  # SHA, branch name, or PR number
 
     async with httpx.AsyncClient() as client:
+        # A PR number is what the model has in front of it, and this endpoint
+        # wants a commit-ish, so it answered 422 and the model spent a turn
+        # working that out -- every review, and on the review that ran out of
+        # turns it was one of the six wasted. Resolve it instead.
+        if ref.isdigit():
+            pr_resp = await client.get(
+                f"{GITHUB_API}/repos/{settings.github_repo}/pulls/{ref}", headers=_headers()
+            )
+            if pr_resp.status_code == 200:
+                ref = pr_resp.json().get("head", {}).get("sha") or ref
+
         url = f"{GITHUB_API}/repos/{settings.github_repo}/commits/{ref}/check-runs"
         resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Returned rather than raised: a bad ref is information the model
+            # can act on, and an exception costs it a turn to discover that.
+            return json.dumps({"error": f"No checks for ref '{ref}' (HTTP {resp.status_code})"})
 
         checks = []
         for check in resp.json().get("check_runs", []):
@@ -414,6 +428,33 @@ async def create_commit(params: dict) -> str:
             return json.dumps({"status": "failed", "message": resp.text})
 
 
+async def _find_release_by_version(client: httpx.AsyncClient, repo: str, tag: str) -> dict | None:
+    """Find a release whose tag carries this version, whatever it prefixes it with.
+
+    Monorepos and chart repositories name releases per component --
+    `snapshot-controller-5.3.0`, `helm-chart-1.2.3` -- so an exact tag lookup
+    404s on a release that is right there in the list.
+    """
+    version = tag.lstrip("v")
+    resp = await client.get(
+        f"{GITHUB_API}/repos/{repo}/releases", headers=_headers(), params={"per_page": 100}
+    )
+    if resp.status_code != 200:
+        return None
+
+    releases = resp.json()
+    if not isinstance(releases, list):
+        return None
+
+    # Exact suffix first: `x-5.3.0` must not be satisfied by `x-5.3.0-rc1`, and
+    # `5.3` must not match `5.30.0`.
+    for release in releases:
+        name = str(release.get("tag_name") or "")
+        if name.lstrip("v") == version or name.endswith(f"-{version}"):
+            return release
+    return None
+
+
 async def get_release(params: dict) -> str:
     """Get release notes for a specific tag from any GitHub repo."""
     repo = params["repo"]  # e.g., "siderolabs/talos"
@@ -430,10 +471,25 @@ async def get_release(params: dict) -> str:
             resp = await client.get(url, headers=_headers())
 
         if resp.status_code == 404:
-            return json.dumps({"error": f"Release {tag} not found in {repo}"})
-
-        resp.raise_for_status()
-        release = resp.json()
+            # Chart repositories rarely tag a bare version. piraeusdatastore
+            # publishes `snapshot-controller-5.3.0`, and a review looking for
+            # `5.3.0` and `v5.3.0` burned four turns on 404s before giving up
+            # and searching the web. One listing answers it.
+            matched = await _find_release_by_version(client, repo, tag)
+            if matched is None:
+                return json.dumps(
+                    {
+                        "error": f"Release {tag} not found in {repo}",
+                        "hint": (
+                            "No release tag contains this version. The project may not "
+                            "publish GitHub releases; try the changelog or a web search."
+                        ),
+                    }
+                )
+            release = matched
+        else:
+            resp.raise_for_status()
+            release = resp.json()
 
         body = release.get("body", "") or ""
         # Truncate very long release notes

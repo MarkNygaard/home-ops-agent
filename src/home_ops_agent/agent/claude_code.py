@@ -314,6 +314,16 @@ def _stream_event_text(event: dict[str, Any]) -> str:
     return delta.get("text") or ""
 
 
+def _is_turn_limit(exc: Exception) -> bool:
+    """Whether this is the CLI stopping on max_turns rather than a real fault.
+
+    Matched on the message because the SDK raises the same ResultError for any
+    non-zero exit, and a crash must still propagate.
+    """
+    sdk = _sdk()
+    return isinstance(exc, sdk.ResultError) and "maximum number of turns" in str(exc)
+
+
 async def stream(
     tools: list["ToolDefinition"],
     system_prompt: str,
@@ -350,35 +360,51 @@ async def stream(
     total_input = total_output = 0
 
     streamed = ""
+    stopped_early = False
 
-    async for message in sdk.query(prompt=prompt, options=options):
-        if isinstance(message, sdk.StreamEvent):
-            # Subagent output would carry a parent tool id; the main thread's
-            # deltas are the only ones that belong in the answer.
-            if message.parent_tool_use_id is not None:
-                continue
-            delta = _stream_event_text(message.event)
-            if delta:
-                streamed += delta
-                yield delta
-        elif isinstance(message, sdk.AssistantMessage):
-            turn_text = "".join(
-                block.text
-                for block in message.content
-                if isinstance(block, sdk.TextBlock) and block.text
-            )
-            # Normally this turn was already emitted delta by delta. Emit it
-            # here only if nothing streamed, so a build without partial-message
-            # support still produces output instead of silence.
-            if turn_text and not streamed:
-                yield turn_text
-            streamed = ""
-            if turn_text.strip():
-                all_text.append(turn_text)
-                last_turn_text = turn_text
-        elif isinstance(message, sdk.ResultMessage):
-            total_input, total_output = _usage_tokens(message.usage)
-            final_text = message.result or ""
+    # The SDK raises when the CLI exits on its turn limit, which threw away a
+    # review that had already read the diff, the checks and three changelogs --
+    # ten turns of work lost to the eleventh. The text seen so far is kept and
+    # flagged instead; `stopped_early` is what stops anything downstream from
+    # reading an unfinished review as a verdict.
+    try:
+        async for message in sdk.query(prompt=prompt, options=options):
+            if isinstance(message, sdk.StreamEvent):
+                # Subagent output would carry a parent tool id; the main thread's
+                # deltas are the only ones that belong in the answer.
+                if message.parent_tool_use_id is not None:
+                    continue
+                delta = _stream_event_text(message.event)
+                if delta:
+                    streamed += delta
+                    yield delta
+            elif isinstance(message, sdk.AssistantMessage):
+                turn_text = "".join(
+                    block.text
+                    for block in message.content
+                    if isinstance(block, sdk.TextBlock) and block.text
+                )
+                # Normally this turn was already emitted delta by delta. Emit it
+                # here only if nothing streamed, so a build without partial-message
+                # support still produces output instead of silence.
+                if turn_text and not streamed:
+                    yield turn_text
+                streamed = ""
+                if turn_text.strip():
+                    all_text.append(turn_text)
+                    last_turn_text = turn_text
+            elif isinstance(message, sdk.ResultMessage):
+                total_input, total_output = _usage_tokens(message.usage)
+                final_text = message.result or ""
+    except Exception as exc:
+        if not _is_turn_limit(exc):
+            raise
+        stopped_early = True
+        logger.warning(
+            "Claude Code hit its %d-turn limit after %d tool calls; keeping the partial answer",
+            max_turns,
+            len(ctx.tool_calls),
+        )
 
     # The API backends return only the final turn's text; intermediate
     # narration between tool calls is not part of the answer. Prefer the CLI's
@@ -392,6 +418,7 @@ async def stream(
         input_tokens=total_input,
         output_tokens=total_output,
         model=model,
+        stopped_early=stopped_early,
     )
 
 

@@ -323,3 +323,39 @@ def test_every_app_secret_is_masked_from_a_workspace_shell():
         "MCP_API_TOKEN",
     ):
         assert env.get(name) == "", name
+
+
+def test_the_turn_limit_is_told_apart_from_a_crash():
+    """The SDK raises the same ResultError for any non-zero exit. Treating all
+    of them as "keep the partial answer" would hide real failures; treating the
+    limit as fatal threw away ten turns of finished work."""
+    import claude_agent_sdk
+
+    from home_ops_agent.agent import claude_code
+
+    limit = claude_agent_sdk.ResultError(
+        "Claude Code returned an error result: Reached maximum number of turns (10)"
+    )
+    crash = claude_agent_sdk.ResultError("Claude Code returned an error result: segfault")
+
+    assert claude_code._is_turn_limit(limit) is True
+    assert claude_code._is_turn_limit(crash) is False
+    assert claude_code._is_turn_limit(RuntimeError("anything")) is False
+
+
+def test_the_partial_answer_is_flagged_not_silently_returned():
+    """A caller that could not tell a finished review from a truncated one
+    would merge on the truncated one."""
+    import inspect
+
+    from home_ops_agent.agent import claude_code
+    from home_ops_agent.agent.core import AgentResult
+
+    assert "stopped_early" in AgentResult.__dataclass_fields__
+    assert AgentResult(response="x").stopped_early is False
+
+    src = inspect.getsource(claude_code.stream)
+    assert "stopped_early = True" in src
+    assert "stopped_early=stopped_early" in src
+    # And a fault that is not the turn limit still propagates.
+    assert "raise" in src.split("_is_turn_limit(exc)")[1][:120]
