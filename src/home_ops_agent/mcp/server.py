@@ -61,6 +61,7 @@ from home_ops_agent.database import (
     Memory,
     Message,
     Setting,
+    ToolWrite,
     async_session,
 )
 
@@ -403,6 +404,51 @@ async def _costs(days: int) -> dict[str, Any]:
     }
 
 
+async def _writes(days: int, outcome: str | None, source: str | None, limit: int) -> dict[str, Any]:
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    async with async_session() as session:
+        stmt = select(ToolWrite).where(ToolWrite.created_at >= cutoff)
+        if outcome:
+            stmt = stmt.where(ToolWrite.outcome == outcome)
+        if source:
+            stmt = stmt.where(ToolWrite.source == source)
+        rows = (
+            (await session.execute(stmt.order_by(ToolWrite.created_at.desc()).limit(limit)))
+            .scalars()
+            .all()
+        )
+        counts = dict(
+            (
+                await session.execute(
+                    select(ToolWrite.outcome, func.count())
+                    .where(ToolWrite.created_at >= cutoff)
+                    .group_by(ToolWrite.outcome)
+                )
+            ).all()
+        )
+
+    return {
+        "days": days,
+        "counts": {
+            "ok": counts.get("ok", 0),
+            "blocked": counts.get("blocked", 0),
+            "error": counts.get("error", 0),
+        },
+        "writes": [
+            {
+                "at": _iso(row.created_at),
+                "tool": row.tool,
+                "target": row.target,
+                "source": row.source,
+                "outcome": row.outcome,
+                "detail": row.detail,
+                "conversation_id": row.conversation_id,
+            }
+            for row in rows
+        ],
+    }
+
+
 # --- server ------------------------------------------------------------------
 
 
@@ -579,6 +625,29 @@ def build_server():
         Restores the default, not whatever custom text preceded the current one.
         """
         return json.dumps(await _reset_prompt(name), default=str)
+
+    @mcp.tool()
+    async def writes(
+        days: int = 7,
+        outcome: str | None = None,
+        source: str | None = None,
+        limit: int = 100,
+    ) -> str:
+        """Every change the agent made, newest first: restarts, reconciles,
+        commits, pull requests, merges.
+
+        This is the register, not the transcript. agent_tasks and
+        conversation_detail tell you what one run did; this tells you what has
+        happened to the cluster over a window, across every run, and is the
+        quickest way to check whether something the UI claims to do has ever
+        actually happened.
+
+        outcome is ok, blocked or error. `blocked` means a guardrail refused
+        the write — the agent attempting something it is not allowed to do,
+        which is the most interesting row here. source is the agent that made
+        it. Reads are not recorded.
+        """
+        return json.dumps(await _writes(days, outcome, source, min(limit, 500)), default=str)
 
     @mcp.tool()
     async def agent_tasks(

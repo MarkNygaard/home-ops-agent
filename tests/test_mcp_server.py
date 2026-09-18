@@ -145,6 +145,7 @@ async def test_tools_are_listed_over_the_wire(monkeypatch):
                 "reset_prompt",
                 "set_prompt",
                 "task_detail",
+                "writes",
             ]
 
 
@@ -201,6 +202,7 @@ def test_exposed_tools():
         "reset_prompt",
         "set_prompt",
         "task_detail",
+        "writes",
     ]
 
 
