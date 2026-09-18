@@ -178,8 +178,15 @@ async def open_workspace(branch: str, token: str) -> AsyncIterator[Workspace]:
         await _git("worktree", "prune", cwd=clone)
 
 
-def _blocked_paths(paths: list[str]) -> list[str]:
-    """Return the staged paths that fall outside ``ALLOWED_COMMIT_PATHS``."""
+def blocked_paths(paths: list[str]) -> list[str]:
+    """Return the paths that fall outside ``ALLOWED_COMMIT_PATHS``.
+
+    Public because the router uses it too. Deciding to attempt a fix and
+    deciding whether that fix may be committed have to be the same question: the
+    router previously sent a PR touching `talos/` to the code fixer, which read
+    the repository, made the edit, and only then had the commit rejected. One
+    function means the two cannot drift apart.
+    """
     return [p for p in paths if not any(p.startswith(prefix) for prefix in ALLOWED_COMMIT_PATHS)]
 
 
@@ -211,7 +218,7 @@ async def commit_and_push(ws: Workspace, message: str) -> dict:
     if not paths:
         return {"status": "no_changes", "message": "Nothing to commit — no files were modified."}
 
-    blocked = _blocked_paths(paths)
+    blocked = blocked_paths(paths)
     if blocked:
         await _git("reset", cwd=ws.path, token=ws.token)
         allowed = ", ".join(sorted(ALLOWED_COMMIT_PATHS))

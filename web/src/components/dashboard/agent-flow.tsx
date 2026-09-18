@@ -347,9 +347,11 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
       [
         ...reviewNodes,
         { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+        { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', size: 'sm', decision: true } },
         { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
         { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
         { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
+        { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', size: 'sm', decision: true } },
         { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
         { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', size: 'sm', subagent: true, decision: true } },
         { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
@@ -358,12 +360,17 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
       [
         ...reviewEdges,
         branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
-        branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
+        branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
+        branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
+        branchEdge('e-g1-b3b', 'g1', 'b3b', false, 'NO'),
         mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
         mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
-        mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
+        mainEdge('e-b2c-b2e', 'b2c', 'b2e'),
+        branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
+        branchEdge('e-b2e-b3b', 'b2e', 'b3b', false, 'RISK'),
         branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
         branchEdge('e-b3-b3a', 'b3', 'b3a', false, 'OK'),
+        branchEdge('e-b3-g1', 'b3', 'g1', true, 'FIXABLE'),
         branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
       ],
     );
@@ -374,19 +381,25 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
     [
       ...reviewNodes,
       { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
+      { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', size: 'sm', decision: true } },
       { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
       { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
       { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
+      { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', size: 'sm', decision: true } },
       { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
       { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' } },
     ],
     [
       ...reviewEdges,
       branchEdge('e-s5-b1', 's5', 'b1', false, 'SAFE'),
-      branchEdge('e-s5-b2a', 's5', 'b2a', true, 'FIX'),
+      branchEdge('e-s5-g1', 's5', 'g1', true, 'FIXABLE'),
+      branchEdge('e-g1-b2a', 'g1', 'b2a', true, 'YES'),
+      branchEdge('e-g1-b3', 'g1', 'b3', false, 'NO'),
       mainEdge('e-b2a-b2b', 'b2a', 'b2b'),
       mainEdge('e-b2b-b2c', 'b2b', 'b2c'),
-      mainEdge('e-b2c-b2d', 'b2c', 'b2d'),
+      mainEdge('e-b2c-b2e', 'b2c', 'b2e'),
+      branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
+      branchEdge('e-b2e-b3', 'b2e', 'b3', false, 'RISK'),
       branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
     ],
   );
@@ -499,11 +512,11 @@ const PR_MODE_DESCRIPTIONS: Record<string, string> = {
   comment_only:
     'Reviews Renovate PRs, checks CI, fetches release notes. Posts a comment with risk assessment — no automated merge or fix actions.',
   auto_merge:
-    'Reviews PRs and auto-merges safe patch/digest updates. Escalates NEEDS_FIX to Code Fix agent. NEEDS_REVIEW notifies you.',
+    'Reviews PRs and auto-merges safe patch/digest updates. A review that knows the fix hands it to the Code Fix agent — but only if the PR touches paths a fix is allowed to commit. Every pushed fix is re-reviewed before it merges. Anything else notifies you.',
   auto_merge_minor:
-    'Reviews PRs and auto-merges safe patch, digest, and minor updates. Escalates NEEDS_FIX to Code Fix agent. NEEDS_REVIEW notifies you.',
+    'Reviews PRs and auto-merges safe patch, digest, and minor updates. A review that knows the fix hands it to the Code Fix agent — but only if the PR touches paths a fix is allowed to commit. Every pushed fix is re-reviewed before it merges. Anything else notifies you.',
   auto_merge_all:
-    'Fully autonomous: merges all safe PRs including critical components. NEEDS_FIX escalates to Code Fix agent. NEEDS_REVIEW escalates to Opus for Deep Review.',
+    'Fully autonomous: merges all safe PRs including critical components. A review that knows the fix hands it to the Code Fix agent, if the PR only touches paths a fix may commit. Everything else goes to Opus for Deep Review, which can hand a fix over itself once it has read the changelogs. Every pushed fix is re-reviewed before it merges.',
 };
 
 const AGENT_DESCRIPTIONS: Record<string, string> = {

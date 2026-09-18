@@ -125,7 +125,7 @@ async def attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
             logger.info("Code fix completed for PR #%s, waiting for CI", pr_number)
 
             # Wait for CI and merge
-            await wait_for_ci_and_merge(pr_number, pr.get("html_url", ""), pr["title"])
+            await wait_for_ci_and_merge(pr_number, pr.get("html_url", ""), pr["title"], agent)
 
     except Exception:
         logger.exception("Code fix failed for PR #%s", pr_number)

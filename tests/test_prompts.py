@@ -24,10 +24,28 @@ def test_default_cluster_context_not_empty():
     assert "home-ops-agent" in DEFAULT_CLUSTER_CONTEXT
 
 
-def test_default_pr_review_contains_verdict_keywords():
-    assert "SAFE_TO_MERGE" in DEFAULT_PR_REVIEW
-    assert "NEEDS_REVIEW" in DEFAULT_PR_REVIEW
-    assert "NEEDS_FIX" in DEFAULT_PR_REVIEW
+def test_default_pr_review_asks_for_the_structured_verdict():
+    """Replaces a check for the three old keyword verdicts.
+
+    NEEDS_REVIEW and NEEDS_FIX are gone on purpose: they were overlapping labels
+    — every breaking change "requires manifest modifications" *and* is something
+    "the user should verify" — so a small model was picking a phrase rather than
+    deciding. Two independent yes/no questions replace them, and the parser
+    reads those lines rather than hunting for a token in prose.
+    """
+    assert "SAFE_TO_MERGE: yes|no" in DEFAULT_PR_REVIEW
+    assert "FIXABLE: yes|no" in DEFAULT_PR_REVIEW
+
+
+def test_the_review_prompt_is_parseable_by_the_router():
+    """The prompt and the parser have to agree, or every review silently falls
+    back to the legacy markers — where 'fixable' has no marker at all."""
+    from home_ops_agent.workers import verdict as verdict_mod
+
+    example = "Some review prose.\n\nSAFE_TO_MERGE: no\nFIXABLE: yes"
+    parsed = verdict_mod.parse(example)
+    assert parsed.structured is True
+    assert parsed.fixable is True
 
 
 def test_default_alert_response_not_empty():

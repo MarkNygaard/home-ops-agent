@@ -15,6 +15,7 @@ from home_ops_agent.agent.skills import registry
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
+from home_ops_agent.workers import verdict as verdict_mod
 
 logger = logging.getLogger(__name__)
 
@@ -42,19 +43,13 @@ last_pr_check_at: datetime | None = None
 
 
 def _extract_verdict(response: str) -> str:
-    """Extract the PR review verdict from the agent's response.
+    """The prefix shown in the task history, so it survives truncation.
 
-    Returns a prefix like '[SAFE_TO_MERGE]', '[NEEDS_REVIEW]', '[NEEDS_FIX]'
-    to prepend to the summary so it's never lost to truncation.
+    Delegates to the shared parser. It used to have its own precedence --
+    safe_to_merge before needs_fix -- which disagreed with the dispatch below
+    and filed runs as [SAFE_TO_MERGE] while a code fix was running.
     """
-    lower = response.lower()
-    if "safe_to_merge" in lower or "safe to merge" in lower:
-        return "[SAFE_TO_MERGE] "
-    if "needs_fix" in lower:
-        return "[NEEDS_FIX] "
-    if "needs_review" in lower or "needs review" in lower:
-        return "[NEEDS_REVIEW] "
-    return ""
+    return verdict_mod.parse(response).label
 
 
 async def _is_enabled() -> bool:
@@ -130,58 +125,34 @@ async def _get_review_summary(pr_number: int, head_sha: str) -> str | None:
 # phrase in a review that plainly refuses -- and PR #926's did exactly that,
 # carrying a SAFE_TO_MERGE prefix above "Risk Level: HIGH" and "Auto-Merge
 # Status: Cannot auto-merge". When both appear, refusal wins.
-REFUSAL_MARKERS = (
-    "needs_review",
-    "needs review",
-    "needs_fix",
-    "needs fix",
-    "cannot auto-merge",
-    "do not merge",
-)
+# Kept importable from here for anything that referenced it.
+REFUSAL_MARKERS = verdict_mod.REFUSAL_MARKERS
 
 
 async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     """Check if a previously reviewed PR meets auto-merge criteria."""
-    summary_lower = summary.lower()
-
     # Must be from renovate
     if pr.get("author") != "renovate[bot]":
         return False
 
-    # An explicit refusal disqualifies regardless of anything else in the text.
-    # Checked before the approval markers so a self-contradicting review is
-    # never merged on the strength of the half that agrees with us.
-    for marker in REFUSAL_MARKERS:
-        if marker in summary_lower:
-            logger.info(
-                "PR #%s not auto-merged: the review says %r",
-                pr.get("number"),
-                marker,
-            )
-            return False
+    # One reading of the text, shared with the router and the history label. A
+    # refusal anywhere in a legacy response still vetoes approval -- that
+    # precedence was always right here and is now right everywhere.
+    if not verdict_mod.parse(summary).safe_to_merge:
+        logger.info("PR #%s not auto-merged: the review did not say it was safe", pr.get("number"))
+        return False
 
     pr_mode = await _get_pr_mode()
     labels = pr.get("labels", [])
 
     if pr_mode == "auto_merge_all":
         # Fully autonomous: merge anything rated safe, no label restrictions
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
-    elif pr_mode == "auto_merge_minor":
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
+        return True
+    if pr_mode == "auto_merge_minor":
         safe_labels = {"type/patch", "type/digest", "type/minor"}
-        if not any(label in safe_labels for label in labels):
-            return False
     else:
-        # auto_merge (patch only)
-        if "safe_to_merge" not in summary_lower and "safe to merge" not in summary_lower:
-            return False
         safe_labels = {"type/patch", "type/digest"}
-        if not any(label in safe_labels for label in labels):
-            return False
-
-    return True
+    return any(label in safe_labels for label in labels)
 
 
 async def _review_pr(pr: dict, agent: Agent) -> AgentResult | None:
@@ -362,6 +333,77 @@ async def _save_task(pr: dict, result: AgentResult):
         await session.commit()
 
 
+async def out_of_scope_paths(pr_number: int) -> list[str]:
+    """The PR's changed files that a fix would not be allowed to commit.
+
+    The router asks this before dispatching a fix, using the same function the
+    commit guard uses. Previously the two disagreed: a PR touching `talos/` was
+    routed to the code fixer, which opened a checkout, read the repository, made
+    the edit, and only then had `workspace_commit` reject it -- a wasted model
+    run ending in a confusing failure, when the answer was knowable up front
+    from the file list.
+
+    A failure to read the file list returns an empty list, so an API blip does
+    not silently stop fixes happening. The commit guard still has the last word.
+    """
+    from home_ops_agent.agent.tools.github import get_pr_files
+    from home_ops_agent.agent.workspace import blocked_paths
+
+    try:
+        files = json.loads(await get_pr_files({"pr_number": pr_number}))
+    except Exception:
+        logger.exception("Could not read the file list for PR #%s; not gating on paths", pr_number)
+        return []
+    if not isinstance(files, list):
+        return []
+    return blocked_paths([f.get("filename", "") for f in files if isinstance(f, dict)])
+
+
+async def _route(pr: dict, response: str, agent: Agent, pr_mode: str) -> None:
+    """Decide what happens to a PR after its review.
+
+    Routing is on the parsed verdict plus facts the code can check -- the file
+    list, the mode -- rather than on which of two overlapping phrases a small
+    model happened to write. Component criticality stays a judgement the model
+    makes inside the review; it is deliberately not a hard-coded list here,
+    because a cert-manager patch and a cert-manager major are not the same risk
+    and any such list goes stale.
+    """
+    from home_ops_agent.workers.pr_fix import attempt_code_fix
+    from home_ops_agent.workers.pr_merge import deep_review_pr
+
+    pr_number = pr["number"]
+    verdict = verdict_mod.parse(response)
+
+    if not verdict.structured:
+        # Not fatal -- the legacy markers still routed this -- but it means the
+        # review ignored its output format, which is worth knowing about.
+        logger.warning(
+            "PR #%s review had no structured verdict block; fell back to markers", pr_number
+        )
+
+    if verdict.safe_to_merge:
+        # Merging is handled by auto_merge_reviewed_prs against the same gate.
+        return
+
+    if verdict.fixable:
+        blocked = await out_of_scope_paths(pr_number)
+        if blocked:
+            logger.info(
+                "PR #%s is fixable but touches %d path(s) a fix may not commit (%s); "
+                "escalating instead",
+                pr_number,
+                len(blocked),
+                ", ".join(blocked[:3]),
+            )
+        else:
+            await attempt_code_fix(pr, response, agent)
+            return
+
+    if pr_mode == "auto_merge_all":
+        await deep_review_pr(pr, response, agent)
+
+
 async def check_prs() -> dict:
     """Check all open PRs and review any new/updated ones.
 
@@ -371,8 +413,7 @@ async def check_prs() -> dict:
     agent was switched off. The caller surfaces this so a no-op is
     distinguishable from a failure.
     """
-    from home_ops_agent.workers.pr_fix import attempt_code_fix
-    from home_ops_agent.workers.pr_merge import auto_merge_reviewed_prs, deep_review_pr
+    from home_ops_agent.workers.pr_merge import auto_merge_reviewed_prs
 
     if not await _is_enabled():
         logger.info("Agent is disabled, skipping PR review")
@@ -440,15 +481,7 @@ async def check_prs() -> dict:
 
             # Post-review actions depend on the current PR mode
             if pr_mode != "comment_only":
-                response_lower = result.response.lower()
-
-                # If review says NEEDS_FIX, attempt a code fix
-                if "needs_fix" in response_lower:
-                    await attempt_code_fix(pr, result.response, agent)
-
-                # In auto_merge_all mode, escalate NEEDS_REVIEW to Opus
-                elif "needs_review" in response_lower and pr_mode == "auto_merge_all":
-                    await deep_review_pr(pr, result.response, agent)
+                await _route(pr, result.response, agent, pr_mode)
 
     return {
         "status": "completed",

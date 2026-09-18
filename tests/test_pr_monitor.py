@@ -41,10 +41,16 @@ def test_extract_verdict_case_insensitive():
     assert _extract_verdict("Safe_to_merge") == "[SAFE_TO_MERGE] "
 
 
-def test_extract_verdict_priority_safe_over_review():
-    """safe_to_merge takes priority since it's checked first."""
-    result = _extract_verdict("safe_to_merge and also needs_review")
-    assert result == "[SAFE_TO_MERGE] "
+def test_a_self_contradicting_review_is_not_labelled_safe():
+    """Deliberately reversed. This used to assert [SAFE_TO_MERGE].
+
+    The label checked safe_to_merge first while the merge gate treated any
+    refusal marker as a veto, so a review saying both was *filed* as safe and
+    *refused* a merge — and, once the code-fix branch existed, could be filed as
+    safe while a fix ran. One parser now serves both, using the gate's
+    precedence, which was the careful one.
+    """
+    assert _extract_verdict("safe_to_merge and also needs_review") == "[NEEDS_REVIEW] "
 
 
 def test_extract_verdict_needs_fix_priority():

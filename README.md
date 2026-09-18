@@ -348,6 +348,31 @@ The model *can* read that token out of its environment, and that is fine: it aut
 
 ## PR Modes
 
+### How a PR is routed
+
+A review ends with two independent lines, and the routing is code, not phrasing:
+
+```
+SAFE_TO_MERGE: yes|no
+FIXABLE: yes|no
+```
+
+| Verdict | What happens |
+|---|---|
+| `SAFE_TO_MERGE: yes` | merged on the next cycle, through the same gate as before |
+| `FIXABLE: yes`, and every changed path is one a fix may commit | Code Fix: checkout, edit, validate, guarded push, **re-review**, merge |
+| `FIXABLE: yes` but the PR touches `talos/`, `bootstrap/` or tooling | escalated instead — a fix could not commit those, so it is not attempted |
+| neither | Deep Review (in `auto_merge_all`), which can itself hand a fix over once it has read the changelogs; otherwise it waits for you |
+
+Three things are deliberate here.
+
+**The scope check uses the same function as the commit guard.** Deciding to attempt a fix and deciding whether that fix may be committed are the same question. They used to be asked separately, so a PR touching `talos/` was sent to the fixer, which opened a checkout, read the repository, made the edit, and only then had the commit rejected.
+
+**Component criticality is not hard-coded.** A cert-manager patch and a cert-manager major are not the same risk, and any list of "critical components" in code goes stale. Routing is on facts the code can verify — paths, labels, CI — while risk stays a judgement the model makes inside the review.
+
+**A pushed fix is re-reviewed before it merges.** CI proves the manifests render; it does not prove the fix is right. Previously the fix changed the head SHA and merged within five minutes, long before the next cycle would have reviewed it, so a semantically wrong but valid manifest merged unseen.
+
+
 4-tier escalation for PR handling:
 
 | Mode | What it does |
