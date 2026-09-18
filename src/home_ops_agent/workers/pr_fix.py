@@ -34,7 +34,7 @@ async def attempt_code_fix(pr: dict, review_summary: str, agent: Agent):
 
     try:
         model = await get_model_for_task("code_fix")
-        prompt = await get_prompt("chat")
+        prompt = await get_prompt("code_fix")
         branch = pr.get("head_ref", "unknown")
 
         async with maybe_workspace(model, branch) as ws:

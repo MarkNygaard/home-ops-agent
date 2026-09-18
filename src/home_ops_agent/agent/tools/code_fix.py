@@ -106,7 +106,7 @@ async def code_fix(params: dict) -> str:
             task = f"{task}\n\nThe person asking added:\n{instructions}"
 
         result = await agent.run(
-            system_prompt=await get_prompt("chat"),
+            system_prompt=await get_prompt("code_fix"),
             messages=[
                 {
                     "role": "user",
