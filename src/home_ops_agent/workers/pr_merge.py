@@ -13,6 +13,7 @@ from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.database import AgentTask, Conversation, Message, async_session
 from home_ops_agent.workers import notifications
+from home_ops_agent.workers import verdict as verdict_mod
 from home_ops_agent.workers.pr_monitor import (
     MAX_REVIEWS_PER_CYCLE,
     _already_reviewed,
@@ -37,9 +38,12 @@ def checks_all_passed(checks: list[dict]) -> bool:
 
 
 def is_approved_by_deep_review(response: str) -> bool:
-    """Return True if a deep review response indicates approval."""
-    response_lower = response.lower()
-    return "safe_to_merge" in response_lower or "safe to merge" in response_lower
+    """Return True if a deep review response indicates approval.
+
+    Through the shared parser, so a review ending "SAFE_TO_MERGE: no" is not
+    read as approval merely because those words appear in it.
+    """
+    return verdict_mod.parse(response).safe_to_merge
 
 
 async def auto_merge_reviewed_prs(prs: list[dict], agent: Agent):
@@ -269,10 +273,20 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                     "2. Read the full diff carefully\n"
                     "3. Check for breaking changes, deprecations, "
                     "security issues\n"
-                    "4. Determine if this is actually safe to merge\n\n"
-                    "End your review with SAFE_TO_MERGE if approved "
-                    "or NEEDS_REVIEW if it truly needs human attention. "
-                    "Post your review as a comment on the PR."
+                    "4. Determine if this is actually safe to merge\n"
+                    "5. If it is NOT safe, decide whether you know the concrete "
+                    "change that would make it safe — a manifest edit under "
+                    "kubernetes/apps/. If you do, say so and describe it "
+                    "precisely: a code fix will be attempted from your review, "
+                    "and your findings are what it works from.\n\n"
+                    "Post your review as a comment on the PR, and end it with "
+                    "exactly these two lines:\n"
+                    "SAFE_TO_MERGE: yes|no\n"
+                    "FIXABLE: yes|no\n\n"
+                    "FIXABLE means you know the specific change and it is "
+                    "confined to kubernetes/apps/. Answer no when the fix needs "
+                    "a decision that is the operator's to make — then it waits "
+                    "for them, which is the right outcome."
                 ),
             }
         ]
@@ -376,6 +390,33 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
                     tags = "warning"
                 priority = "default"
             else:
+                # The escalation that did not exist. Opus has just done the
+                # research -- release notes, upstream changelog, the diff -- and
+                # its findings are strictly better input to a fix than the first
+                # reviewer's. Before this, a deep review that knew exactly what
+                # was wrong wrote it on the PR and stopped, and nothing ever
+                # picked it up: the next cycle skips any PR whose head SHA has
+                # already been reviewed, so the comment was never read again.
+                deep_verdict = verdict_mod.parse(result.response)
+                if deep_verdict.fixable:
+                    from home_ops_agent.workers.pr_monitor import out_of_scope_paths
+
+                    blocked = await out_of_scope_paths(pr_number)
+                    if blocked:
+                        logger.info(
+                            "PR #%s judged fixable but touches %d path(s) a fix may not "
+                            "commit (%s); leaving it for the operator",
+                            pr_number,
+                            len(blocked),
+                            ", ".join(blocked[:3]),
+                        )
+                    else:
+                        from home_ops_agent.workers.pr_fix import attempt_code_fix
+
+                        logger.info("Deep review judged PR #%s fixable; attempting", pr_number)
+                        await attempt_code_fix(pr, result.response, agent)
+                        return
+
                 title = f"Deep review: PR #{pr_number} needs attention"
                 priority = "high"
                 tags = "warning"
@@ -403,8 +444,76 @@ async def deep_review_pr(pr: dict, initial_review: str, agent: Agent):
         logger.exception("Deep review failed for PR #%s", pr_number)
 
 
-async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
-    """Wait for CI to pass on a PR, then merge it. Notify on success or failure."""
+async def review_fixed_pr(pr_number: int, agent: Agent) -> tuple[bool, str]:
+    """Re-review a PR after a fix was pushed. Returns (approved, summary).
+
+    Nothing used to look at a fix before it merged. The fix changes the head
+    SHA, and ``wait_for_ci_and_merge`` merges within five minutes -- long before
+    the next monitor cycle, which is the only thing that would have reviewed the
+    new SHA. So the sole gate between an agent's edit and `main` was Flux Local,
+    which proves the manifests *render*, not that the change is *right*. A
+    semantically wrong but perfectly valid manifest merged unseen.
+
+    That was tolerable while the fix path almost never fired. Letting deep
+    review escalate into it is designed to make it fire more, and on the harder
+    changes, so the cheap second opinion earns its place. It runs on the
+    pr_review model, not the deep review one -- this is a check on a known,
+    described change, not a fresh investigation.
+    """
+    from home_ops_agent.agent.tools.github import get_pr
+
+    try:
+        pr = json.loads(await get_pr({"pr_number": pr_number}))
+    except Exception:
+        logger.exception("Could not re-read PR #%s for review", pr_number)
+        return False, "could not re-read the PR"
+
+    model = await get_model_for_task("pr_review")
+    result = await agent.run(
+        system_prompt=await get_prompt("pr_review"),
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "An automated code fix has just been pushed to this PR. Review the "
+                    "PR as it now stands, paying attention to whether the fix is correct "
+                    "and complete rather than merely valid YAML.\n\n"
+                    f"PR #{pr_number}: {pr.get('title')}\n"
+                    f"Branch: {pr.get('head_ref')}\n"
+                    f"URL: {pr.get('html_url', '')}\n\n"
+                    "Do not post a comment. End your reply with exactly these two lines:\n"
+                    "SAFE_TO_MERGE: yes|no\n"
+                    "FIXABLE: yes|no"
+                ),
+            }
+        ],
+        model=model,
+        max_turns=10,
+    )
+    if result is None:
+        return False, "the re-review produced no result"
+
+    await record_usage(
+        model=result.model,
+        task_type="pr_review",
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+    )
+    approved = verdict_mod.parse(result.response).safe_to_merge
+    logger.info(
+        "Re-review of fixed PR #%s: %s", pr_number, "approved" if approved else "not approved"
+    )
+    return approved, result.response
+
+
+async def wait_for_ci_and_merge(
+    pr_number: int, html_url: str, title: str, agent: Agent | None = None
+):
+    """Wait for CI to pass on a PR, then merge it. Notify on success or failure.
+
+    When ``agent`` is given, CI passing is necessary but not sufficient: the
+    fixed PR is re-reviewed and merged only if that review approves it.
+    """
     from home_ops_agent.agent.tools.github import get_check_runs, get_pr, merge_pr
 
     logger.info("Waiting for CI on PR #%s before merging", pr_number)
@@ -434,6 +543,32 @@ async def wait_for_ci_and_merge(pr_number: int, html_url: str, title: str):
                 continue
 
             if checks_all_passed(checks):
+                # CI proves the manifests render. It does not prove the fix is
+                # right, so a second opinion stands between the edit and main.
+                if agent is not None:
+                    approved, summary = await review_fixed_pr(pr_number, agent)
+                    if not approved:
+                        logger.info(
+                            "Fixed PR #%s passed CI but the re-review declined it", pr_number
+                        )
+                        try:
+                            await notifications.notify(
+                                notifications.ATTENTION,
+                                {
+                                    "title": f"Code fix on PR #{pr_number} needs you",
+                                    "message": (
+                                        f"{title}\n\nCI passed, but the re-review did not "
+                                        f"approve the fix:\n\n{summary[:300]}"
+                                    ),
+                                    "priority": "high",
+                                    "tags": "warning",
+                                    "click_url": html_url,
+                                },
+                            )
+                        except Exception:
+                            logger.exception("Failed to notify about PR #%s", pr_number)
+                        return
+
                 # Merge it
                 merge_result_json = await merge_pr({"pr_number": pr_number})
                 merge_result = json.loads(merge_result_json)

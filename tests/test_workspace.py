@@ -44,7 +44,7 @@ def repo(tmp_path: Path) -> Workspace:
 
 
 def test_blocked_paths_allows_manifests():
-    assert ws_mod._blocked_paths(["kubernetes/apps/media/app.yaml"]) == []
+    assert ws_mod.blocked_paths(["kubernetes/apps/media/app.yaml"]) == []
 
 
 def test_blocked_paths_rejects_everything_else():
@@ -54,7 +54,7 @@ def test_blocked_paths_rejects_everything_else():
         "Dockerfile",
         "kubernetes/flux/cluster.yaml",
     ]
-    assert ws_mod._blocked_paths(paths) == [
+    assert ws_mod.blocked_paths(paths) == [
         ".github/workflows/build.yaml",
         "Dockerfile",
         "kubernetes/flux/cluster.yaml",
