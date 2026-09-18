@@ -197,7 +197,12 @@ class Agent:
             )
         if provider == providers.OPENAI:
             return await pi.run(
-                system_prompt, messages, model, self.credentials, workspace=workspace
+                system_prompt,
+                messages,
+                model,
+                self.credentials,
+                workspace=workspace,
+                tools=list(self.tools.values()),
             )
         return await self._run_openai(system_prompt, messages, model, max_turns)
 
@@ -234,7 +239,13 @@ class Agent:
                 on_tool_end,
             )
         elif provider == providers.OPENAI:
-            gen = pi.stream(system_prompt, messages, model, self.credentials)
+            gen = pi.stream(
+                system_prompt,
+                messages,
+                model,
+                self.credentials,
+                tools=list(self.tools.values()),
+            )
         else:
             gen = self._run_openai_streaming(
                 system_prompt, messages, model, max_turns, on_tool_start, on_tool_end

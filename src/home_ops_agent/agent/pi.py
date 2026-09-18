@@ -8,20 +8,17 @@ already had file and shell tools. pi has ``read``, ``bash``, ``edit`` and
 ``write`` built in, so pointing it at a worktree gives every model the same
 capability and removes the asymmetry rather than working around it.
 
-Tools are written as extensions, not bridged. pi executes tools in-process, and
-RPC mode drives pi rather than serving tools back to the host, so the Python
-``ToolDefinition`` registry is not reachable from here. Tools pi should have are
-written under ``extensions/`` and loaded with ``-e``. The Python tools stay where
-they are and remain available to the Claude Code backend; the two sets converge
-only if everything moves to pi.
+Tools are the agent's own, reached over a socket. pi executes tools in its own
+process, so the Python ``ToolDefinition`` registry is not directly reachable from
+here -- but reimplementing it in TypeScript was tried and abandoned. About a
+third of the tools carry credentials that must not enter a process with a
+``bash`` tool, and the rest would have existed twice forever, because the Claude
+Code backend still needs the Python ones. Two copies drift.
 
-There is exactly one exception, and it is about a credential rather than a tool.
-``workspace_commit`` needs the GitHub push token, and pi has a ``bash`` tool --
-so a token placed in this subprocess's environment is a token the model can
-``git push`` with, walking past ``ALLOWED_COMMIT_PATHS`` instead of through it.
-When a workspace is attached, :mod:`home_ops_agent.agent.workspace_bridge` hands
-pi a single-run Unix socket whose only action is the guarded commit, and keeps
-the token on this side. See that module for why the trade is sound.
+:mod:`home_ops_agent.agent.tool_bridge` therefore serves whatever tool list this
+module is handed, for the lifetime of one run. ``workspace_commit`` arrives the
+same way as everything else; the earlier single-purpose bridge existed only to
+carry it.
 
 Discovery is disabled with ``-ne``. Without it pi loads whatever sits in
 ``~/.pi`` or the working directory — and the working directory here is a
@@ -43,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
 if TYPE_CHECKING:
-    from home_ops_agent.agent.core import AgentResult
+    from home_ops_agent.agent.core import AgentResult, ToolDefinition
     from home_ops_agent.agent.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -238,6 +235,7 @@ async def stream(
     model: str,
     credentials: Credentials,
     workspace: Workspace | None = None,
+    tools: list[ToolDefinition] | None = None,
 ) -> AsyncGenerator[str | AgentResult, None]:
     """Run a prompt through pi, yielding assistant text then an ``AgentResult``.
 
@@ -265,18 +263,26 @@ async def stream(
     env = build_env()
     cwd = str(workspace.path) if workspace is not None else None
 
-    async with AsyncExitStack() as stack:
-        if workspace is not None:
-            # pi can edit files in the checkout but must not be able to push
-            # from it: it has a `bash` tool, so a GitHub token in this
-            # environment is a token the model can `git push` with, straight
-            # past the path and branch guardrails. The bridge hands it a
-            # single-run socket instead, whose only action is the guarded
-            # commit. Imported here rather than at module scope because
-            # workspace_bridge reaches `core`, which imports this module.
-            from home_ops_agent.agent import workspace_bridge
+    # The agent's own tools, served over a socket rather than reimplemented here.
+    # A third of them carry credentials that must not enter this environment --
+    # pi has a `bash` tool -- and the rest would otherwise exist twice, since the
+    # Claude Code backend still needs the Python implementations. Imported here
+    # rather than at module scope because the bridge reaches `core`, which
+    # imports this module.
+    from home_ops_agent.agent import tool_bridge
 
-            handle = await stack.enter_async_context(workspace_bridge.serve(workspace))
+    served = list(tools or [])
+    if workspace is not None:
+        # workspace_commit is a ToolDefinition like any other, so it arrives the
+        # same way. Composed here rather than by the caller, exactly as
+        # claude_code.stream does it.
+        from home_ops_agent.agent.workspace import build_workspace_tools
+
+        served = [*served, *build_workspace_tools(workspace)]
+
+    async with AsyncExitStack() as stack:
+        if served:
+            handle = await stack.enter_async_context(tool_bridge.serve(served))
             env = build_env(handle.env())
 
         async for item in _drive(argv, env, cwd, model):
@@ -401,12 +407,13 @@ async def run(
     model: str,
     credentials: Credentials,
     workspace: Workspace | None = None,
+    tools: list[ToolDefinition] | None = None,
 ) -> AgentResult:
     """Non-streaming variant — drains :func:`stream` and returns the result."""
     from home_ops_agent.agent.core import AgentResult
 
     result: AgentResult | None = None
-    async for item in stream(system_prompt, messages, model, credentials, workspace):
+    async for item in stream(system_prompt, messages, model, credentials, workspace, tools):
         if isinstance(item, AgentResult):
             result = item
     if result is None:

@@ -319,13 +319,23 @@ The two backends do not offer the same tools, and the difference is worth knowin
 
 | | `claude-code/*` and Kimi | `gpt-*` (pi) |
 |---|---|---|
-| Kubernetes, Flux | yes (Python tools) | yes (`extensions/cluster.ts`) |
-| GitHub, Prometheus, Loki, Talos, ntfy | yes | **no** |
-| Web search | yes, with `SEARXNG_URL` set | yes, with `SEARXNG_URL` set |
+| Every enabled skill | yes | yes, over the tool bridge |
 | Files and shell | Claude Code only, inside a git worktree | always (pi's own `read`/`bash`/`edit`/`write`) |
-| Commit and push | yes, via the guarded `workspace_commit` | yes, via the same guarded `workspace_commit` |
+| Commit and push | yes, via the guarded `workspace_commit` | yes, the same tool |
 
-One consequence left: ask a GPT model *why is the cluster unhappy* and it can answer, but ask it to comment on a PR and it cannot — there are no GitHub tools on that backend yet. It can still fix the code and push it.
+Both backends run the **same** tool implementations. The Python registry is the
+single source of truth; `pi` reaches it over a Unix socket created for the run,
+rather than having its own copies.
+
+That is a deliberate reversal of how this started. Writing tools natively for pi
+was tried first, and two things made it untenable: about a third of them carry
+credentials that must not enter a process with a `bash` tool, and the rest would
+have existed twice forever, because the Claude Code backend still needs the
+Python ones. Two copies of a tool drift — the native and Python Kubernetes tools
+disagreed about how a Flux `Ready` condition is reported within a day.
+
+So enabling or disabling a skill now changes what **both** backends can do,
+which is what the Settings page always implied and did not do.
 
 ### Asking for a fix in the chat
 
