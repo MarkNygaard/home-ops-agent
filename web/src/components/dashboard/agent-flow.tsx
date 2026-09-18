@@ -366,6 +366,26 @@ function branchEdge(
 
 /* ── Flow definitions (no positions needed!) ─────────────── */
 
+/** Terminal "Notify" nodes, one per branch that ends by waiting for a person.
+ *
+ * A single shared Notify meant three long edges converging from across the
+ * chart, crossing everything between them -- and dagre lifted it above Deep
+ * Review to untangle that, which is what put Deep Review's Merge underneath the
+ * line to it. Merge is already duplicated three times for exactly this reason.
+ */
+function notifyNodes(ids: string[]): Node[] {
+  return ids.map((id) => ({
+    id,
+    type: 'step',
+    position: { x: 0, y: 0 },
+    data: {
+      label: 'Notify',
+      icon: 'IconAlertCircle',
+      hint: 'Sends an ntfy notification and stops. The PR is left for you; nothing further happens to it automatically.',
+    },
+  }));
+}
+
 function makePRReviewFlow(prMode: string): Flow {
   const pos = { x: 0, y: 0 };
 
@@ -468,7 +488,15 @@ function makePRReviewFlow(prMode: string): Flow {
         { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
         { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', subagent: true, decision: true } },
         { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
-        { id: 'b3b', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle' } },
+        // One Notify per branch rather than a single node every branch reaches
+        // across the chart into. Three long edges converged on it, crossing
+        // everything between, and dagre lifted it above Deep Review to
+        // untangle them -- which put Deep Review's Merge below the line to it.
+        //
+        // Duplicating a terminal is already this diagram's convention: Merge
+        // appears three times for the same reason. Now each fork reads locally,
+        // with the continuing path on top and the stop-and-notify path beneath.
+        ...notifyNodes(['n1', 'n2', 'n3']),
       ],
       [
         ...reviewEdges,
@@ -482,10 +510,10 @@ function makePRReviewFlow(prMode: string): Flow {
         branchEdge('e-b3-b3a', 'b3', 'b3a', true, 'OK'),
         branchEdge('e-b3-g1', 'b3', 'g1', true, 'FIXABLE'),
         // Gray: every route that stops and waits for a person.
-        branchEdge('e-g1-b3b', 'g1', 'b3b', false, 'NO'),
-        branchEdge('e-b2e-b3b', 'b2e', 'b3b', false, 'RISK'),
+        branchEdge('e-g1-n1', 'g1', 'n1', false, 'NO'),
+        branchEdge('e-b2e-n2', 'b2e', 'n2', false, 'RISK'),
         branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
-        branchEdge('e-b3-b3b', 'b3', 'b3b', false, 'RISK'),
+        branchEdge('e-b3-n3', 'b3', 'n3', false, 'RISK'),
       ],
     );
   }
@@ -512,7 +540,7 @@ function makePRReviewFlow(prMode: string): Flow {
       },
       { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
       { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
-      { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle' } },
+      ...notifyNodes(['n1', 'n2', 'n3']),
     ],
     [
       ...reviewEdges,
@@ -523,9 +551,9 @@ function makePRReviewFlow(prMode: string): Flow {
       mainEdge('e-b2a-b2e', 'b2a', 'b2e', false, true),
       branchEdge('e-b2e-b2d', 'b2e', 'b2d', true, 'OK'),
       // Gray: routes that stop and wait for a person.
-      branchEdge('e-g1-b3', 'g1', 'b3', false, 'NO'),
-      branchEdge('e-b2e-b3', 'b2e', 'b3', false, 'RISK'),
-      branchEdge('e-s5-b3', 's5', 'b3', false, 'REVIEW'),
+      branchEdge('e-g1-n1', 'g1', 'n1', false, 'NO'),
+      branchEdge('e-b2e-n2', 'b2e', 'n2', false, 'RISK'),
+      branchEdge('e-s5-n3', 's5', 'n3', false, 'REVIEW'),
     ],
   );
 }
@@ -735,7 +763,7 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
       </div>
       <div
         className="relative overflow-hidden rounded-xl"
-        style={{ aspectRatio: aspect, minHeight: 200, maxHeight: 460 }}
+        style={{ aspectRatio: aspect, minHeight: 200, maxHeight: 520 }}
       >
         <ReactFlow
           key={`${activeAgent}-${prMode}`}
