@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import select
@@ -20,8 +20,26 @@ from home_ops_agent.workers import notifications, progress
 
 logger = logging.getLogger(__name__)
 
-# Alert cooldown tracking: alert_key -> last_investigated_time
+# Alert cooldown tracking: alert_key -> last_investigated_time.
+#
+# A fast path only. It is module state, so it dies with the pod -- which matters
+# now that a cold start replays recent messages: without a durable check, a
+# crash loop would investigate the same alerts on every restart, at a model call
+# each. `_is_on_cooldown` falls back to what the database already recorded.
 _cooldowns: dict[str, datetime] = {}
+
+# How far back a cold start asks ntfy to replay. ntfy keeps messages for 48h, so
+# the limit here is judgement rather than capability: enough to cover a deploy,
+# during which nothing is subscribed and an alert would otherwise be lost
+# outright, and not so much that a pod which has been down all night wakes up
+# and investigates the entire backlog.
+COLD_START_REPLAY = "15m"
+
+# Alerts wait here while one is being investigated. Bounded: an unbounded queue
+# turns a flood into memory growth, and dropping with a warning is both visible
+# and harmless, since a repeat of a dropped alert is dropped by the cooldown
+# anyway.
+ALERT_QUEUE_SIZE = 100
 
 
 # Notifications are built in code, not improvised by a model. The PR agent has
@@ -51,25 +69,71 @@ WITHHELD_FROM_TRIAGE = WITHHELD_FROM_ALERT_AGENT | {
 
 
 async def _get_cooldown_seconds() -> int:
-    """Get alert cooldown from DB settings, falling back to env config."""
-    async with async_session() as session:
-        result = await session.execute(
-            select(Setting).where(Setting.key == "alert_cooldown_seconds")
-        )
-        setting = result.scalar_one_or_none()
-        if setting:
-            return int(setting.value)
+    """Get alert cooldown from DB settings, falling back to env config.
+
+    It fell back for a missing row but not for an unreachable database, which
+    did not matter while the caller short-circuited before reaching here. It is
+    on the hot path of every cooldown check now, so an outage would otherwise
+    raise on the way to deciding whether to investigate an alert.
+    """
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(Setting).where(Setting.key == "alert_cooldown_seconds")
+            )
+            setting = result.scalar_one_or_none()
+            if setting:
+                return int(setting.value)
+    except Exception:
+        logger.warning("Could not read the alert cooldown setting; using the default")
     return settings.alert_cooldown_seconds
 
 
 async def _is_on_cooldown(alert_key: str) -> bool:
-    """Check if an alert is still in cooldown period."""
-    last_time = _cooldowns.get(alert_key)
-    if last_time is None:
-        return False
-    elapsed = (datetime.now(UTC) - last_time).total_seconds()
+    """Check if an alert is still in cooldown period.
+
+    Memory first, then the database. The in-memory record is lost on restart,
+    and a cold start now replays the last few minutes from ntfy -- so without
+    the second check a restart loop would re-investigate everything it had just
+    finished, at a model call each.
+
+    The database is not queried through a JSON path: the row count inside a
+    cooldown window is tiny, and comparing in Python keeps this working on
+    SQLite as well as Postgres.
+    """
     cooldown = await _get_cooldown_seconds()
-    return elapsed < cooldown
+    now = datetime.now(UTC)
+
+    last_time = _cooldowns.get(alert_key)
+    if last_time is not None and (now - last_time).total_seconds() < cooldown:
+        return True
+
+    cutoff = now - timedelta(seconds=cooldown)
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(AgentTask).where(
+                    AgentTask.task_type == "alert_triage",
+                    AgentTask.completed_at.is_not(None),
+                    AgentTask.completed_at >= cutoff,
+                )
+            )
+            tasks = result.scalars().all()
+    except Exception:
+        # Fails open, and the direction matters. If the database is unreachable
+        # the worst case here is investigating an alert twice; treating the
+        # failure as "on cooldown" would drop it, and an alert nobody hears
+        # about is the outcome this whole path exists to avoid.
+        logger.warning("Could not check the alert cooldown in the database", exc_info=True)
+        return False
+
+    for task in tasks:
+        if (task.actions_taken or {}).get("identity") == alert_key:
+            # Warm the fast path so a replay burst costs one query, not one per
+            # message.
+            _cooldowns[alert_key] = task.completed_at
+            return True
+    return False
 
 
 async def _is_enabled() -> bool:
@@ -208,6 +272,11 @@ async def _triage_alert(alert: dict, agent: Agent) -> tuple[str, str]:
                 "tool_calls": result.tool_calls,
                 "tokens": result.total_tokens,
                 "action": action,
+                # What _is_on_cooldown matches on after a restart. The task's
+                # `trigger` is topic:title, which is deliberately *not* the
+                # identity -- that strips the FIRING/RESOLVED marker so a
+                # fire/clear pair collapses onto one key.
+                "identity": alert_identity(alert),
             },
             completed_at=datetime.now(UTC),
         )
@@ -396,33 +465,72 @@ async def _investigate_alert(alert: dict, mcp_tools: list | None = None):
         progress.finish()
 
 
-async def _subscribe_topic(topic: str, mcp_tools: list | None = None):
-    """Subscribe to a single ntfy topic via JSON stream."""
+async def _subscribe_topic(topic: str, queue: asyncio.Queue) -> None:
+    """Stream one ntfy topic onto the queue, forever.
+
+    This used to investigate each alert inline, which meant the stream was not
+    being read for however long a fix took -- minutes, on Sonnet. Putting the
+    alert on a queue keeps the connection drained while a single worker does the
+    slow part, so investigations stay serialised without the subscription
+    stalling behind them.
+
+    Reconnects ask for what was missed. Without ``since`` ntfy sends only what
+    arrives after the connection opens, so anything published while the agent
+    was away -- including every deploy, which is a restart -- was simply lost.
+    ntfy keeps messages for 48h, so this is a matter of asking.
+    """
     url = f"{settings.ntfy_url}/{topic}/json"
-    logger.info("Subscribing to ntfy topic: %s", url)
 
     headers = {}
     if settings.ntfy_token:
         headers["Authorization"] = f"Bearer {settings.ntfy_token}"
 
+    # On a cold start there is no last message to resume from, so a bounded
+    # window stands in for one. After the first message it is that message's id,
+    # which is exact and cannot over-replay.
+    since: str = COLD_START_REPLAY
+
     while True:
         try:
             async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("GET", url, headers=headers) as response:
+                async with client.stream(
+                    "GET", url, headers=headers, params={"since": since}
+                ) as response:
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
                         try:
                             alert = json.loads(line)
-                            if alert.get("event") == "message":
-                                logger.info(
-                                    "Received alert on %s: %s",
-                                    topic,
-                                    alert.get("title", alert.get("message", "")[:50]),
-                                )
-                                await _investigate_alert(alert, mcp_tools)
                         except json.JSONDecodeError:
                             logger.warning("Invalid JSON from ntfy: %s", line[:100])
+                            continue
+
+                        # Advance on every event, not only messages: keepalives
+                        # carry ids too, and resuming from the newest id we have
+                        # seen is what stops a reconnect replaying the gap twice.
+                        if alert.get("id"):
+                            since = alert["id"]
+
+                        if alert.get("event") != "message":
+                            continue
+
+                        logger.info(
+                            "Received alert on %s: %s",
+                            topic,
+                            alert.get("title", alert.get("message", "")[:50]),
+                        )
+                        try:
+                            queue.put_nowait(alert)
+                        except asyncio.QueueFull:
+                            # Visible rather than silent, and not fatal: a repeat
+                            # of a dropped alert is dropped by the cooldown
+                            # anyway, and blocking here would undo the point of
+                            # the queue.
+                            logger.warning(
+                                "Alert queue full (%d); dropping: %s",
+                                ALERT_QUEUE_SIZE,
+                                alert.get("title"),
+                            )
         except httpx.HTTPError as e:
             logger.warning("ntfy subscription error on %s: %s, reconnecting...", topic, e)
         except Exception:
@@ -431,10 +539,31 @@ async def _subscribe_topic(topic: str, mcp_tools: list | None = None):
         await asyncio.sleep(5)  # Brief pause before reconnect
 
 
+async def _alert_worker(queue: asyncio.Queue, mcp_tools: list | None = None) -> None:
+    """Investigate queued alerts, one at a time, forever.
+
+    One worker on purpose. Investigations restart pods and reconcile Flux
+    resources, and two running at once on the same cluster is a race nobody
+    asked for -- and would double the model spend on an alert storm.
+    """
+    while True:
+        alert = await queue.get()
+        try:
+            await _investigate_alert(alert, mcp_tools)
+        except Exception:
+            # _investigate_alert handles its own failures; this is the last
+            # resort that keeps the worker alive for the next alert.
+            logger.exception("Alert worker failed on: %s", alert.get("title"))
+        finally:
+            queue.task_done()
+
+
 async def run_alert_subscriber(mcp_tools: list | None = None):
     """Background task: subscribe to ntfy alert topics."""
     topics = [settings.ntfy_alertmanager_topic, settings.ntfy_gatus_topic]
     logger.info("Alert subscriber started for topics: %s", topics)
 
-    tasks = [asyncio.create_task(_subscribe_topic(topic, mcp_tools)) for topic in topics]
+    queue: asyncio.Queue = asyncio.Queue(maxsize=ALERT_QUEUE_SIZE)
+    tasks = [asyncio.create_task(_subscribe_topic(topic, queue)) for topic in topics]
+    tasks.append(asyncio.create_task(_alert_worker(queue, mcp_tools)))
     await asyncio.gather(*tasks)
