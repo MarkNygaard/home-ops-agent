@@ -76,6 +76,7 @@ STEP_ORDER: tuple[str, ...] = (
     "triage",
     "alert_fix",
     "apply_fix",
+    "open_pr",
     "notify_fixed",
     "notify_user",
     "ignore",
@@ -107,6 +108,7 @@ TOOL_STEPS: dict[str, dict[str, str]] = {
         "k8s_restart_workload": "apply_fix",
         "flux_reconcile": "apply_fix",
         "flux_resume": "apply_fix",
+        "github_create_pr": "open_pr",
     },
 }
 

@@ -245,7 +245,12 @@ def test_both_flows_light_their_own_nodes():
         / "dashboard"
         / "agent-flow.tsx"
     ).read_text(encoding="utf-8")
-    drawn = set(re.findall(r"(?:step|n\d): '([a-z_]+)'", source))
+    # Scoped to the alert builder, not the whole file. A step tagged on a node
+    # in the *other* flow would satisfy a file-wide search while lighting the
+    # wrong diagram -- which is exactly what happened: notify_fixed was put on
+    # the PR flow's comment-only Notify node and the test still passed.
+    alert_source = source[source.index("function makeAlertFlow") :]
+    drawn = set(re.findall(r"(?:step|n\d): '([a-z_]+)'", alert_source))
 
     alert_steps = {
         "check_pods",
@@ -257,5 +262,6 @@ def test_both_flows_light_their_own_nodes():
         "notify_fixed",
         "notify_user",
         "ignore",
+        "open_pr",
     }
     assert alert_steps <= drawn, f"alert steps with no node: {sorted(alert_steps - drawn)}"

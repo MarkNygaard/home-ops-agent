@@ -378,3 +378,76 @@ def test_triage_records_the_identity_the_cooldown_matches_on():
 
     source = inspect.getsource(alert_subscriber._triage_alert)
     assert '"identity": alert_identity(alert)' in source
+
+
+# --- an alert that needs a manifest change ----------------------------------
+
+
+def test_the_fix_agent_may_open_a_pr():
+    """A restart clears a stuck state. It does nothing about a limit that is too
+    low — and restarting there buys minutes while hiding a recurring alert
+    behind an apparently successful fix."""
+    from home_ops_agent.agent.prompts import DEFAULTS
+
+    text = DEFAULTS["alert_response"]
+    assert "Open a pull request" in text
+    assert "When a restart is not the answer" in text
+
+
+def test_the_prompt_does_not_forbid_the_thing_it_now_asks_for():
+    """The CANNOT list said "Apply raw manifests", which a model can reasonably
+    read as covering a commit — though committing to git is the opposite of
+    applying a manifest to the API server."""
+    from home_ops_agent.agent.prompts import DEFAULTS
+
+    text = DEFAULTS["alert_response"]
+    assert "Apply raw manifests" not in text
+    assert "never through the API server" in text
+
+
+def test_a_pr_is_reviewed_immediately_rather_than_on_the_hour():
+    """The scheduled check runs every 3600s, so a PR opened just after one would
+    wait most of an hour for its first look."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._fix_alert)
+    assert "_review_the_new_pr" in source
+    assert 'c.get("tool") == "github_create_pr"' in source
+
+
+def test_the_trigger_is_never_fatal():
+    """The PR exists either way and the scheduled check will reach it. Failing
+    the whole fix because the review could not be hurried would be worse than
+    the wait it was avoiding."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    assert "except Exception" in inspect.getsource(alert_subscriber._review_the_new_pr)
+
+
+def test_an_agent_opened_pr_still_needs_a_person():
+    """Auto-merge requires renovate[bot] as the author, and the agent is not it.
+
+    That is the property that keeps this loop open: an alert can propose a
+    change to the cluster, and cannot land one.
+    """
+    import inspect
+
+    from home_ops_agent.workers import pr_monitor
+
+    source = inspect.getsource(pr_monitor._is_safe_to_auto_merge)
+    assert 'pr.get("author") != "renovate[bot]"' in source
+
+
+def test_the_notification_says_a_pr_is_waiting():
+    """A completed restart needs no one; a PR does."""
+    import inspect
+
+    from home_ops_agent.workers import alert_subscriber
+
+    source = inspect.getsource(alert_subscriber._fix_alert)
+    assert "PR opened for" in source
+    assert '"high" if opened_pr else "default"' in source
