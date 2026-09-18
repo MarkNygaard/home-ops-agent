@@ -54,7 +54,6 @@ type StepNodeData = {
   icon: string;
   subagent?: boolean;
   decision?: boolean;
-  size?: 'sm' | 'md';
 };
 
 const ICONS: Record<string, typeof IconRobot> = {
@@ -83,15 +82,17 @@ const ICONS: Record<string, typeof IconRobot> = {
   IconMessage,
 };
 
-// Node dimensions for dagre layout (height = circle only, excludes text label)
-const AGENT_W = 100;
-const AGENT_H = 96;
-const STEP_W = 80;
-const STEP_H = 72;
-// Decision nodes declared wider so dagre gives more room for outgoing edge labels
-const DECISION_W = 140;
-// Small continuation nodes declared narrower to pack tighter
-const SMALL_STEP_W = 50;
+// Boxes dagre lays out. These must match what is actually rendered, including
+// the caption under each circle -- the height used to be the circle alone, so
+// dagre packed branches as though the labels were not there.
+//
+// Widths are uniform. They used to vary per node (decision nodes declared 140
+// wide "for edge labels", continuation nodes 50 "to pack tighter"), which made
+// the horizontal gaps different for every pair of neighbours. Edge labels get
+// their room from ranksep instead, which applies evenly.
+const NODE_W = 96; // matches the caption's max-w-24
+const AGENT_H = 128; // size-24 circle + gap + caption
+const STEP_H = 104; // size-18 circle + gap + caption
 
 function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
   return (
@@ -124,10 +125,18 @@ function AgentNode({ data }: NodeProps<Node<AgentNodeData>>) {
 function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
   const Icon = ICONS[data.icon] ?? IconReport;
   const subagent = data.subagent ?? false;
-  const small = data.size === 'sm';
-  const circleSize = small ? 'size-14' : 'size-18';
-  const iconSize = small ? 'size-6' : 'size-8';
-  const handleTop = small ? '28px' : '36px';
+  // Every step is the same size. Steps used to come in two, and which one a
+  // node got depended only on whether it was declared in the main chain or in a
+  // branch -- not on anything true of the workflow. The distinctions that do
+  // mean something are drawn instead: the entry agent is larger, and a step
+  // that invokes another agent is filled orange.
+  const circleSize = 'size-18';
+  const iconSize = 'size-8';
+  const handleTop = '36px';
+  // A node the flow forks at. The flag already existed but only fed a width
+  // fudge in the layout, so it was invisible; now it is the one thing a reader
+  // most needs to pick out, drawn as a dashed edge rather than another size.
+  const decision = data.decision ?? false;
 
   const iconClass = subagent
     ? 'text-accent-orange'
@@ -143,7 +152,11 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
       />
       {subagent ? (
         <div
-          className={cn('flex items-center justify-center rounded-full', circleSize)}
+          className={cn(
+            'flex items-center justify-center rounded-full',
+            circleSize,
+            decision && 'outline outline-1 outline-offset-2 outline-dashed outline-foreground/25',
+          )}
           style={{
             background: 'linear-gradient(135deg, var(--accent-orange-light), var(--accent-orange))',
             padding: '1.5px',
@@ -156,20 +169,17 @@ function StepNode({ data }: NodeProps<Node<StepNodeData>>) {
       ) : (
         <div
           className={cn(
-            'flex items-center justify-center rounded-full transition-colors',
+            'flex items-center justify-center rounded-full bg-muted/30 transition-colors',
             circleSize,
-            'bg-muted/30 ring-1 ring-foreground/10',
+            decision
+              ? 'border border-dashed border-foreground/25'
+              : 'ring-1 ring-foreground/10',
           )}
         >
           <Icon className={cn(iconSize, iconClass)} />
         </div>
       )}
-      <span
-        className={cn(
-          'max-w-24 text-center leading-tight text-muted-foreground',
-          small ? 'text-[0.7rem]' : 'text-xs',
-        )}
-      >
+      <span className="max-w-24 text-center text-xs leading-tight text-muted-foreground">
         {data.label}
       </span>
       <Handle
@@ -197,26 +207,22 @@ function getLayoutedElements(
 
   g.setGraph({
     rankdir: 'LR',
-    nodesep: 30,
-    ranksep: 45,
+    // nodesep separates branches stacked vertically; ranksep is the horizontal
+    // step-to-step gap and is what gives the edge labels their room now that
+    // node widths no longer vary to make it.
+    nodesep: 36,
+    ranksep: 72,
     marginx: 20,
     marginy: 20,
   });
 
+  const sizeOf = (node: Node) => ({
+    width: NODE_W,
+    height: node.type === 'agent' ? AGENT_H : STEP_H,
+  });
+
   for (const node of nodes) {
-    const isDecision =
-      node.data && 'decision' in node.data && node.data.decision;
-    const isSmall = node.data && 'size' in node.data && node.data.size === 'sm';
-    const w =
-      node.type === 'agent'
-        ? AGENT_W
-        : isDecision
-          ? DECISION_W
-          : isSmall
-            ? SMALL_STEP_W
-            : STEP_W;
-    const h = node.type === 'agent' ? AGENT_H : STEP_H;
-    g.setNode(node.id, { width: w, height: h });
+    g.setNode(node.id, sizeOf(node));
   }
 
   for (const edge of edges) {
@@ -227,14 +233,14 @@ function getLayoutedElements(
 
   const layoutedNodes = nodes.map((node) => {
     const pos = g.node(node.id);
-    const w = node.type === 'agent' ? AGENT_W : STEP_W;
-    const h = node.type === 'agent' ? AGENT_H : STEP_H;
+    // The same box dagre was given. This previously re-centred every step as if
+    // it were STEP_W wide, whatever width it had actually been laid out at, so
+    // a decision node ended up 30px right of where dagre put it and a small one
+    // 15px left -- which is where the uneven spacing came from.
+    const { width, height } = sizeOf(node);
     return {
       ...node,
-      position: {
-        x: pos.x - w / 2,
-        y: pos.y - h / 2,
-      },
+      position: { x: pos.x - width / 2, y: pos.y - height / 2 },
     };
   });
 
@@ -345,8 +351,8 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
     return getLayoutedElements(
       [
         ...reviewNodes,
-        { id: 'c1', type: 'step', position: pos, data: { label: 'Comment', icon: 'IconMessage', size: 'sm' } },
-        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell', size: 'sm' } },
+        { id: 'c1', type: 'step', position: pos, data: { label: 'Comment', icon: 'IconMessage' } },
+        { id: 'c2', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconBell' } },
       ],
       [
         ...reviewEdges,
@@ -361,16 +367,16 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
     return getLayoutedElements(
       [
         ...reviewNodes,
-        { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
-        { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', size: 'sm', decision: true } },
-        { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
-        { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
-        { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
-        { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', size: 'sm', decision: true } },
-        { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
-        { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', size: 'sm', subagent: true, decision: true } },
-        { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
-        { id: 'b3b', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' } },
+        { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+        { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
+        { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', subagent: true } },
+        { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText' } },
+        { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend' } },
+        { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
+        { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+        { id: 'b3', type: 'step', position: pos, data: { label: 'Deep Review', icon: 'IconEye', subagent: true, decision: true } },
+        { id: 'b3a', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+        { id: 'b3b', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle' } },
       ],
       [
         ...reviewEdges,
@@ -398,14 +404,14 @@ function makePRReviewFlow(prMode: string): { nodes: Node[]; edges: Edge[] } {
   return getLayoutedElements(
     [
       ...reviewNodes,
-      { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
-      { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', size: 'sm', decision: true } },
-      { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', size: 'sm', subagent: true } },
-      { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText', size: 'sm' } },
-      { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend', size: 'sm' } },
-      { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', size: 'sm', decision: true } },
-      { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck', size: 'sm' } },
-      { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle', size: 'sm' } },
+      { id: 'b1', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+      { id: 'g1', type: 'step', position: pos, data: { label: 'In Scope?', icon: 'IconFileSearch', decision: true } },
+      { id: 'b2a', type: 'step', position: pos, data: { label: 'Code Fix', icon: 'IconCode', subagent: true } },
+      { id: 'b2b', type: 'step', position: pos, data: { label: 'Write Fix', icon: 'IconFileText' } },
+      { id: 'b2c', type: 'step', position: pos, data: { label: 'Push Fix', icon: 'IconSend' } },
+      { id: 'b2e', type: 'step', position: pos, data: { label: 'Re-review', icon: 'IconEye', decision: true } },
+      { id: 'b2d', type: 'step', position: pos, data: { label: 'Merge', icon: 'IconCircleCheck' } },
+      { id: 'b3', type: 'step', position: pos, data: { label: 'Notify', icon: 'IconAlertCircle' } },
     ],
     [
       ...reviewEdges,
@@ -471,37 +477,37 @@ function makeAlertFlow(): { nodes: Node[]; edges: Edge[] } {
       id: 'b1a',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Alert Fix', icon: 'IconBolt', size: 'sm', subagent: true },
+      data: { label: 'Alert Fix', icon: 'IconBolt', subagent: true },
     },
     {
       id: 'b1b',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Apply Fix', icon: 'IconBolt', size: 'sm' },
+      data: { label: 'Apply Fix', icon: 'IconBolt' },
     },
     {
       id: 'b1c',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Verify', icon: 'IconCheck', size: 'sm' },
+      data: { label: 'Verify', icon: 'IconCheck' },
     },
     {
       id: 'b1d',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Notify', icon: 'IconBell', size: 'sm' },
+      data: { label: 'Notify', icon: 'IconBell' },
     },
     {
       id: 'b2',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Notify User', icon: 'IconBell', size: 'sm' },
+      data: { label: 'Notify User', icon: 'IconBell' },
     },
     {
       id: 'b3',
       type: 'step',
       position: { x: 0, y: 0 },
-      data: { label: 'Ignore', icon: 'IconPlayerSkipForward', size: 'sm' },
+      data: { label: 'Ignore', icon: 'IconPlayerSkipForward' },
     },
   ];
 
@@ -617,6 +623,13 @@ export function AgentFlow({ activeAgent }: AgentFlowProps) {
                 className="inline-block h-px w-4 bg-muted-foreground/40"
               />
               waits for you
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span
+                aria-hidden
+                className="inline-block size-2.5 rounded-full border border-dashed border-foreground/40"
+              />
+              branches
             </span>
           </div>
         )}
