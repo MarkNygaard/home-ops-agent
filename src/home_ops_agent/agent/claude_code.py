@@ -88,6 +88,12 @@ _MASKED_ENV = (
     "GITHUB_TOKEN",
     "KIMI_API_KEY",
     "OPENAI_API_KEY",
+    # Authenticates the MCP endpoint, which serves every task, conversation and
+    # tool-call trace the agent has recorded -- and carries the two write tools,
+    # create_memory and delete_memory. A memory is injected into every future
+    # system prompt, including those of agents that can push commits and restart
+    # pods, so this is not merely a read credential.
+    "MCP_API_TOKEN",
 )
 
 
