@@ -78,6 +78,18 @@ async def list_prs(params: dict) -> str:
                     "mergeable_state": pr.get("mergeable_state"),
                     "draft": pr["draft"],
                     "html_url": pr["html_url"],
+                    # The PR monitor feeds these dicts straight into the review
+                    # without re-fetching, so anything missing here is missing
+                    # for the whole cycle. head_sha is what makes "have I
+                    # reviewed this commit" answerable, and head_ref is the
+                    # branch a code fix would check out.
+                    # Read defensively rather than indexed: a KeyError here would
+                    # fail the whole review cycle, and an empty value is now the
+                    # safe direction -- the callers treat an unknown SHA as "not
+                    # reviewed yet" and re-review, rather than as a match.
+                    "head_sha": (pr.get("head") or {}).get("sha", ""),
+                    "head_ref": (pr.get("head") or {}).get("ref", ""),
+                    "base_ref": (pr.get("base") or {}).get("ref", ""),
                 }
             )
         return json.dumps(result)

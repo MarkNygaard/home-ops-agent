@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from home_ops_agent.workers.pr_monitor import _extract_verdict
 
 # --- _extract_verdict() pure function tests ---
@@ -234,3 +236,42 @@ async def test_scheduled_cycle_publishes_its_result(monkeypatch):
     assert status_api._pr_check_last_result["status"] == "completed"
     assert status_api._pr_check_last_result["reviewed"] == 2
     assert "at" in status_api._pr_check_last_result
+
+
+# --- head_sha: the field that was never there ------------------------------
+
+
+def test_list_prs_returns_what_the_monitor_needs():
+    """`check_prs` feeds these dicts straight into the review without
+    re-fetching, so a field missing here is missing for the whole cycle.
+
+    `head_sha` was absent, which meant every PR compared as "already reviewed at
+    the commit I do not know about" and was skipped forever, whatever was pushed
+    to it. `head_ref` was absent too, so a code fix could never open a checkout —
+    `can_use_workspace` rejects the branch "unknown".
+    """
+    import inspect
+
+    from home_ops_agent.agent.tools import github
+
+    source = inspect.getsource(github.list_prs)
+    for field in ('"head_sha"', '"head_ref"'):
+        assert field in source, field
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_sha_is_never_already_reviewed():
+    """Empty compares equal to the empty string an earlier run stored, so the
+    answer was yes — and the PR was never reviewed again."""
+    from home_ops_agent.workers.pr_monitor import _already_reviewed
+
+    assert await _already_reviewed(1057, "") is False
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_sha_has_no_review_summary():
+    """This is what auto_merge_reviewed_prs merges on. Matching a review of some
+    other commit means a stale SAFE_TO_MERGE can approve code nothing read."""
+    from home_ops_agent.workers.pr_monitor import _get_review_summary
+
+    assert await _get_review_summary(1057, "") is None
