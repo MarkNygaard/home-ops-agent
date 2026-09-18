@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from home_ops_agent import audit
 from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.config import settings
@@ -222,6 +223,7 @@ async def pr_review_comment_exists(pr_number: int, head_sha: str) -> bool:
         return False
 
 
+@audit.records("github_create_pr_comment")
 async def create_pr_comment(params: dict) -> str:
     """Post (or upsert) a comment on a PR.
 
@@ -264,6 +266,7 @@ async def create_pr_comment(params: dict) -> str:
         return json.dumps({"status": "ok", "comment_id": resp.json()["id"]})
 
 
+@audit.records("github_merge_pr")
 async def merge_pr(params: dict) -> str:
     """Merge a PR (squash merge)."""
     if error := repo_configured():
@@ -358,6 +361,7 @@ async def get_file_content(params: dict) -> str:
         )
 
 
+@audit.records("github_create_commit")
 async def create_commit(params: dict) -> str:
     """Create a commit on a branch by updating a file."""
     path = params["path"]
@@ -453,6 +457,7 @@ async def get_release(params: dict) -> str:
         )
 
 
+@audit.records("github_create_branch")
 async def create_branch(params: dict) -> str:
     """Create a new branch from a base ref (default: main)."""
     branch_name = params["branch_name"]
@@ -491,6 +496,7 @@ async def create_branch(params: dict) -> str:
             return json.dumps({"status": "failed", "message": resp.text})
 
 
+@audit.records("github_create_pr")
 async def create_pr(params: dict) -> str:
     """Create a pull request."""
     if error := repo_configured():

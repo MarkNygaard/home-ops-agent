@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+from home_ops_agent import audit
 from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.core import ToolDefinition
 
@@ -197,6 +198,7 @@ async def get_nodes(params: dict) -> str:
 PROTECTED_NAMESPACES = {"kube-system", "flux-system", "cert-manager"}
 
 
+@audit.records("k8s_restart_workload")
 async def restart_deployment(params: dict) -> str:
     """Trigger a rollout restart by patching the deployment annotation."""
     name = params["name"]
@@ -231,6 +233,7 @@ async def restart_deployment(params: dict) -> str:
         return json.dumps({"error": f"Failed to restart: {e.reason}"})
 
 
+@audit.records("k8s_delete_pod")
 async def delete_pod(params: dict) -> str:
     """Delete a pod to force recreation."""
     name = params["name"]

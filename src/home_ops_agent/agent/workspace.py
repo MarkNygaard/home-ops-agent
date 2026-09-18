@@ -33,6 +33,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from home_ops_agent import audit
 from home_ops_agent.agent import providers
 from home_ops_agent.agent.core import ToolDefinition
 from home_ops_agent.agent.tools.github import ALLOWED_COMMIT_PATHS, PROTECTED_BRANCHES
@@ -268,6 +269,7 @@ async def commit_and_push(ws: Workspace, message: str) -> dict:
 def build_workspace_tools(ws: Workspace) -> list[ToolDefinition]:
     """The only write path out of a workspace."""
 
+    @audit.records("workspace_commit")
     async def handler(params: dict) -> dict:
         message = (params.get("message") or "").strip()
         if not message:

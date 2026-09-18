@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+from home_ops_agent import audit
 from home_ops_agent.agent.core import ToolDefinition
 
 if TYPE_CHECKING:
@@ -146,6 +147,7 @@ async def flux_get_helmreleases(params: dict) -> str:
         return json.dumps({"error": f"Failed to list HelmReleases: {e.reason}"})
 
 
+@audit.records("flux_reconcile")
 async def flux_reconcile(params: dict) -> str:
     """Force reconcile a Flux resource by patching the requestedAt annotation."""
     kind = params["kind"].lower()
@@ -192,6 +194,7 @@ async def flux_reconcile(params: dict) -> str:
         return json.dumps({"error": f"Failed to reconcile {kind}/{name}: {e.reason}"})
 
 
+@audit.records("flux_suspend")
 async def flux_suspend(params: dict) -> str:
     """Suspend a Flux resource."""
     kind = params["kind"].lower()
@@ -225,6 +228,7 @@ async def flux_suspend(params: dict) -> str:
         return json.dumps({"error": f"Failed to suspend {kind}/{name}: {e.reason}"})
 
 
+@audit.records("flux_resume")
 async def flux_resume(params: dict) -> str:
     """Resume a suspended Flux resource."""
     kind = params["kind"].lower()

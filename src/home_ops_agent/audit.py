@@ -20,6 +20,7 @@ tools withheld from each agent. This is the receipt, not the lock.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from typing import Any
@@ -88,6 +89,39 @@ def classify(result: str) -> tuple[str, str]:
         message = parsed.get("message") or parsed.get("status") or ""
         return "ok", str(message)[:200]
     return "ok", text[:200]
+
+
+def records(tool: str):
+    """Mark a tool handler as a write, and record every call to it.
+
+    This sits on the *handler* rather than on the dispatchers on purpose. There
+    are three dispatchers -- the Anthropic loop in `core`, the Unix socket for
+    pi, and the Claude Code SDK wrapper -- and the workers also call handlers
+    like `merge_pr` directly, with no dispatcher at all. Recording per
+    dispatcher missed two of those four, including the busiest: every PR review
+    runs on the Claude Code backend, so the first version of this log recorded
+    nothing at all while looking like it worked.
+
+    The handler is the one place all four meet.
+    """
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        async def wrapper(params, *args, **kwargs):
+            try:
+                result = await fn(params, *args, **kwargs)
+            except Exception as exc:
+                # Recorded and re-raised: an attempt that raised is still an
+                # attempt, and the caller's error handling is unchanged.
+                await record(tool, params, json.dumps({"error": str(exc)}))
+                raise
+            await record(tool, params, result if isinstance(result, str) else str(result))
+            return result
+
+        wrapper.__audit_tool__ = tool
+        return wrapper
+
+    return decorate
 
 
 async def record(
