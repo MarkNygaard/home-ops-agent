@@ -178,6 +178,16 @@ def step(name: str, detail: str | None = None) -> None:
     _current.updated_at = datetime.now(UTC)
 
 
+def current_agent() -> str:
+    """Which agent is running, or "unknown".
+
+    The audit log uses this so a recorded write says who made it without every
+    tool call having to carry its caller. Runs are sequential -- one worker,
+    one run at a time -- so the module-level current run is the right answer.
+    """
+    return _current.agent if _current else "unknown"
+
+
 def note_tool(tool_name: str) -> None:
     """Report a step for a tool call, when that tool maps to one in this flow."""
     if _current is None:

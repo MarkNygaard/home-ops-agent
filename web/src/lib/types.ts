@@ -143,8 +143,18 @@ export interface RunProgress {
   updated_at: string
 }
 
+export interface WorkerHealth {
+  name: string
+  alive: boolean
+  restarts: number
+  started_at: string
+  last_error: string | null
+  last_death_at: string | null
+}
+
 export interface StatusResponse {
   has_credentials: boolean
+  workers?: WorkerHealth[]
   last_pr_check_at: string | null
   pr_check_running?: boolean
   last_pr_check_result?: PrCheckResult | null
@@ -191,4 +201,23 @@ export interface AnalyticsResponse {
   total_runs: number
   total_failed: number
   pricing: Record<string, { input: number; output: number }>
+}
+
+export interface WriteRecord {
+  id: number
+  tool: string
+  target: string
+  source: string
+  outcome: "ok" | "blocked" | "error"
+  detail: string
+  conversation_id: number | null
+  created_at: string | null
+}
+
+export interface AuditResponse {
+  days: number
+  writes: WriteRecord[]
+  counts: { ok: number; blocked: number; error: number; total: number }
+  sources: string[]
+  tracked_tools: string[]
 }

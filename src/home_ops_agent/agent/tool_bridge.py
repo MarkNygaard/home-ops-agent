@@ -51,6 +51,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from home_ops_agent import audit
+from home_ops_agent.workers import progress
+
 if TYPE_CHECKING:
     from home_ops_agent.agent.core import ToolDefinition
 
@@ -153,11 +156,17 @@ async def _handle(
             # over it would turn a recoverable mistake into a dead turn. This
             # mirrors what `core._execute_tool` does for the other backends.
             logger.exception("tool bridge: %s failed", name)
-            await _reply(writer, {"result": json.dumps({"error": str(exc)})})
+            failed = json.dumps({"error": str(exc)})
+            await audit.record(name, args, failed, source=progress.current_agent())
+            await _reply(writer, {"result": failed})
             return
 
         if not isinstance(result, str):
             result = json.dumps(result, default=str)
+        # pi reaches the same registry over this socket, so without this the
+        # audit log would be blind to every GPT run -- exactly the runs where
+        # the tools came from somewhere other than the Python loop.
+        await audit.record(name, args, result, source=progress.current_agent())
         await _reply(writer, {"result": result})
     except Exception as exc:  # noqa: BLE001 - a bridge fault must not kill the run
         logger.exception("tool bridge: request failed")
