@@ -44,6 +44,31 @@ STALE_AFTER = timedelta(minutes=20)
 # Unmapped tools leave the step alone. Most of them are detail the diagram does
 # not draw, and flickering through every tool call would be noise rather than
 # progress.
+# The order steps occur in. Used only to stop the indicator going backwards:
+# a model that reads the diff and then re-checks CI is doing something
+# reasonable, but a progress display that jumps back two circles reads as a bug.
+# Observed exactly that on the first live run -- check_pr, read_diff, check_pr.
+#
+# Anything not listed always applies, so a new step does not need adding here to
+# work; it just will not be ordered against the others.
+STEP_ORDER: tuple[str, ...] = (
+    "start",
+    "check_pr",
+    "read_diff",
+    "release_notes",
+    "decide",
+    "in_scope",
+    "deep_review",
+    "code_fix",
+    "re_review",
+    "merge_safe",
+    "merge_after_fix",
+    "merge_after_deep",
+    "notify_scope",
+    "notify_rereview",
+    "notify_deep",
+)
+
 TOOL_STEPS: dict[str, str] = {
     "github_get_pr": "check_pr",
     "github_list_prs": "check_pr",
@@ -86,6 +111,17 @@ def begin(agent: str, detail: str = "", step: str = "start") -> str:
     return _current.run_id
 
 
+def _ranks_below(candidate: str, current: str) -> bool:
+    """True when `candidate` comes earlier than `current` in the known order.
+
+    Unknown steps rank nowhere and are always applied, so the ordering is a
+    refinement rather than a gate.
+    """
+    if candidate not in STEP_ORDER or current not in STEP_ORDER:
+        return False
+    return STEP_ORDER.index(candidate) < STEP_ORDER.index(current)
+
+
 def step(name: str, detail: str | None = None) -> None:
     """Move the current run to a step. A no-op when nothing is running.
 
@@ -95,6 +131,14 @@ def step(name: str, detail: str | None = None) -> None:
     """
     if _current is None:
         return
+
+    # A new subject -- the next PR in the cycle -- starts over. Within one
+    # subject the indicator only moves forward.
+    same_subject = detail is None or detail == _current.detail
+    if same_subject and _ranks_below(name, _current.step):
+        _current.updated_at = datetime.now(UTC)
+        return
+
     _current.step = name
     if detail is not None:
         _current.detail = detail

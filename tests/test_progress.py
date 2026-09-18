@@ -149,3 +149,66 @@ def test_the_tool_map_only_names_tools_that_exist():
             known.add(tool.name)
 
     assert set(progress.TOOL_STEPS) <= known, sorted(set(progress.TOOL_STEPS) - known)
+
+
+def test_the_indicator_does_not_go_backwards():
+    """Observed on the first live run: check_pr, read_diff, check_pr.
+
+    The model read the diff and then went back to checking CI, which is a
+    reasonable thing to do and a confusing thing to watch — the highlight jumped
+    back two circles.
+    """
+    progress.begin("pr_review")
+    progress.step("check_pr", "PR #1057")
+    progress.step("read_diff")
+    progress.step("check_pr")
+    assert progress.snapshot()["step"] == "read_diff"
+
+
+def test_a_new_pr_starts_over():
+    """Only within one subject. The next PR in the cycle genuinely does begin
+    again at check_pr."""
+    progress.begin("pr_review")
+    progress.step("read_diff", "PR #1057")
+    progress.step("check_pr", "PR #1058")
+    snap = progress.snapshot()
+    assert snap["step"] == "check_pr"
+    assert snap["detail"] == "PR #1058"
+
+
+def test_an_unordered_step_always_applies():
+    """The ordering is a refinement, not a gate — a step added later must work
+    without being listed."""
+    progress.begin("pr_review")
+    progress.step("re_review", "PR #1")
+    progress.step("something_new")
+    assert progress.snapshot()["step"] == "something_new"
+
+
+def test_going_backwards_still_counts_as_activity():
+    """The step is refused but the run is not stale — it is doing work."""
+    progress.begin("pr_review")
+    progress.step("read_diff", "PR #1")
+    before = progress.snapshot()["updated_at"]
+    progress.step("check_pr")
+    assert progress.snapshot()["updated_at"] >= before
+
+
+def test_every_ordered_step_is_one_a_worker_reports():
+    """A name that drifted would silently stop ordering that step."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "src" / "home_ops_agent"
+    reported = set()
+    for path in (root / "workers").glob("*.py"):
+        reported |= set(
+            re.findall(r'progress\.step\(\s*"([a-z_]+)"', path.read_text(encoding="utf-8"))
+        )
+    reported |= set(progress.TOOL_STEPS.values())
+    reported.add("start")
+
+    assert set(progress.STEP_ORDER) == reported, {
+        "ordered but never reported": sorted(set(progress.STEP_ORDER) - reported),
+        "reported but unordered": sorted(reported - set(progress.STEP_ORDER)),
+    }
