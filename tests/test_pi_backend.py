@@ -456,25 +456,27 @@ async def test_no_workspace_means_no_commit_channel(monkeypatch):
 @pytest.mark.skipif(
     sys.platform == "win32", reason="the bridge is a Unix socket; the agent runs on Linux"
 )
-async def test_a_workspace_gets_a_bridge_but_never_the_push_token(monkeypatch, tmp_path):
-    """The point of the whole bridge, pinned.
+async def test_a_workspace_gets_a_bridge_and_still_no_push_token(monkeypatch, tmp_path):
+    """The point of the whole bridge, pinned against the *real* variable.
 
-    pi has a `bash` tool, so anything in this environment is readable by the
-    model. A GitHub token here would let it `git push` directly and walk past
-    ALLOWED_COMMIT_PATHS; the socket and its single-run token let it do exactly
-    one thing, which it could already do.
+    An earlier version of this test asserted only that the Workspace's own token
+    value did not appear in the environment. It passed while pi was being handed
+    `{**os.environ}` -- which carries GITHUB_TOKEN -- so it proved nothing and
+    the guarantee it claimed to enforce was hollow. It now sets GITHUB_TOKEN the
+    way the deployment does and checks that.
     """
     from home_ops_agent.agent import workspace_bridge
     from home_ops_agent.agent.workspace import Workspace
 
     secret = "ghp_thisisthepushtoken"
+    monkeypatch.setenv("GITHUB_TOKEN", secret)
     ws = Workspace(path=tmp_path, branch="renovate/chart", token=secret)
 
     env = await _capture_env(monkeypatch, ws)
 
     assert env[workspace_bridge.SOCKET_ENV].endswith(".sock")
     assert env[workspace_bridge.TOKEN_ENV]
-    assert secret not in env.values()
+    assert "GITHUB_TOKEN" not in env
     assert not any(secret in str(v) for v in env.values())
 
 
@@ -541,3 +543,64 @@ def test_tool_calls_use_the_same_key_as_every_other_backend():
         assert '{"tool":' in inspect.getsource(module), module.__name__
     assert '{"tool":' in inspect.getsource(pi)
     assert '"name": event.get("toolName")' not in inspect.getsource(pi)
+
+
+def test_no_secret_of_this_process_reaches_pi(monkeypatch):
+    """pi has a `bash` tool, so its environment is readable by the model.
+
+    Every name here was actually being passed at one point, measured in the
+    cluster: GITHUB_TOKEN (40 chars), DATABASE_URL (139), SESSION_SECRET (44),
+    MCP_API_TOKEN (64), NTFY_TOKEN (32).
+    """
+    for name in (
+        "GITHUB_TOKEN",
+        "DATABASE_URL",
+        "SESSION_SECRET",
+        "MCP_API_TOKEN",
+        "NTFY_TOKEN",
+        "ANTHROPIC_CLIENT_SECRET",
+        "GPG_KEY",
+    ):
+        monkeypatch.setenv(name, "s3cret")
+
+    env = pi.build_env()
+    assert "s3cret" not in env.values()
+    for name in ("GITHUB_TOKEN", "DATABASE_URL", "SESSION_SECRET", "MCP_API_TOKEN", "NTFY_TOKEN"):
+        assert name not in env, name
+
+
+def test_the_allowlist_is_a_list_not_a_filter(monkeypatch):
+    """A secret added to the deployment tomorrow must be excluded by default.
+
+    Denying a known list would mean every future variable is passed until
+    someone remembers to block it; this is the other way round.
+    """
+    monkeypatch.setenv("SOME_FUTURE_API_KEY", "nope")
+    assert "SOME_FUTURE_API_KEY" not in pi.build_env()
+
+
+def test_the_extensions_still_get_what_they_need(monkeypatch):
+    """Trimming the environment must not quietly disable the tools.
+
+    Without SEARXNG_URL the web_search tool is not registered at all, and
+    without KUBERNETES_SERVICE_HOST none of the cluster tools are — both fail
+    silently by design, which is exactly how this would go unnoticed.
+    """
+    monkeypatch.setenv("SEARXNG_URL", "http://searxng.productivity.svc.cluster.local:8080")
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.43.0.1")
+    monkeypatch.setenv("KUBERNETES_SERVICE_PORT_HTTPS", "443")
+    monkeypatch.setenv("PATH", "/usr/local/bin")
+
+    env = pi.build_env()
+    assert env["SEARXNG_URL"].endswith(":8080")
+    assert env["KUBERNETES_SERVICE_HOST"] == "10.43.0.1"
+    assert env["KUBERNETES_SERVICE_PORT_HTTPS"] == "443"
+    assert env["PATH"]
+    assert env["HOME"] == str(pi.PI_HOME)
+
+
+def test_run_scoped_values_are_passed_through():
+    """The bridge's socket and token are minted per run, not secrets of this
+    process, so they ride in `extra` rather than the allowlist."""
+    env = pi.build_env({"HOMEOPS_WORKSPACE_SOCKET": "/tmp/x/ws.sock"})
+    assert env["HOMEOPS_WORKSPACE_SOCKET"] == "/tmp/x/ws.sock"

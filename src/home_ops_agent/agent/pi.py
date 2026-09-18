@@ -119,6 +119,51 @@ def write_auth(credentials: Credentials) -> bool:
     return True
 
 
+# What pi is allowed to see of this process's environment.
+#
+# pi has a `bash` tool, so every variable handed to the subprocess is readable
+# by the model. The first version of this passed `{**os.environ}`, which meant
+# pi received GITHUB_TOKEN, DATABASE_URL, SESSION_SECRET, MCP_API_TOKEN and
+# NTFY_TOKEN. A model holding GITHUB_TOKEN can simply `git push`, which is the
+# precise thing :mod:`home_ops_agent.agent.workspace_bridge` exists to prevent
+# -- the bridge withheld the token and the environment handed it straight back.
+#
+# An allowlist rather than a denylist, so a secret added to the deployment
+# tomorrow is excluded because nobody listed it, not included because nobody
+# remembered to block it.
+#
+# The ServiceAccount token stays reachable on disk at /var/run/secrets, and that
+# is intended: `cluster.ts` reads it, and it grants exactly what the agent's
+# ClusterRole already allows through those tools. It is not a capability the
+# model gains by reading the file.
+PI_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH",  # finding node at all
+        "LANG",
+        "TZ",
+        "SEARXNG_URL",  # searxng.ts
+        "KUBERNETES_SERVICE_HOST",  # cluster.ts
+        "KUBERNETES_SERVICE_PORT",
+        "KUBERNETES_SERVICE_PORT_HTTPS",
+    }
+)
+
+
+def build_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment pi is launched with: the allowlist, plus HOME and ``extra``.
+
+    ``extra`` is for values minted for one run -- the workspace bridge's socket
+    and token -- which are deliberately *not* secrets of this process.
+    """
+    env = {key: value for key, value in os.environ.items() if key in PI_ENV_ALLOWLIST}
+    # Not from the allowlist: pi resolves ~/.pi from HOME and the container's
+    # real HOME is read-only.
+    env["HOME"] = str(PI_HOME)
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _text_of(message: dict[str, Any]) -> str:
     """Concatenate the text blocks of one assistant message."""
     return "".join(
@@ -217,7 +262,7 @@ async def stream(
     )
 
     PI_HOME.mkdir(parents=True, exist_ok=True)
-    env = {**os.environ, "HOME": str(PI_HOME)}
+    env = build_env()
     cwd = str(workspace.path) if workspace is not None else None
 
     async with AsyncExitStack() as stack:
@@ -232,7 +277,7 @@ async def stream(
             from home_ops_agent.agent import workspace_bridge
 
             handle = await stack.enter_async_context(workspace_bridge.serve(workspace))
-            env.update(handle.env())
+            env = build_env(handle.env())
 
         async for item in _drive(argv, env, cwd, model):
             yield item
