@@ -9,17 +9,34 @@ screenshot of a summary.
 This exposes that record over MCP-over-HTTP, as a thin layer on the same
 queries the REST API already serves, mounted at ``/mcp``.
 
-Everything here is read-only **except** ``create_memory`` and
-``delete_memory``. That exception is deliberate and narrow. Memories are
+Everything here is read-only **except** ``create_memory``, ``delete_memory``,
+``set_prompt`` and ``reset_prompt``. Those exceptions are deliberate and narrow. Memories are
 injected into every future system prompt, including those of agents that can
 commit to the repo and restart pods, and they are instruction-shaped ("a
 blocked drain during an upgrade is expected, not a new fault") — so a memory
 tool is a persistent influence on the operator's behaviour, not just a note.
 It earns its place because curating memories by hand is the one recurring
 chore here, and because the damage is visible in the UI and reversible with a
-single delete. Nothing else mutates: no settings, no models, no prompts, no
-triggering runs. Adding a third write tool should be a deliberate act, which is
-why ``test_write_surface_is_exactly_two_tools`` pins the list.
+single delete.
+
+The prompt tools were added on the same reasoning, knowingly. A prompt is a
+larger lever than a memory -- it *is* an agent's instruction set rather than an
+addition to it -- and ``cluster_context`` is prepended to every agent, so a
+change aimed at the chat also lands on the ones that review PRs and restart
+pods. Two things make it acceptable: ``set_prompt`` returns the text it
+replaced, because there is no version history behind these, and ``reset_prompt``
+restores the shipped default in one call.
+
+What makes exposing them safe at all is that **the agent's own models cannot
+reach this endpoint**. The agent's MCP *client* connects outbound to the Grafana
+and Flux sidecars only, never to ``/mcp``; and ``MCP_API_TOKEN`` is withheld from
+every subprocess that has a shell -- pi's environment allowlist, and
+``_MASKED_ENV`` on the Claude Code backend. An agent cannot rewrite its own
+prompt.
+
+Nothing else mutates: no settings, no models, no triggering runs. Adding a fifth
+write tool should be a deliberate act, which is why
+``test_write_surface_is_exactly_these_four_tools`` pins the list.
 
 **Disabled unless ``MCP_API_TOKEN`` is set.** With no token the endpoint is not
 mounted at all, so it cannot be reached by accident. When set, every request
@@ -411,6 +428,93 @@ def allowed_hosts() -> list[str]:
     return sorted(hosts)
 
 
+async def _prompts() -> dict[str, Any]:
+    """Every prompt, with its default alongside whatever overrides it."""
+    from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
+
+    async with async_session() as session:
+        result = await session.execute(select(Setting).where(Setting.key.like("prompt_%")))
+        custom = {s.key: s.value for s in result.scalars().all()}
+
+    return {
+        name: {
+            "is_customized": f"prompt_{name}" in custom,
+            # The text actually in force, so a caller does not have to work out
+            # which of the two below is being used.
+            "effective": custom.get(f"prompt_{name}") or default_text,
+            "default": default_text,
+        }
+        for name, default_text in PROMPT_DEFAULTS.items()
+    }
+
+
+async def _set_prompt(name: str, text: str) -> dict[str, Any]:
+    """Override one prompt, returning what it said before.
+
+    ``previous`` is returned rather than merely logged: there is no version
+    history behind these, so overwriting an already-customised prompt would
+    otherwise destroy the old text with no way back except retyping it.
+    ``reset_prompt`` only restores the shipped default, not the previous custom.
+    """
+    from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
+
+    if name not in PROMPT_DEFAULTS:
+        return {"error": f"Unknown prompt: {name}. Known: {', '.join(sorted(PROMPT_DEFAULTS))}"}
+    text = (text or "").strip()
+    if not text:
+        return {
+            "error": "Refusing to set an empty prompt; use reset_prompt to restore the default."
+        }
+
+    key = f"prompt_{name}"
+    async with async_session() as session:
+        row = (
+            await session.execute(select(Setting).where(Setting.key == key))
+        ).scalar_one_or_none()
+        previous = row.value if row else None
+        if row:
+            row.value = text
+        else:
+            session.add(Setting(key=key, value=text))
+        await session.commit()
+
+    logger.warning("MCP set prompt '%s' (%d chars)", name, len(text))
+    return {
+        "status": "ok",
+        "prompt": name,
+        "chars": len(text),
+        "was_customized": previous is not None,
+        "previous": previous,
+    }
+
+
+async def _reset_prompt(name: str) -> dict[str, Any]:
+    """Drop the override so the shipped default applies again."""
+    from sqlalchemy import delete
+
+    from home_ops_agent.agent.prompts import DEFAULTS as PROMPT_DEFAULTS
+
+    if name not in PROMPT_DEFAULTS:
+        return {"error": f"Unknown prompt: {name}. Known: {', '.join(sorted(PROMPT_DEFAULTS))}"}
+
+    key = f"prompt_{name}"
+    async with async_session() as session:
+        row = (
+            await session.execute(select(Setting).where(Setting.key == key))
+        ).scalar_one_or_none()
+        previous = row.value if row else None
+        await session.execute(delete(Setting).where(Setting.key == key))
+        await session.commit()
+
+    logger.warning("MCP reset prompt '%s' to its default", name)
+    return {
+        "status": "ok",
+        "prompt": name,
+        "was_customized": previous is not None,
+        "previous": previous,
+    }
+
+
 def build_server():
     """Construct the FastMCP server with the read-only tool set."""
     from mcp.server.fastmcp import FastMCP
@@ -439,6 +543,42 @@ def build_server():
             allowed_origins=[f"https://{h}" for h in hosts] + [f"http://{h}" for h in hosts],
         ),
     )
+
+    @mcp.tool()
+    async def prompts() -> str:
+        """The system prompts every agent runs on.
+
+        `cluster_context` is prepended to all of them; the rest are per-agent.
+        `effective` is the text actually in force. Read this before editing one:
+        the prompt is shared, so a change for the chat also lands on the agents
+        that review PRs and restart pods.
+        """
+        return json.dumps(await _prompts(), default=str)
+
+    @mcp.tool()
+    async def set_prompt(name: str, text: str) -> str:
+        """Replace one prompt's text. Returns the previous text.
+
+        This is the instruction set for agents that can commit to the repo and
+        restart pods, so it is a larger lever than a memory. Two things are worth
+        knowing before using it: `cluster_context` is prepended to every agent,
+        so a change aimed at one lands on all of them; and there is no version
+        history, which is why the previous text comes back in the response —
+        keep it if you might want it.
+
+        Do not list the available tools in a prompt. Which tools exist depends on
+        the backend serving the model, so a prose list is a second source of
+        truth that goes stale silently. The tool schemas are always accurate.
+        """
+        return json.dumps(await _set_prompt(name, text), default=str)
+
+    @mcp.tool()
+    async def reset_prompt(name: str) -> str:
+        """Drop a prompt's override so the shipped default applies again.
+
+        Restores the default, not whatever custom text preceded the current one.
+        """
+        return json.dumps(await _reset_prompt(name), default=str)
 
     @mcp.tool()
     async def agent_tasks(

@@ -141,6 +141,9 @@ async def test_tools_are_listed_over_the_wire(monkeypatch):
                 "create_memory",
                 "delete_memory",
                 "memories",
+                "prompts",
+                "reset_prompt",
+                "set_prompt",
                 "task_detail",
             ]
 
@@ -194,27 +197,77 @@ def test_exposed_tools():
         "create_memory",
         "delete_memory",
         "memories",
+        "prompts",
+        "reset_prompt",
+        "set_prompt",
         "task_detail",
     ]
 
 
-def test_write_surface_is_exactly_two_tools():
+def test_write_surface_is_exactly_these_four_tools():
     """The write surface is pinned, so widening it has to be deliberate.
 
-    Memories reach every future system prompt, including agents that can commit
-    to the repo and restart pods, and they are instruction-shaped. Two narrow,
-    reversible memory tools are the considered exception; a third write tool
-    should break this test rather than slip in.
+    Two memory tools were the original considered exception: memories reach
+    every future system prompt, including agents that can commit to the repo and
+    restart pods, and they are instruction-shaped.
+
+    The two prompt tools were added on the same reasoning, knowingly. A prompt is
+    a larger lever than a memory — it *is* the instruction set rather than an
+    addition to it — and the mitigations are that `set_prompt` returns the text
+    it replaced (there is no version history) and that `reset_prompt` restores
+    the shipped default in one call.
+
+    What makes this safe to expose at all is that the agent's own models cannot
+    reach this endpoint: the agent's MCP *client* connects outbound to the
+    Grafana and Flux sidecars only, and MCP_API_TOKEN is withheld from every
+    subprocess that has a shell (pi's env allowlist, and _MASKED_ENV on the
+    Claude Code backend). An agent cannot rewrite its own prompt.
+
+    A fifth write tool should break this test rather than slip in.
     """
     server = mcp_server.build_server()
     names = {t.name for t in server._tool_manager.list_tools()}
 
-    assert names & {"create_memory", "delete_memory"} == {"create_memory", "delete_memory"}
+    writes = {"create_memory", "delete_memory", "set_prompt", "reset_prompt"}
+    assert writes <= names
 
-    # Nothing may change settings, models, prompts, or start work.
-    forbidden = ("setting", "model", "prompt", "trigger", "check", "merge", "restart", "commit")
+    # Nothing may change settings or models, or start work. `prompt` is no longer
+    # forbidden outright, so the names above are listed explicitly instead.
+    forbidden = ("setting", "model", "trigger", "check", "merge", "restart", "commit")
     for name in names:
         assert not any(verb in name for verb in forbidden), f"{name} exceeds the write surface"
+
+    # Anything else that writes must be one of the four.
+    for name in names:
+        if name.startswith(("set_", "create_", "delete_", "reset_", "update_")):
+            assert name in writes, f"{name} is a write tool outside the pinned surface"
+
+
+def test_prompts_can_be_read_without_writing():
+    """Reading was the actual gap: inspecting a prompt otherwise meant a shell
+    into the pod for something the UI shows in one click."""
+    server = mcp_server.build_server()
+    names = {t.name for t in server._tool_manager.list_tools()}
+    assert "prompts" in names
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_prompt_is_refused_by_name():
+    """Silently creating `prompt_typo` would look like success and change
+    nothing, which is the worst possible outcome for a prompt edit."""
+    result = await mcp_server._set_prompt("chatt", "hello")
+    assert "Unknown prompt" in result["error"]
+
+    result = await mcp_server._reset_prompt("nonsense")
+    assert "Unknown prompt" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_prompt_is_refused():
+    """Blanking a prompt is not the same as resetting it, and would silently
+    strip an agent of its instructions."""
+    result = await mcp_server._set_prompt("chat", "   ")
+    assert "Refusing to set an empty prompt" in result["error"]
 
 
 def test_no_bulk_deletion_is_possible():
