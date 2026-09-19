@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-from home_ops_agent.agent.core import Agent, AgentResult
+from home_ops_agent.agent.core import Agent, AgentResult, Thinking
 from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.memory import extract_memories
 from home_ops_agent.agent.models import get_model_for_task
@@ -19,6 +19,30 @@ from home_ops_agent.database import Conversation, Message, async_session
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# How hard the chat model is asked to think. Off by default: reasoning costs
+# latency and tokens on every message, and it is only worth paying for when
+# someone is watching the run.
+DEFAULT_THINKING_LEVEL = "off"
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+async def _thinking_level() -> str:
+    """The configured reasoning level, or the default on any problem."""
+    try:
+        from sqlalchemy import select
+
+        from home_ops_agent.database import Setting, async_session
+
+        async with async_session() as session:
+            result = await session.execute(select(Setting).where(Setting.key == "thinking_level"))
+            setting = result.scalar_one_or_none()
+            if setting and setting.value in THINKING_LEVELS:
+                return setting.value
+    except Exception:
+        logger.warning("Could not read thinking_level; using %s", DEFAULT_THINKING_LEVEL)
+    return DEFAULT_THINKING_LEVEL
+
 
 # Store MCP tools reference (set during app startup)
 _mcp_tools: list = []
@@ -191,10 +215,17 @@ async def websocket_chat(websocket: WebSocket):
                     max_turns=15,
                     on_tool_start=on_tool_start,
                     on_tool_end=on_tool_end,
+                    thinking=await _thinking_level(),
                 ):
                     if isinstance(item, str):
                         await websocket.send_text(
                             json.dumps({"type": "stream_delta", "delta": item})
+                        )
+                    elif isinstance(item, Thinking):
+                        # Its own message type, so the UI cannot render it as
+                        # the answer and it is never saved as one.
+                        await websocket.send_text(
+                            json.dumps({"type": "thinking_delta", "delta": item.text})
                         )
                     elif isinstance(item, AgentResult):
                         result = item

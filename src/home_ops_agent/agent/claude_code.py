@@ -38,7 +38,7 @@ from home_ops_agent.agent import providers
 from home_ops_agent.workers import progress
 
 if TYPE_CHECKING:
-    from home_ops_agent.agent.core import AgentResult, ToolDefinition
+    from home_ops_agent.agent.core import AgentResult, Thinking, ToolDefinition
     from home_ops_agent.agent.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -314,6 +314,21 @@ def _stream_event_text(event: dict[str, Any]) -> str:
     return delta.get("text") or ""
 
 
+def _stream_event_thinking(event: dict[str, Any]) -> str:
+    """The reasoning out of a raw ``content_block_delta`` stream event.
+
+    Same shape as the text deltas beside it, a different delta type. Extended
+    thinking arrives this way when the model is configured for it; when it is
+    not, there simply are none and nothing is shown.
+    """
+    if not isinstance(event, dict) or event.get("type") != "content_block_delta":
+        return ""
+    delta = event.get("delta")
+    if not isinstance(delta, dict) or delta.get("type") != "thinking_delta":
+        return ""
+    return delta.get("thinking") or ""
+
+
 def _is_turn_limit(exc: Exception) -> bool:
     """Whether this is the CLI stopping on max_turns rather than a real fault.
 
@@ -334,7 +349,7 @@ async def stream(
     on_tool_start: Callable[..., Coroutine] | None = None,
     on_tool_end: Callable[..., Coroutine] | None = None,
     workspace: "Workspace | None" = None,
-) -> AsyncGenerator["str | AgentResult", None]:
+) -> AsyncGenerator["str | AgentResult | Thinking", None]:
     """Run one task through the Claude Code CLI.
 
     Yields assistant text as each turn arrives, then a final ``AgentResult``.
@@ -343,7 +358,7 @@ async def stream(
     shell tools enabled, and gains ``workspace_commit`` as the single guarded
     way to push what it changed.
     """
-    from home_ops_agent.agent.core import AgentResult
+    from home_ops_agent.agent.core import AgentResult, Thinking
 
     sdk = _sdk()
     ctx = _ToolContext(on_tool_start, on_tool_end)
@@ -374,6 +389,13 @@ async def stream(
                 # deltas are the only ones that belong in the answer.
                 if message.parent_tool_use_id is not None:
                     continue
+                reasoning = _stream_event_thinking(message.event)
+                if reasoning:
+                    # Yielded as Thinking, never as text: it must not reach the
+                    # answer, the transcript or the database as if the model
+                    # had said it.
+                    yield Thinking(reasoning)
+
                 delta = _stream_event_text(message.event)
                 if delta:
                     streamed += delta

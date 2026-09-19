@@ -54,6 +54,7 @@ async def get_settings():
         "agent_enabled": db_settings.get("agent_enabled", "true").lower() in ("true", "1", "yes"),
         "pr_mode": db_settings.get("pr_mode", "comment_only"),
         "alert_mode": db_settings.get("alert_mode", "full"),
+        "thinking_level": db_settings.get("thinking_level", "off"),
         # Per-provider auth status — all three can be configured simultaneously.
         "providers": {
             "kimi": {
@@ -116,6 +117,7 @@ ALLOWED_SETTING_KEYS = {
     "agent_enabled",
     "pr_mode",
     "alert_mode",
+    "thinking_level",
     "kimi_api_key",
     "claude_code_oauth_token",
     "alert_cooldown_seconds",
