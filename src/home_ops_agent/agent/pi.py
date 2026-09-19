@@ -32,7 +32,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -236,6 +236,8 @@ async def stream(
     credentials: Credentials,
     workspace: Workspace | None = None,
     tools: list[ToolDefinition] | None = None,
+    on_tool_start: Callable[..., Coroutine] | None = None,
+    on_tool_end: Callable[..., Coroutine] | None = None,
 ) -> AsyncGenerator[str | AgentResult, None]:
     """Run a prompt through pi, yielding assistant text then an ``AgentResult``.
 
@@ -285,7 +287,7 @@ async def stream(
             handle = await stack.enter_async_context(tool_bridge.serve(served))
             env = build_env(handle.env())
 
-        async for item in _drive(argv, env, cwd, model):
+        async for item in _drive(argv, env, cwd, model, on_tool_start, on_tool_end):
             yield item
 
 
@@ -335,6 +337,8 @@ async def _drive(
     env: dict[str, str],
     cwd: str | None,
     model: str,
+    on_tool_start: Callable[..., Coroutine] | None = None,
+    on_tool_end: Callable[..., Coroutine] | None = None,
 ) -> AsyncGenerator[str | AgentResult, None]:
     """Run pi and turn its event stream into assistant text plus an ``AgentResult``.
 
@@ -357,6 +361,10 @@ async def _drive(
     input_tokens = output_tokens = 0
     last_text = ""
     stop_reason = ""
+    # Tools the chat has been told about and not yet told about finishing,
+    # keyed by pi's call id: {id: (name, index)}.
+    running: dict[str, tuple[str, int]] = {}
+    tool_index = 0
 
     assert proc.stdout is not None
     async for event in _events(proc.stdout):
@@ -370,10 +378,26 @@ async def _drive(
             # start, so every GPT run since 0.14.0 has shown blank tool chips in
             # the chat and null tool names over MCP, while working perfectly.
             #
-            # toolCallId is dropped rather than renamed: nothing reads it, and an
-            # extra key here is one more thing for the next backend to disagree
-            # about.
+            name = event.get("toolName") or "tool"
             tool_calls.append({"tool": event.get("toolName"), "input": event.get("args")})
+
+            # Reported as it happens, not at the end. Every other backend calls
+            # these, and pi was the one that did not -- so a GPT chat sat on
+            # "thinking" for the whole run and then showed what it had used,
+            # while the same question on a Claude model narrated itself.
+            #
+            # toolCallId earns its keep here: it is what pairs an end event with
+            # the start it belongs to, which matters once two tools overlap.
+            call_id = str(event.get("toolCallId") or tool_index)
+            running[call_id] = (name, tool_index)
+            tool_index += 1
+            if on_tool_start:
+                await on_tool_start(name, running[call_id][1])
+        elif kind == "tool_execution_end":
+            call_id = str(event.get("toolCallId") or "")
+            finished = running.pop(call_id, None)
+            if finished and on_tool_end:
+                await on_tool_end(*finished)
         elif kind == "message_end":
             message = event.get("message") or {}
             if message.get("role") != "assistant":
@@ -386,6 +410,14 @@ async def _drive(
             if text:
                 last_text = text
                 yield text
+
+    # Anything still open when the stream ends is closed here, so a backend that
+    # does not emit an end event -- or a run that dies mid-tool -- cannot leave
+    # a spinner turning in the chat forever.
+    for name, index in running.values():
+        if on_tool_end:
+            await on_tool_end(name, index)
+    running.clear()
 
     stderr_raw = await proc.stderr.read() if proc.stderr else b""
     await proc.wait()

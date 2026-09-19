@@ -253,6 +253,8 @@ class Agent:
                 model,
                 self.credentials,
                 tools=list(self.tools.values()),
+                on_tool_start=on_tool_start,
+                on_tool_end=on_tool_end,
             )
         else:
             gen = self._run_openai_streaming(

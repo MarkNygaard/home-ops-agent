@@ -599,3 +599,130 @@ def test_the_subprocess_gets_the_raised_limit():
     source = inspect.getsource(pi._drive)
     assert "limit=STREAM_LIMIT" in source
     assert pi.STREAM_LIMIT >= 8 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_tool_progress_is_reported_as_it_happens(monkeypatch):
+    """The chat sat on "thinking" for a whole GPT run and then listed the
+    tools afterwards, while the same question on a Claude model narrated
+    itself. pi was the one backend `core` called without these callbacks.
+    """
+    events = [
+        {"type": "agent_start"},
+        {"type": "tool_execution_start", "toolName": "k8s_get_pods", "toolCallId": "a", "args": {}},
+        {"type": "tool_execution_end", "toolCallId": "a"},
+        {"type": "tool_execution_start", "toolName": "flux_reconcile", "toolCallId": "b"},
+        {"type": "tool_execution_end", "toolCallId": "b"},
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input": 1, "output": 1},
+            },
+        },
+    ]
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _stdout(events)
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    seen: list[tuple[str, str, int]] = []
+
+    async def _start(name, idx):
+        seen.append(("start", name, idx))
+
+    async def _end(name, idx):
+        seen.append(("end", name, idx))
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    async for _ in pi.stream(
+        "sys",
+        [{"role": "user", "content": "hi"}],
+        "gpt-6-astra",
+        Credentials(),
+        on_tool_start=_start,
+        on_tool_end=_end,
+    ):
+        pass
+
+    assert seen == [
+        ("start", "k8s_get_pods", 0),
+        ("end", "k8s_get_pods", 0),
+        ("start", "flux_reconcile", 1),
+        ("end", "flux_reconcile", 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_without_an_end_event_is_closed_anyway(monkeypatch):
+    """Otherwise a spinner turns in the chat forever — which is a worse lie
+    than showing nothing, because it says work is still happening."""
+    events = [
+        {"type": "tool_execution_start", "toolName": "web_search", "toolCallId": "a"},
+        {
+            "type": "message_end",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+        },
+    ]
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _stdout(events)
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    ended: list[str] = []
+
+    async def _end(name, _idx):
+        ended.append(name)
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    async for _ in pi.stream(
+        "sys",
+        [{"role": "user", "content": "hi"}],
+        "gpt-6-astra",
+        Credentials(),
+        on_tool_end=_end,
+    ):
+        pass
+
+    assert ended == ["web_search"]
+
+
+def test_every_backend_gets_the_progress_callbacks():
+    """pi was called without them for eight months of GPT runs. The dispatch is
+    four branches long and the omission is invisible by reading."""
+    import inspect
+
+    from home_ops_agent.agent import core
+
+    source = inspect.getsource(core.Agent.run_streaming)
+    # One `on_tool_start` per backend branch, plus the parameter itself.
+    assert source.count("on_tool_start") >= 5
