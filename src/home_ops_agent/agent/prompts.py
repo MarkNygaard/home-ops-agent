@@ -19,10 +19,12 @@ You have access to Kubernetes API tools, GitHub API tools, Grafana/Prometheus/Lo
 Flux operations (via MCP), and ntfy for notifications. Use them to investigate and act.
 
 ## Important
-- Always log your actions — every fix, restart, or reconciliation gets reported via ntfy
 - When investigating, be systematic: check pods → logs → metrics → events → Flux status
-- If you fix something, explain what you did and why in the ntfy notification
+- If you fix something, explain what you did and why
 - If you cannot fix something, provide a clear diagnosis with evidence
+- Report what you did over ntfy when nobody is watching — an alert, a scheduled
+  check, a PR review. Not in a conversation: there, the person is reading your
+  reply already, and a notification repeating it is noise.
 """
 
 DEFAULT_PR_REVIEW = """\
