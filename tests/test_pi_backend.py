@@ -8,6 +8,7 @@ provider and belongs in a manual check.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from datetime import UTC, datetime
@@ -16,6 +17,21 @@ import pytest
 
 from home_ops_agent.agent import pi
 from home_ops_agent.auth.credentials import Credentials
+
+
+def _stdout(events=()):
+    """pi's stdout as a real StreamReader.
+
+    These used to build a hand-rolled async iterator, which could not
+    reach the 64 KiB per-line limit that killed a live chat -- the tests
+    passed while the read path they stood for could not read a large tool
+    result.
+    """
+    reader = asyncio.StreamReader()
+    for event in events:
+        reader.feed_data(json.dumps(event).encode() + b"\n")
+    reader.feed_eof()
+    return reader
 
 
 def test_extension_discovery_is_disabled():
@@ -127,21 +143,13 @@ async def test_stop_reason_error_is_a_failure_even_with_clean_exit_and_no_stderr
         {"type": "agent_end"},
     ]
 
-    class _FakeStdout:
-        def __aiter__(self):
-            async def gen():
-                for e in events:
-                    yield (json.dumps(e) + "\n").encode()
-
-            return gen()
-
     class _FakeStderr:
         async def read(self):
             return b""
 
     class _FakeProc:
         returncode = 0
-        stdout = _FakeStdout()
+        stdout = _stdout(events)
         stderr = _FakeStderr()
 
         async def wait(self):
@@ -170,21 +178,13 @@ async def test_clean_exit_with_no_text_is_still_a_failure(monkeypatch):
     surface as a model with nothing to say.
     """
 
-    class _FakeStdout:
-        def __aiter__(self):
-            async def gen():
-                if False:
-                    yield b""
-
-            return gen()
-
     class _FakeStderr:
         async def read(self):
             return b"OAuth refresh failed for openai-codex: 401 refresh_token_reused"
 
     class _FakeProc:
         returncode = 0
-        stdout = _FakeStdout()
+        stdout = _stdout()
         stderr = _FakeStderr()
 
         async def wait(self):
@@ -213,21 +213,13 @@ async def test_subprocess_gets_a_writable_home(monkeypatch, tmp_path):
     """
     captured: dict = {}
 
-    class _FakeStdout:
-        def __aiter__(self):
-            async def gen():
-                if False:
-                    yield b""
-
-            return gen()
-
     class _FakeStderr:
         async def read(self):
             return b""
 
     class _FakeProc:
         returncode = 0
-        stdout = _FakeStdout()
+        stdout = _stdout()
         stderr = _FakeStderr()
 
         async def wait(self):
@@ -278,21 +270,13 @@ async def test_stream_parses_events(monkeypatch):
         {"type": "agent_end"},
     ]
 
-    class _FakeStdout:
-        def __aiter__(self):
-            async def gen():
-                for event in events:
-                    yield (json.dumps(event) + "\n").encode()
-
-            return gen()
-
     class _FakeStderr:
         async def read(self):
             return b""
 
     class _FakeProc:
         returncode = 0
-        stdout = _FakeStdout()
+        stdout = _stdout(events)
         stderr = _FakeStderr()
 
         async def wait(self):
@@ -336,14 +320,6 @@ async def test_provider_rejection_raises_rather_than_returning_empty(monkeypatch
     a model that simply had nothing to say.
     """
 
-    class _FakeStdout:
-        def __aiter__(self):
-            async def gen():
-                if False:
-                    yield b""
-
-            return gen()
-
     class _FakeStderr:
         async def read(self):
             return (
@@ -354,7 +330,7 @@ async def test_provider_rejection_raises_rather_than_returning_empty(monkeypatch
 
     class _FakeProc:
         returncode = 1
-        stdout = _FakeStdout()
+        stdout = _stdout()
         stderr = _FakeStderr()
 
         async def wait(self):
@@ -402,20 +378,12 @@ class _Silent:
 
     returncode = 0
 
-    class _Stdout:
-        def __aiter__(self):
-            async def gen():
-                if False:
-                    yield b""
-
-            return gen()
-
     class _Stderr:
         async def read(self):
             return b""
 
     def __init__(self):
-        self.stdout = self._Stdout()
+        self.stdout = _stdout()
         self.stderr = self._Stderr()
 
     async def wait(self):
@@ -587,3 +555,47 @@ def test_run_scoped_values_are_passed_through():
     process, so they ride in `extra` rather than the allowlist."""
     env = pi.build_env({"HOMEOPS_WORKSPACE_SOCKET": "/tmp/x/ws.sock"})
     assert env["HOMEOPS_WORKSPACE_SOCKET"] == "/tmp/x/ws.sock"
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_event_does_not_kill_the_run():
+    """The chat died with "Separator is found, but chunk is longer than limit".
+
+    pi embeds whole tool results in its event stream, so one line carries a pod
+    list or a page of logs. asyncio's default limit is 64 KiB per line and
+    exceeding it raises out of the read loop — asking the cluster for its
+    health was enough. The oversized line is dropped now; the ones around it
+    still arrive.
+    """
+    reader = asyncio.StreamReader(limit=256)
+    reader.feed_data(b'{"type": "first"}\n')
+    reader.feed_data(b'{"type": "huge", "payload": "' + b"x" * 4096 + b'"}\n')
+    reader.feed_data(b'{"type": "last"}\n')
+    reader.feed_eof()
+
+    kinds = [event.get("type") async for event in pi._events(reader)]
+
+    assert kinds == ["first", "last"]
+
+
+@pytest.mark.asyncio
+async def test_a_non_json_line_is_skipped_not_fatal():
+    reader = asyncio.StreamReader()
+    reader.feed_data(b"Debugger listening on ws://127.0.0.1:9229\n")
+    reader.feed_data(b'{"type": "message_end"}\n')
+    reader.feed_data(b"\n")
+    reader.feed_eof()
+
+    kinds = [event.get("type") async for event in pi._events(reader)]
+
+    assert kinds == ["message_end"]
+
+
+def test_the_subprocess_gets_the_raised_limit():
+    """Dropping an event is the fallback, not the plan: the limit is raised so
+    an ordinary tool result never reaches it."""
+    import inspect
+
+    source = inspect.getsource(pi._drive)
+    assert "limit=STREAM_LIMIT" in source
+    assert pi.STREAM_LIMIT >= 8 * 1024 * 1024

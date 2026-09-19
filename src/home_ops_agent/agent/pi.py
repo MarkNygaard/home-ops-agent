@@ -289,6 +289,47 @@ async def stream(
             yield item
 
 
+# pi embeds whole tool results in its event stream, so one line carries a pod
+# list, a PR diff or a page of logs. asyncio's default stream limit is 64 KiB
+# per line, and exceeding it raises out of the read loop -- which ended the run
+# with "Separator is found, but chunk is longer than limit", a message that
+# says nothing about tool output being large. Asking the cluster for its health
+# was enough to trigger it.
+STREAM_LIMIT = 16 * 1024 * 1024
+
+
+async def _events(stdout: asyncio.StreamReader) -> AsyncGenerator[dict[str, Any], None]:
+    """pi's newline-delimited JSON events, skipping what cannot be read.
+
+    Records are split on newline only. pi's protocol note is explicit that also
+    splitting on U+2028/U+2029 -- which some readers do -- breaks framing.
+
+    A line past the limit is dropped rather than fatal: `readline` discards it
+    and keeps framing when the newline was found, so the run continues with one
+    event missing instead of failing outright. The event most likely to be that
+    large is a tool result the model has already received.
+    """
+    while True:
+        try:
+            raw = await stdout.readline()
+        except ValueError:
+            # asyncio raises this for a line over the limit, having already
+            # dropped it.
+            logger.warning("pi: dropped an event line larger than %d bytes", STREAM_LIMIT)
+            continue
+
+        if not raw:
+            return
+
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            logger.debug("pi: non-JSON line %r", line[:200])
+
+
 async def _drive(
     argv: list[str],
     env: dict[str, str],
@@ -309,6 +350,7 @@ async def _drive(
         stderr=asyncio.subprocess.PIPE,
         env=env,
         cwd=cwd,
+        limit=STREAM_LIMIT,
     )
 
     tool_calls: list[dict[str, Any]] = []
@@ -317,18 +359,7 @@ async def _drive(
     stop_reason = ""
 
     assert proc.stdout is not None
-    # Records are split on newline only. pi's protocol note is explicit that
-    # also splitting on U+2028/U+2029 — which some readers do — breaks framing.
-    async for raw in proc.stdout:
-        line = raw.decode("utf-8", errors="replace").strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            logger.debug("pi: non-JSON line %r", line[:200])
-            continue
-
+    async for event in _events(proc.stdout):
         kind = event.get("type")
 
         if kind == "tool_execution_start":
