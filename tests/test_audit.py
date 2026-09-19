@@ -262,3 +262,98 @@ def test_the_merge_pass_runs_inside_a_declared_run():
 
     src = inspect.getsource(pr_monitor.check_prs)
     assert src.index('progress.begin("pr_review"') < src.index("auto_merge_reviewed_prs(prs")
+
+
+def test_a_commit_is_filed_under_the_files_it_touched():
+    """`workspace_commit` takes a commit message and nothing else, so recording
+    its arguments filed the change under the prose the model wrote about it.
+    The file list — the thing an audit is for — was sitting unused in the
+    result."""
+    result = json.dumps(
+        {
+            "status": "ok",
+            "branch": "renovate/sonarr",
+            "sha": "abc1234def5678",
+            "files": ["kubernetes/apps/media/sonarr/app/helmrelease.yaml"],
+            "message": "Committed 1 file(s) and pushed to renovate/sonarr.",
+        }
+    )
+
+    target = audit.describe_target("workspace_commit", {"message": "fix the thing"}, result)
+
+    assert "kubernetes/apps/media/sonarr/app/helmrelease.yaml" in target
+    # The sha ties the row to a commit on GitHub.
+    assert "abc1234" in target
+    assert "fix the thing" not in target
+
+
+def test_a_large_commit_is_summarised_not_listed():
+    """app-template staged 36 files in one PR. A row listing all of them is a
+    row nobody reads."""
+    files = [f"kubernetes/apps/x/app{i}/helmrelease.yaml" for i in range(36)]
+    target = audit.describe_target(
+        "workspace_commit", {"message": "m"}, json.dumps({"files": files, "sha": "aaaaaaa"})
+    )
+
+    assert "+33 more" in target
+    assert len(target) <= 200
+
+
+def test_arguments_are_still_used_when_the_result_says_nothing():
+    target = audit.describe_target(
+        "k8s_restart_workload",
+        {"namespace": "media", "name": "sonarr"},
+        json.dumps({"status": "ok", "message": "Restarted"}),
+    )
+    assert target == "media sonarr"
+
+
+def test_a_dict_returning_handler_is_serialised_as_json(monkeypatch):
+    """The bug this catches is not cosmetic.
+
+    Handlers that return a dict were recorded with `str()`, a Python repr that
+    `classify` cannot parse — so it fell through to "ok". A blocked
+    `workspace_commit`, the most important refusal in the system, was filed as
+    a successful write.
+    """
+    recorded: list[str] = []
+
+    async def _capture(_tool, _args, result, **_kw):
+        recorded.append(result)
+
+    monkeypatch.setattr(audit, "record", _capture)
+
+    async def _blocked(_params):
+        return {"status": "blocked", "error": "BLOCKED: 2 path(s) outside the allowed prefixes."}
+
+    wrapped = audit.records("workspace_commit")(_blocked)
+
+    import asyncio
+
+    asyncio.run(wrapped({"message": "m"}))
+
+    assert audit.classify(recorded[0])[0] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_recording_does_not_change_what_the_tool_returns(monkeypatch):
+    """Serialising the result for the log must not serialise it for the caller.
+
+    An earlier version of this rebound `result` before returning it, so
+    `workspace_commit` handed its callers a JSON string where they indexed a
+    dict. Caught by an existing workspace test, pinned here.
+    """
+
+    async def _noop(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(audit, "record", _noop)
+
+    async def _returns_dict(_params):
+        return {"status": "ok", "files": ["a.yaml"]}
+
+    wrapped = audit.records("workspace_commit")(_returns_dict)
+    out = await wrapped({"message": "m"})
+
+    assert isinstance(out, dict)
+    assert out["status"] == "ok"

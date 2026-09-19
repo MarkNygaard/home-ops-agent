@@ -59,12 +59,53 @@ def is_write(tool: str) -> bool:
     return tool in WRITE_TOOLS
 
 
-def describe_target(tool: str, args: Any) -> str:
-    """A short, human-readable "what did it touch" for one call."""
+def describe_target(tool: str, args: Any, result: str | None = None) -> str:
+    """A short, human-readable "what did it touch" for one call.
+
+    Usually derived from the call's arguments. Some tools only know what they
+    touched afterwards: `workspace_commit` takes a commit message and nothing
+    else, so recording its arguments filed the change under the prose the model
+    wrote about it. Its result carries the staged file list -- the thing an
+    audit is actually for -- so the result wins where it says more.
+    """
+    from_result = _target_from_result(result)
+    if from_result:
+        return from_result[:200]
     if not isinstance(args, dict):
         return ""
     parts = [str(args[k]) for k in WRITE_TOOLS.get(tool, ()) if args.get(k) not in (None, "")]
     return " ".join(parts)[:200]
+
+
+# How many paths to name before summarising. A chart bump can stage 36 files
+# (app-template did), and a row that lists all of them is a row nobody reads.
+MAX_NAMED_FILES = 3
+
+
+def _target_from_result(result: str | None) -> str:
+    """The files a call reports having changed, if it reports any."""
+    if not result:
+        return ""
+    try:
+        parsed = json.loads(result)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(parsed, dict):
+        return ""
+
+    files = parsed.get("files")
+    if not isinstance(files, list) or not files:
+        return ""
+
+    names = [str(f) for f in files if f]
+    shown = ", ".join(names[:MAX_NAMED_FILES])
+    if len(names) > MAX_NAMED_FILES:
+        shown += f" (+{len(names) - MAX_NAMED_FILES} more)"
+
+    # The sha ties the row to a commit on GitHub, which is the next thing you
+    # want after seeing that something was committed.
+    sha = str(parsed.get("sha") or "")[:7]
+    return f"{shown} @{sha}" if sha else shown
 
 
 def classify(result: str) -> tuple[str, str]:
@@ -115,7 +156,16 @@ def records(tool: str):
                 # attempt, and the caller's error handling is unchanged.
                 await record(tool, params, json.dumps({"error": str(exc)}))
                 raise
-            await record(tool, params, result if isinstance(result, str) else str(result))
+            # json.dumps, not str(): a handler returning a dict was recorded
+            # as a Python repr, which `classify` cannot parse -- so a
+            # `{"status": "blocked", "error": "BLOCKED: ..."}` from
+            # `workspace_commit`, the most important refusal in the system, was
+            # filed as `ok`. Only the two dict-returning tools were affected,
+            # and they are the two that commit to the repository.
+            # A separate name: rebinding `result` here changed what the tool
+            # returned, from the dict its callers index into to a string.
+            recorded = result if isinstance(result, str) else json.dumps(result, default=str)
+            await record(tool, params, recorded)
             return result
 
         wrapper.__audit_tool__ = tool
@@ -155,7 +205,7 @@ async def record(
             await session.execute(
                 insert(ToolWrite).values(
                     tool=tool,
-                    target=describe_target(tool, args),
+                    target=describe_target(tool, args, result),
                     source=source,
                     outcome=outcome,
                     detail=detail,
