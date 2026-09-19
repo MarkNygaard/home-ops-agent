@@ -103,6 +103,7 @@ export interface WsMessage {
     | "stream_delta"
     | "stream_end"
     | "thinking_delta"
+    | "thinking_withheld"
   conversation_id?: number
   content?: string
   message?: string

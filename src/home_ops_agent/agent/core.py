@@ -68,6 +68,12 @@ class Thinking:
     """
 
     text: str
+    #: True when the model reasoned but the provider will not show it. OpenAI's
+    #: Codex path returns reasoning encrypted -- the block arrives with an empty
+    #: `thinking` and a signature, which exists so it can be sent back on the
+    #: next turn, not for anyone to read. Without saying so, turning reasoning
+    #: on and seeing nothing is indistinguishable from a broken feature.
+    withheld: bool = False
 
 
 class Agent:
@@ -265,6 +271,7 @@ class Agent:
                 self.credentials.claude_code_oauth_token or "",
                 on_tool_start,
                 on_tool_end,
+                thinking=thinking,
             )
         elif provider == providers.OPENAI:
             gen = pi.stream(

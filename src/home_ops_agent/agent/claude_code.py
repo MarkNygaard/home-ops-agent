@@ -241,6 +241,26 @@ def _workdir() -> str:
     return str(path)
 
 
+# Anthropic bills thinking as output tokens, so a level is a budget. These are
+# deliberately modest: the point is to watch the model work, not to buy it more
+# room than the task needs.
+THINKING_BUDGETS = {"low": 4000, "medium": 10000, "high": 24000, "xhigh": 32000, "max": 60000}
+
+
+def _thinking_config(level: str | None):
+    """The SDK's thinking option for one of our levels.
+
+    Unlike pi, this backend returns readable thinking -- Anthropic sends the
+    text, not an encrypted blob -- so the level here is worth setting.
+    """
+    if not level or level == "off":
+        return None
+    sdk = _sdk()
+    return sdk.ThinkingConfigEnabled(
+        type="enabled", budget_tokens=THINKING_BUDGETS.get(level, 10000)
+    )
+
+
 def build_options(
     tools: list["ToolDefinition"],
     system_prompt: str,
@@ -249,6 +269,7 @@ def build_options(
     oauth_token: str,
     ctx: _ToolContext,
     workspace: "Workspace | None" = None,
+    thinking: str | None = None,
 ):
     """Assemble ``ClaudeAgentOptions`` for one run."""
     sdk = _sdk()
@@ -272,6 +293,7 @@ def build_options(
 
     return sdk.ClaudeAgentOptions(
         model=cli_model or None,
+        thinking=_thinking_config(thinking),
         system_prompt=system_prompt,
         mcp_servers=mcp_servers,
         tools=WORKSPACE_BUILTIN_TOOLS if workspace is not None else BUILTIN_TOOLS,
@@ -349,6 +371,7 @@ async def stream(
     on_tool_start: Callable[..., Coroutine] | None = None,
     on_tool_end: Callable[..., Coroutine] | None = None,
     workspace: "Workspace | None" = None,
+    thinking: str | None = None,
 ) -> AsyncGenerator["str | AgentResult | Thinking", None]:
     """Run one task through the Claude Code CLI.
 
@@ -366,7 +389,9 @@ async def stream(
         from home_ops_agent.agent.workspace import build_workspace_tools
 
         tools = [*tools, *build_workspace_tools(workspace)]
-    options = build_options(tools, system_prompt, model, max_turns, oauth_token, ctx, workspace)
+    options = build_options(
+        tools, system_prompt, model, max_turns, oauth_token, ctx, workspace, thinking
+    )
 
     prompt = flatten_messages(messages)
     all_text: list[str] = []

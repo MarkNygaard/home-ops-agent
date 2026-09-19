@@ -53,6 +53,7 @@ export function ChatView() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [thinkingText, setThinkingText] = useState('');
+  const [thinkingWithheld, setThinkingWithheld] = useState(false);
   const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
   const deferredStreamingText = useDeferredValue(streamingText);
 
@@ -101,6 +102,14 @@ export function ChatView() {
           setStreamingText('');
           setActiveTools([]);
           setThinkingText('');
+          setThinkingWithheld(false);
+          break;
+
+        case 'thinking_withheld':
+          // The model reasoned and the provider will not show it — OpenAI's
+          // Codex path returns it encrypted. Saying so beats showing nothing,
+          // which reads as a broken setting.
+          setThinkingWithheld(true);
           break;
 
         case 'thinking_delta':
@@ -138,6 +147,7 @@ export function ChatView() {
           setStreamingText('');
           setActiveTools([]);
           setThinkingText('');
+          setThinkingWithheld(false);
           setMessages((prev) => [
             ...prev,
             {
@@ -154,6 +164,7 @@ export function ChatView() {
           setStreamingText('');
           setActiveTools([]);
           setThinkingText('');
+          setThinkingWithheld(false);
           setMessages((prev) => [
             ...prev,
             {
@@ -170,6 +181,7 @@ export function ChatView() {
           setStreamingText('');
           setActiveTools([]);
           setThinkingText('');
+          setThinkingWithheld(false);
           setMessages((prev) => [
             ...prev,
             { role: 'assistant', content: msg.message || 'Error occurred' },
@@ -196,6 +208,7 @@ export function ChatView() {
     setStreamingText('');
     setActiveTools([]);
     setThinkingText('');
+    setThinkingWithheld(false);
   }, [setConversationId]);
 
   const isBusy = isThinking || isStreaming;
@@ -242,15 +255,23 @@ export function ChatView() {
               {/* The model's reasoning, if it is producing any. Collapsed:
                   it answers "what is it doing" when a run is slow, and is
                   noise the rest of the time. */}
-              {thinkingText && (
+              {(thinkingText || thinkingWithheld) && (
                 <Message from="assistant">
                   <MessageContent>
                     <ChainOfThought defaultOpen={false}>
                       <ChainOfThoughtHeader>Reasoning</ChainOfThoughtHeader>
                       <ChainOfThoughtContent>
-                        <p className="text-xs whitespace-pre-wrap text-muted-foreground">
-                          {thinkingText}
-                        </p>
+                        {thinkingText ? (
+                          <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                            {thinkingText}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            This model reasoned, but the provider returns it
+                            encrypted — there is nothing to show. Anthropic
+                            models send readable reasoning.
+                          </p>
+                        )}
                       </ChainOfThoughtContent>
                     </ChainOfThought>
                   </MessageContent>

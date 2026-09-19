@@ -148,6 +148,9 @@ export default function SettingsChatPage() {
                 How hard the chat model thinks before answering. Its reasoning is
                 shown in the chat, collapsed, separately from the answer — it is a
                 summary of how the model got somewhere, not what it concluded.
+                Readable reasoning needs a model that sends it: Anthropic models
+                do, and GPT models on a ChatGPT subscription return it encrypted,
+                so the chat says so rather than showing an empty panel.
               </p>
             </div>
             <div className="flex flex-col gap-2">

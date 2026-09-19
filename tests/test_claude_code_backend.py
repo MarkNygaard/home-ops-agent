@@ -379,3 +379,28 @@ def test_reasoning_and_text_deltas_are_told_apart():
     assert claude_code._stream_event_text(thinking_event) == ""
     assert claude_code._stream_event_thinking(text_event) == ""
     assert claude_code._stream_event_text(text_event) == "All healthy."
+
+
+def test_the_thinking_level_becomes_a_budget():
+    """Anthropic bills thinking as output tokens, so a level is a budget. Off
+    must mean no config at all rather than a zero budget."""
+    from home_ops_agent.agent import claude_code
+
+    assert claude_code._thinking_config(None) is None
+    assert claude_code._thinking_config("off") is None
+
+    low = claude_code._thinking_config("low")
+    high = claude_code._thinking_config("high")
+    assert low["budget_tokens"] < high["budget_tokens"]
+    assert low["type"] == "enabled"
+
+
+def test_the_level_reaches_the_sdk_options():
+    """This backend is the one that returns readable reasoning, so a level
+    that never arrives here is the whole feature failing quietly."""
+    import inspect
+
+    from home_ops_agent.agent import claude_code
+
+    assert "thinking=_thinking_config(thinking)" in inspect.getsource(claude_code.build_options)
+    assert "thinking" in inspect.signature(claude_code.stream).parameters

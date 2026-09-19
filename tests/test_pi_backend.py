@@ -826,3 +826,69 @@ def test_the_thinking_level_is_only_passed_when_asked_for():
 
     argv = pi.build_argv("gpt-6-astra", "sys", "hi", thinking="medium")
     assert argv[argv.index("--thinking") + 1] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_encrypted_reasoning_is_reported_rather_than_shown_as_nothing(monkeypatch):
+    """Measured against gpt-6-astra on a ChatGPT subscription.
+
+    At `--thinking high` the blocks arrive with `thinking: ""` and a signature
+    carrying `encrypted_content`: the model reasoned, and the provider will not
+    show it. Turning reasoning on and seeing an empty panel is indistinguishable
+    from a broken setting, so this says which it is — once per run, because
+    repeating it every turn is its own noise.
+    """
+    blank = {"type": "thinking", "thinking": "", "thinkingSignature": '{"encrypted_content":"x"}'}
+    events = [
+        {
+            "type": "message_update",
+            "message": {"role": "assistant", "content": [blank]},
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [blank, {"type": "text", "text": "391"}],
+                "usage": {"input": 1, "output": 1},
+            },
+        },
+    ]
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _stdout(events)
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    from home_ops_agent.agent.core import Thinking
+
+    notices = [
+        item
+        async for item in pi.stream(
+            "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
+        )
+        if isinstance(item, Thinking)
+    ]
+
+    assert [n.withheld for n in notices] == [True]
+    assert notices[0].text == ""
+
+
+def test_a_model_that_does_not_reason_says_nothing_at_all():
+    """No thinking block is not the same as an unreadable one, and only the
+    second is worth a notice."""
+    assert pi._has_thinking_block({"content": [{"type": "text", "text": "hi"}]}) is False
+    assert pi._has_thinking_block({"content": [{"type": "thinking", "thinking": ""}]}) is True

@@ -180,6 +180,21 @@ def _thinking_of(message: dict[str, Any]) -> str:
     )
 
 
+def _has_thinking_block(message: dict[str, Any]) -> bool:
+    """Whether the model reasoned at all, readable or not.
+
+    Measured against gpt-6-astra on a ChatGPT subscription: at `--thinking
+    high` the blocks arrive with `thinking: ""` and a `thinkingSignature`
+    carrying `encrypted_content`. The model reasoned; the provider will not
+    show it. That is a different thing from a model that did not reason, and
+    the difference is the whole reason anyone would look.
+    """
+    blocks = message.get("content")
+    if not isinstance(blocks, list):
+        return False
+    return any(isinstance(b, dict) and b.get("type") == "thinking" for b in blocks)
+
+
 def _text_of(message: dict[str, Any]) -> str:
     """Concatenate the text blocks of one assistant message."""
     return "".join(
@@ -394,6 +409,7 @@ async def _drive(
     tool_index = 0
     # How much of the current message's reasoning has already been sent.
     thinking_sent = ""
+    withheld_reported = False
 
     assert proc.stdout is not None
     async for event in _events(proc.stdout):
@@ -414,6 +430,11 @@ async def _drive(
                 if delta:
                     thinking_sent = full
                     yield Thinking(delta)
+                elif not full and not withheld_reported and _has_thinking_block(message):
+                    # Reasoned, and nothing readable came with it. Said once
+                    # per run: repeating it every turn would be its own noise.
+                    withheld_reported = True
+                    yield Thinking("", withheld=True)
                 if kind == "message_end":
                     thinking_sent = ""
 
