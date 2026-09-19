@@ -60,3 +60,35 @@ def test_prompt_tells_the_model_it_does_not_merge_or_notify():
     lowered = DEFAULT_PR_REVIEW.lower()
     assert "you do not merge" in lowered
     assert "you do not send notifications" in lowered
+
+
+def test_the_chat_cannot_send_notifications():
+    """A chat reply arrived as an ntfy push as well.
+
+    The cluster context tells every agent to report what it did over ntfy —
+    right for an unattended alert, and in a chat it duplicates the answer the
+    person is already reading. Withheld rather than reworded, because the
+    instruction lives in an editable prompt this deployment has customised, so
+    changing the default text would not have reached it.
+    """
+    from home_ops_agent.api.chat import WITHHELD_FROM_CHAT
+
+    assert "ntfy_publish" in WITHHELD_FROM_CHAT
+
+
+def test_the_chat_keeps_the_tools_it_needs():
+    """The withhold list is a scalpel: everything else the chat could do
+    before, it still can."""
+    from home_ops_agent.api.chat import WITHHELD_FROM_CHAT
+
+    for name in ("k8s_get_pods", "k8s_restart_workload", "flux_reconcile", "code_fix"):
+        assert name not in WITHHELD_FROM_CHAT
+
+
+def test_the_withholding_is_applied_not_just_declared():
+    """A frozenset nothing filters on is decoration."""
+    import inspect
+
+    from home_ops_agent.api import chat
+
+    assert "WITHHELD_FROM_CHAT" in inspect.getsource(chat.websocket_chat)

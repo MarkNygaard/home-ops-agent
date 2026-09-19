@@ -20,6 +20,17 @@ from home_ops_agent.database import Conversation, Message, async_session
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# The chat is the one place someone is already reading the answer. The cluster
+# context tells every agent to report what it did over ntfy -- right for an
+# unattended alert at 3am, and in a chat it means a push notification carrying
+# the reply that is already on screen.
+#
+# Withheld rather than asked for in the prompt, because a prompt is advice: the
+# instruction to notify lives in cluster_context, which is editable and this
+# deployment has customised, so a fix in the default text would miss it.
+WITHHELD_FROM_CHAT = frozenset({"ntfy_publish"})
+
+
 # How hard the chat model is asked to think. Off by default: reasoning costs
 # latency and tokens on every message, and it is only worth paying for when
 # someone is watching the run.
@@ -176,7 +187,9 @@ async def websocket_chat(websocket: WebSocket):
 
             agent = Agent(credentials)
             skill_tools = await registry.get_all_enabled_tools()
-            agent.register_tools(skill_tools)
+            agent.register_tools(
+                [tool for tool in skill_tools if tool.name not in WITHHELD_FROM_CHAT]
+            )
             agent.register_tools(_mcp_tools)
 
             try:
