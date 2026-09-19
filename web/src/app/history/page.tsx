@@ -17,6 +17,15 @@ import {
 import { useHistory } from "@/hooks/use-history"
 import { deleteConversation, fetchTaskDetail } from "@/lib/api"
 import { cn, formatDate } from "@/lib/utils"
+import {
+  TYPE_LABEL,
+  VERDICT_STYLE,
+  dayLabel,
+  plain,
+  splitTags,
+  timeLabel,
+  titleOf,
+} from "@/lib/activity"
 import { useWs } from "@/providers/websocket-provider"
 import type { AgentTask, HistoryItem } from "@/lib/types"
 
@@ -29,83 +38,6 @@ const FILTER_TABS = [
   { value: "code_fix", label: "Code Fixes" },
   { value: "chat", label: "Chats" },
 ] as const
-
-const TYPE_LABEL: Record<string, string> = {
-  pr_review: "review",
-  pr_merge: "merge",
-  alert_response: "alert",
-  alert_triage: "triage",
-  alert_fix: "alert fix",
-  code_fix: "code fix",
-  cluster_fix: "cluster fix",
-  chat: "chat",
-  user_chat: "chat",
-}
-
-// The verdict the run reached, as written into the summary prefix by the
-// worker. Shown as a chip because it is the one thing you scan this page for —
-// it was previously the literal text "[SAFE_TO_MERGE]" at the head of a
-// paragraph of markdown.
-const VERDICT_STYLE: Record<string, string> = {
-  SAFE_TO_MERGE: "bg-green-500/15 text-green-500",
-  NEEDS_REVIEW: "bg-amber-500/15 text-amber-500",
-  NEEDS_FIX: "bg-orange-500/15 text-orange-500",
-  "RAN OUT OF TURNS": "bg-red-500/15 text-red-500",
-  "Deep Review": "bg-accent-orange/15 text-accent-orange",
-}
-
-/** Leading `[…]` tags, and the text with them removed. */
-function splitTags(summary: string): { tags: string[]; rest: string } {
-  const tags: string[] = []
-  let rest = summary.trimStart()
-  for (;;) {
-    const match = rest.match(/^\[([^\]]{1,24})\]\s*/)
-    if (!match) break
-    tags.push(match[1])
-    rest = rest.slice(match[0].length)
-  }
-  return { tags, rest }
-}
-
-/** Model markdown as one readable line.
- *
- * The summary is 500 characters of whatever the model wrote — headings, bold
- * markers, table pipes — clamped to two lines. Rendering it raw produced rows
- * like "## Review Complete ✅ | Aspect | Result | |--------|--------|".
- */
-function plain(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/^\s*\|.*$/gm, " ")
-    .replace(/^\s*#{1,6}\s*/gm, "")
-    .replace(/^\s*[-*]\s+/gm, "• ")
-    .replace(/[*_`>]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-}
-
-/** The PR title, when the summary carries it. */
-function titleOf(item: HistoryItem): string {
-  const { rest } = splitTags(item.summary ?? "")
-  const merged = rest.match(/^Auto-merged(?: \([^)]*\))?:\s*(.+)$/)
-  if (merged) return plain(merged[1])
-  return item.trigger
-}
-
-function dayLabel(iso: string): string {
-  const d = new Date(iso)
-  const today = new Date()
-  const yesterday = new Date(today)
-  yesterday.setDate(today.getDate() - 1)
-  const same = (a: Date, b: Date) => a.toDateString() === b.toDateString()
-  if (same(d, today)) return "Today"
-  if (same(d, yesterday)) return "Yesterday"
-  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })
-}
-
-function timeLabel(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-}
 
 type Group = { key: string; subject: string | null; items: HistoryItem[] }
 
