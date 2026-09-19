@@ -238,7 +238,11 @@ async def websocket_chat(websocket: WebSocket):
                         # Its own message type, so the UI cannot render it as
                         # the answer and it is never saved as one.
                         await websocket.send_text(
-                            json.dumps({"type": "thinking_delta", "delta": item.text})
+                            json.dumps(
+                                {"type": "thinking_withheld"}
+                                if item.withheld
+                                else {"type": "thinking_delta", "delta": item.text}
+                            )
                         )
                     elif isinstance(item, AgentResult):
                         result = item
