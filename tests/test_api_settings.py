@@ -264,3 +264,9 @@ def test_alert_mode_can_be_set():
     """The setting the alert flow reads. Without it the UI radio group would be
     the same silently-dead form as the prompt buttons above."""
     assert "alert_mode" in ALLOWED_SETTING_KEYS
+
+
+def test_the_thinking_level_can_be_set():
+    """Without this the radio group on the chat settings page is another
+    silently-dead form."""
+    assert "thinking_level" in ALLOWED_SETTING_KEYS

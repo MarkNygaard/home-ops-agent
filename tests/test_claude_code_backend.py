@@ -359,3 +359,23 @@ def test_the_partial_answer_is_flagged_not_silently_returned():
     assert "stopped_early=stopped_early" in src
     # And a fault that is not the turn limit still propagates.
     assert "raise" in src.split("_is_turn_limit(exc)")[1][:120]
+
+
+def test_reasoning_and_text_deltas_are_told_apart():
+    """Both arrive as content_block_delta on the same stream. Reading the
+    thinking delta as text would put the model's reasoning in its answer."""
+    from home_ops_agent.agent import claude_code
+
+    thinking_event = {
+        "type": "content_block_delta",
+        "delta": {"type": "thinking_delta", "thinking": "considering the pods"},
+    }
+    text_event = {
+        "type": "content_block_delta",
+        "delta": {"type": "text_delta", "text": "All healthy."},
+    }
+
+    assert claude_code._stream_event_thinking(thinking_event) == "considering the pods"
+    assert claude_code._stream_event_text(thinking_event) == ""
+    assert claude_code._stream_event_thinking(text_event) == ""
+    assert claude_code._stream_event_text(text_event) == "All healthy."

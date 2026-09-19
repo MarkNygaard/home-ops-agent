@@ -9,6 +9,7 @@ export interface ProviderStatus {
 
 export interface Settings {
   agent_enabled: boolean
+  thinking_level?: string
   pr_mode: string
   alert_mode: string
   providers: {
@@ -101,6 +102,7 @@ export interface WsMessage {
     | "tool_end"
     | "stream_delta"
     | "stream_end"
+    | "thinking_delta"
   conversation_id?: number
   content?: string
   message?: string

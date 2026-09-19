@@ -56,6 +56,20 @@ class AgentResult:
     stopped_early: bool = False
 
 
+@dataclass
+class Thinking:
+    """A piece of the model's reasoning, on its way to the UI.
+
+    A distinct type rather than another string in the stream, because the one
+    thing that must never happen is reasoning being rendered, stored or
+    returned as the answer. It is a summary of how a model got somewhere, it
+    is not always faithful to what the model actually did, and it is not a
+    conclusion. Callers that do not know about it ignore it by construction.
+    """
+
+    text: str
+
+
 class Agent:
     """Provider-aware agent with tool use."""
 
@@ -222,8 +236,14 @@ class Agent:
         max_turns: int = 20,
         on_tool_start: Callable[..., Coroutine] | None = None,
         on_tool_end: Callable[..., Coroutine] | None = None,
-    ) -> AsyncGenerator[str | AgentResult, None]:
-        """Streaming variant; yields text chunks then a final AgentResult."""
+        thinking: str | None = None,
+    ) -> AsyncGenerator[str | AgentResult | Thinking, None]:
+        """Streaming variant; yields text chunks then a final AgentResult.
+
+        May also yield ``Thinking`` when the model is reasoning and the caller
+        asked for it. Callers that only know about text and results ignore
+        those by construction, which is the point of the separate type.
+        """
         provider = self._provider_for(model)
         if provider in providers.ANTHROPIC_PROTOCOL:
             gen = self._run_anthropic_streaming(
@@ -255,6 +275,7 @@ class Agent:
                 tools=list(self.tools.values()),
                 on_tool_start=on_tool_start,
                 on_tool_end=on_tool_end,
+                thinking=thinking,
             )
         else:
             gen = self._run_openai_streaming(

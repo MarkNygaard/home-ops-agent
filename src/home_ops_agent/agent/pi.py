@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 from home_ops_agent.auth.credentials import Credentials, ensure_openai_token
 
 if TYPE_CHECKING:
-    from home_ops_agent.agent.core import AgentResult, ToolDefinition
+    from home_ops_agent.agent.core import AgentResult, Thinking, ToolDefinition
     from home_ops_agent.agent.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,25 @@ def build_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def _thinking_of(message: dict[str, Any]) -> str:
+    """The reasoning pi has normalised onto an assistant message.
+
+    Every provider words this differently -- OpenAI reasoning summaries,
+    Anthropic thinking blocks -- and pi converts them all to
+    ``{"type": "thinking", "thinking": "..."}`` in the content array, beside
+    the text blocks. `_text_of` filters those out, which is correct for the
+    answer and is why none of it was reaching anyone.
+    """
+    blocks = message.get("content")
+    if not isinstance(blocks, list):
+        return ""
+    return "".join(
+        str(block.get("thinking") or "")
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "thinking"
+    )
+
+
 def _text_of(message: dict[str, Any]) -> str:
     """Concatenate the text blocks of one assistant message."""
     return "".join(
@@ -189,6 +208,7 @@ def build_argv(
     system_prompt: str,
     prompt: str,
     append_prompt: str = "",
+    thinking: str | None = None,
 ) -> list[str]:
     """The command line pi is invoked with.
 
@@ -226,6 +246,11 @@ def build_argv(
     ]
     if append_prompt:
         argv += ["--append-system-prompt", append_prompt]
+    # Reasoning is off unless asked for, and costs latency and tokens when it
+    # is on, so the level is the operator's choice rather than a default we
+    # pick for them.
+    if thinking and thinking != "off":
+        argv += ["--thinking", thinking]
     return [*argv, "-p", prompt]
 
 
@@ -238,7 +263,8 @@ async def stream(
     tools: list[ToolDefinition] | None = None,
     on_tool_start: Callable[..., Coroutine] | None = None,
     on_tool_end: Callable[..., Coroutine] | None = None,
-) -> AsyncGenerator[str | AgentResult, None]:
+    thinking: str | None = None,
+) -> AsyncGenerator[str | AgentResult | Thinking, None]:
     """Run a prompt through pi, yielding assistant text then an ``AgentResult``.
 
     Mirrors :func:`home_ops_agent.agent.claude_code.stream` so ``core`` can treat
@@ -259,6 +285,7 @@ async def stream(
         system_prompt,
         flatten_messages(messages),
         append_prompt=WORKSPACE_NOTE if workspace is not None else "",
+        thinking=thinking,
     )
 
     PI_HOME.mkdir(parents=True, exist_ok=True)
@@ -339,14 +366,14 @@ async def _drive(
     model: str,
     on_tool_start: Callable[..., Coroutine] | None = None,
     on_tool_end: Callable[..., Coroutine] | None = None,
-) -> AsyncGenerator[str | AgentResult, None]:
+) -> AsyncGenerator[str | AgentResult | Thinking, None]:
     """Run pi and turn its event stream into assistant text plus an ``AgentResult``.
 
     Split out of :func:`stream` so the workspace bridge's lifetime is a plain
     ``async with`` around one call, rather than a try/finally wrapped around
     ninety lines of stream parsing.
     """
-    from home_ops_agent.agent.core import AgentResult
+    from home_ops_agent.agent.core import AgentResult, Thinking
 
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -365,10 +392,30 @@ async def _drive(
     # keyed by pi's call id: {id: (name, index)}.
     running: dict[str, tuple[str, int]] = {}
     tool_index = 0
+    # How much of the current message's reasoning has already been sent.
+    thinking_sent = ""
 
     assert proc.stdout is not None
     async for event in _events(proc.stdout):
         kind = event.get("type")
+
+        if kind in ("message_update", "message_end"):
+            # Cumulative: pi rebuilds the partial message each update, so the
+            # new part is whatever extends what was already sent. Comparing
+            # rather than assuming also covers a provider that streams
+            # reasoning only once, at the end.
+            message = event.get("message") or {}
+            if message.get("role") == "assistant":
+                full = _thinking_of(message)
+                if full.startswith(thinking_sent):
+                    delta = full[len(thinking_sent) :]
+                else:
+                    delta = full  # a new message; start again
+                if delta:
+                    thinking_sent = full
+                    yield Thinking(delta)
+                if kind == "message_end":
+                    thinking_sent = ""
 
         if kind == "tool_execution_start":
             # `tool`, not `name`. Every other backend emits {"tool", "input"} --

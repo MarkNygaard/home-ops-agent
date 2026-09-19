@@ -52,6 +52,7 @@ export function ChatView() {
   const [isThinking, setIsThinking] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [thinkingText, setThinkingText] = useState('');
   const [activeTools, setActiveTools] = useState<ActiveTool[]>([]);
   const deferredStreamingText = useDeferredValue(streamingText);
 
@@ -99,6 +100,15 @@ export function ChatView() {
           setIsThinking(true);
           setStreamingText('');
           setActiveTools([]);
+          setThinkingText('');
+          break;
+
+        case 'thinking_delta':
+          // Kept out of streamingText on purpose. Reasoning is a summary of how
+          // the model got somewhere, not what it concluded, and it is not
+          // always faithful to what it actually did — so it is shown as its own
+          // thing and never becomes the answer.
+          setThinkingText((prev) => prev + (msg.delta ?? ''));
           break;
 
         case 'tool_start':
@@ -127,6 +137,7 @@ export function ChatView() {
           setIsThinking(false);
           setStreamingText('');
           setActiveTools([]);
+          setThinkingText('');
           setMessages((prev) => [
             ...prev,
             {
@@ -142,6 +153,7 @@ export function ChatView() {
           setIsStreaming(false);
           setStreamingText('');
           setActiveTools([]);
+          setThinkingText('');
           setMessages((prev) => [
             ...prev,
             {
@@ -157,6 +169,7 @@ export function ChatView() {
           setIsStreaming(false);
           setStreamingText('');
           setActiveTools([]);
+          setThinkingText('');
           setMessages((prev) => [
             ...prev,
             { role: 'assistant', content: msg.message || 'Error occurred' },
@@ -182,6 +195,7 @@ export function ChatView() {
     setIsStreaming(false);
     setStreamingText('');
     setActiveTools([]);
+    setThinkingText('');
   }, [setConversationId]);
 
   const isBusy = isThinking || isStreaming;
@@ -224,6 +238,24 @@ export function ChatView() {
               {messages.map((msg, i) => (
                 <ChatMessage key={i} message={msg} />
               ))}
+
+              {/* The model's reasoning, if it is producing any. Collapsed:
+                  it answers "what is it doing" when a run is slow, and is
+                  noise the rest of the time. */}
+              {thinkingText && (
+                <Message from="assistant">
+                  <MessageContent>
+                    <ChainOfThought defaultOpen={false}>
+                      <ChainOfThoughtHeader>Reasoning</ChainOfThoughtHeader>
+                      <ChainOfThoughtContent>
+                        <p className="text-xs whitespace-pre-wrap text-muted-foreground">
+                          {thinkingText}
+                        </p>
+                      </ChainOfThoughtContent>
+                    </ChainOfThought>
+                  </MessageContent>
+                </Message>
+              )}
 
               {/* Active tool calls */}
               {activeTools.length > 0 && (

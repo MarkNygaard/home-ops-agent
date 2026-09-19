@@ -5,8 +5,18 @@ import { Plus, X, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SiteHeader } from "@/components/site-header"
+import { Separator } from "@/components/ui/separator"
 import { useSettings } from "@/hooks/use-settings"
 import { updateSetting } from "@/lib/api"
+
+// pi's levels, plus off. Reasoning costs latency and tokens on every message,
+// so it is off unless someone chooses otherwise.
+const THINKING_LEVELS = [
+  { value: "off", label: "Off", hint: "No reasoning. Fastest, and what the chat did before." },
+  { value: "low", label: "Low", hint: "A little, for awkward questions." },
+  { value: "medium", label: "Medium", hint: "A reasonable default when you want to watch." },
+  { value: "high", label: "High", hint: "Slower and more expensive; for hard problems." },
+]
 
 const DEFAULT_SUGGESTIONS = [
   "What pods are failing?",
@@ -20,6 +30,8 @@ export default function SettingsChatPage() {
   const [dirty, setDirty] = useState(false)
   const [statusMsg, setStatusMsg] = useState("")
   const [newSuggestion, setNewSuggestion] = useState("")
+  const [thinkingOverride, setThinkingOverride] = useState<string | null>(null)
+  const thinking = thinkingOverride ?? settings?.thinking_level ?? "off"
 
   // Parse suggestions from settings (pipe-separated to allow commas in text)
   const savedSuggestions = settings?.chat_suggestions
@@ -51,8 +63,10 @@ export default function SettingsChatPage() {
 
   async function handleSave() {
     await updateSetting("chat_suggestions", current.join("|"))
+    await updateSetting("thinking_level", thinking)
     setDirty(false)
     setSuggestions(null)
+    setThinkingOverride(null)
     setStatusMsg("Saved")
     setTimeout(() => setStatusMsg(""), 3000)
     mutateSettings()
@@ -122,6 +136,37 @@ export default function SettingsChatPage() {
               >
                 <Plus className="size-4" />
               </Button>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <div>
+              <h3 className="text-sm font-medium">Reasoning</h3>
+              <p className="text-xs text-muted-foreground">
+                How hard the chat model thinks before answering. Its reasoning is
+                shown in the chat, collapsed, separately from the answer — it is a
+                summary of how the model got somewhere, not what it concluded.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              {THINKING_LEVELS.map((level) => (
+                <label key={level.value} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="thinking_level"
+                    value={level.value}
+                    checked={thinking === level.value}
+                    onChange={(e) => {
+                      setThinkingOverride(e.target.value)
+                      setDirty(true)
+                    }}
+                  />
+                  {level.label}
+                  <span className="text-muted-foreground">— {level.hint}</span>
+                </label>
+              ))}
             </div>
           </div>
 

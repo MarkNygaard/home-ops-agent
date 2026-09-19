@@ -726,3 +726,103 @@ def test_every_backend_gets_the_progress_callbacks():
     source = inspect.getsource(core.Agent.run_streaming)
     # One `on_tool_start` per backend branch, plus the parameter itself.
     assert source.count("on_tool_start") >= 5
+
+
+def test_reasoning_is_not_part_of_the_answer():
+    """The rule the whole feature rests on.
+
+    A thinking block sits in the same content array as the text blocks. If
+    `_text_of` ever picked it up, the model's reasoning would be returned as
+    its answer, saved to the conversation, and read back into later turns as
+    something it had said.
+    """
+    message = {
+        "content": [
+            {"type": "thinking", "thinking": "Maybe the pods are fine? Let me check."},
+            {"type": "text", "text": "All pods are healthy."},
+        ]
+    }
+
+    assert pi._text_of(message) == "All pods are healthy."
+    assert pi._thinking_of(message) == "Maybe the pods are fine? Let me check."
+
+
+@pytest.mark.asyncio
+async def test_reasoning_streams_as_it_grows(monkeypatch):
+    """pi rebuilds the partial message on each update, so only the new part is
+    sent — otherwise the chat would show the reasoning over and over, each time
+    slightly longer."""
+    events = [
+        {
+            "type": "message_update",
+            "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "One"}]},
+        },
+        {
+            "type": "message_update",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "One, then two"}],
+            },
+        },
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "One, then two"},
+                    {"type": "text", "text": "the answer"},
+                ],
+                "usage": {"input": 1, "output": 1},
+            },
+        },
+    ]
+
+    class _FakeStderr:
+        async def read(self):
+            return b""
+
+    class _FakeProc:
+        returncode = 0
+        stdout = _stdout(events)
+        stderr = _FakeStderr()
+
+        async def wait(self):
+            return 0
+
+    async def _fake_exec(*_args, **_kwargs):
+        return _FakeProc()
+
+    monkeypatch.setattr(pi.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pi, "write_auth", lambda _creds: True)
+    monkeypatch.setattr(pi, "ensure_openai_token", _noop_ensure)
+
+    from home_ops_agent.agent.core import AgentResult, Thinking
+
+    reasoning: list[str] = []
+    text: list[str] = []
+    result = None
+    async for item in pi.stream(
+        "sys", [{"role": "user", "content": "hi"}], "gpt-6-astra", Credentials()
+    ):
+        if isinstance(item, Thinking):
+            reasoning.append(item.text)
+        elif isinstance(item, AgentResult):
+            result = item
+        else:
+            text.append(item)
+
+    assert reasoning == ["One", ", then two"]
+    # And none of it reached the answer.
+    assert text == ["the answer"]
+    assert isinstance(result, AgentResult)
+    assert result.response == "the answer"
+
+
+def test_the_thinking_level_is_only_passed_when_asked_for():
+    """Off must mean no flag at all, not `--thinking off` — and a level costs
+    latency and tokens on every message, so it is never a default."""
+    assert "--thinking" not in pi.build_argv("gpt-6-astra", "sys", "hi")
+    assert "--thinking" not in pi.build_argv("gpt-6-astra", "sys", "hi", thinking="off")
+
+    argv = pi.build_argv("gpt-6-astra", "sys", "hi", thinking="medium")
+    assert argv[argv.index("--thinking") + 1] == "medium"
