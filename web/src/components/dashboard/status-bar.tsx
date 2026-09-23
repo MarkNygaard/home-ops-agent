@@ -10,7 +10,7 @@ import { useAnalytics } from "@/hooks/use-analytics"
 import { useSettings } from "@/hooks/use-settings"
 import { fetchStatus, triggerPrCheck } from "@/lib/api"
 import type { PrCheckResult } from "@/lib/types"
-import { cn } from "@/lib/utils"
+import { cn, formatAgo, msSince } from "@/lib/utils"
 
 function useCountdown(intervalSeconds: number, lastCheckAt: string | null) {
   const [now, setNow] = useState(Date.now)
@@ -81,6 +81,11 @@ function UsageBadge() {
   )
 }
 
+// How long a restart stays newsworthy. Long enough that a blip is still on the
+// bar when you next glance at it, short enough that it does not become part of
+// the furniture. Past this the notice greys out rather than disappearing.
+const RECENT_RESTART_MS = 60 * 60 * 1000
+
 export function StatusBar() {
   const { status } = useWs()
   const { data: settings } = useSettings()
@@ -101,10 +106,54 @@ export function StatusBar() {
   const lastCheckAt = statusData?.last_pr_check_at ?? null
   // A dead background worker leaves the HTTP server answering, so nothing else
   // on this page would look any different. It is worth a line of its own.
+  //
+  // Severity is by recency, not by the lifetime restart count. `restarts` never
+  // decays, so a worker that blipped three times in 35 seconds during a
+  // database rollout kept a red dot on this bar for the next three days. A
+  // permanent alarm for a resolved incident is one you learn to ignore, which
+  // costs exactly the thing this line exists to buy.
   const workers = statusData?.workers ?? []
-  const troubled = workers.filter((w) => !w.alive || w.restarts > 0)
-  const troubledDetail = troubled
-    .map((w) => w.name + ": " + (w.last_error ?? "restarted"))
+  const down = workers.filter((w) => !w.alive)
+  const restarted = workers.filter((w) => w.alive && w.restarts > 0)
+  const recent = restarted.filter((w) => msSince(w.last_death_at) < RECENT_RESTART_MS)
+  const settled = restarted.filter((w) => msSince(w.last_death_at) >= RECENT_RESTART_MS)
+
+  // Down outranks restarted: a worker that is not coming back is the headline
+  // even if another one merely stumbled a minute ago.
+  const notice =
+    down.length > 0
+      ? {
+          dot: "bg-red-500",
+          text: down.length === 1 ? `Worker down: ${down[0].name}` : `${down.length} workers down`,
+          workers: [...down, ...restarted],
+        }
+      : recent.length > 0
+        ? {
+            dot: "bg-amber-500",
+            text:
+              recent.length === 1
+                ? `Worker restarted: ${recent[0].name}`
+                : `${recent.length} workers restarted`,
+            workers: restarted,
+          }
+        : settled.length > 0
+          ? {
+              // Still shown, because this bar is the only place workers surface
+              // at all — but grey and dated, as history rather than an alarm.
+              dot: "bg-muted-foreground",
+              text:
+                settled.length === 1
+                  ? `Worker restarted: ${settled[0].name} · ${formatAgo(settled[0].last_death_at)}`
+                  : `${settled.length} workers restarted earlier`,
+              workers: settled,
+            }
+          : null
+
+  const noticeDetail = notice?.workers
+    .map(
+      (w) =>
+        `${w.name}: ${w.last_error ?? "restarted"} (${w.restarts}× restarted, last ${formatAgo(w.last_death_at)})`
+    )
     .join(" | ")
   const countdown = useCountdown(prInterval, lastCheckAt)
 
@@ -143,16 +192,12 @@ export function StatusBar() {
           </span>
         </div>
 
-        {troubled.length > 0 && (
+        {notice && (
           <>
             <span className="text-border">|</span>
-            <div className="flex items-center gap-2" title={troubledDetail}>
-              <span className="size-2 rounded-full bg-red-500" />
-              <span className="text-sm text-muted-foreground">
-                {troubled.length === 1
-                  ? `Worker restarted: ${troubled[0].name}`
-                  : `${troubled.length} workers restarted`}
-              </span>
+            <div className="flex items-center gap-2" title={noticeDetail}>
+              <span className={cn("size-2 rounded-full", notice.dot)} />
+              <span className="text-sm text-muted-foreground">{notice.text}</span>
             </div>
           </>
         )}
