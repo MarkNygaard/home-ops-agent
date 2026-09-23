@@ -8,6 +8,7 @@ notifies on transitions rather than every cycle, and that it explains *why* pods
 are Pending rather than just counting them.
 """
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -376,3 +377,37 @@ def test_message_puts_cause_before_effect():
 def test_message_reports_a_collection_failure_plainly():
     state = HealthState(healthy=False, findings=[], error="connection refused")
     assert "connection refused" in format_message(state)
+
+
+# --- the loop survives the database ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_survives_a_database_timeout_reading_its_own_interval():
+    """A CNPG rollout on 2026-09-20 killed this worker three times in 35
+    seconds. The cycle was wrapped in try/except; the settings read below it was
+    not, so the one unprotected statement in the loop was a database read — the
+    thing most likely to fail, during exactly the event the worker exists to
+    report. The supervisor restarted it, which is why it was survivable rather
+    than a three-day outage, but the worker must not need rescuing for this.
+    """
+    sleeps: list[int] = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        # Two cycles, then unwind the infinite loop.
+        if len(sleeps) >= 2:
+            raise asyncio.CancelledError
+
+    with (
+        patch.object(health_check, "check_health", AsyncMock(return_value={"healthy": True})),
+        patch.object(health_check, "_setting_int", AsyncMock(side_effect=TimeoutError)),
+        patch.object(health_check.asyncio, "sleep", fake_sleep),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await health_check.run_health_monitor()
+
+    # It kept cycling instead of dying, and fell back to the configured
+    # interval rather than sleeping forever or busy-looping.
+    assert len(sleeps) == 2
+    assert all(s == health_check.settings.health_check_interval_seconds for s in sleeps)

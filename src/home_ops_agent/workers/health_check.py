@@ -594,14 +594,22 @@ async def run_health_monitor():
     )
 
     while True:
+        interval = settings.health_check_interval_seconds
         try:
             _record_cycle_result(await check_health())
+            # Inside the try, deliberately. This is a database read, and a
+            # database read is the thing most likely to fail here: Postgres
+            # restarting is both a cause of timeouts and exactly the sort of
+            # event this worker exists to report on. It used to sit below the
+            # except, which made the one unprotected statement in the loop the
+            # one most likely to raise — a CNPG rollout on 2026-09-20 killed
+            # the worker three times in 35 seconds through this line.
+            interval = await _setting_int("health_check_interval_seconds", interval)
         except Exception:
+            # asyncio.CancelledError derives from BaseException, so shutdown
+            # still propagates and is not swallowed here.
             logger.exception("Health check cycle failed")
 
-        interval = await _setting_int(
-            "health_check_interval_seconds", settings.health_check_interval_seconds
-        )
         await asyncio.sleep(interval)
 
 
