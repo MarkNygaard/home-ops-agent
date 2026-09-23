@@ -1,0 +1,126 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:recommended",
+    "docker:enableMajor",
+    "helpers:pinGitHubActionDigests",
+    ":automergeBranch",
+    ":dependencyDashboard",
+    ":disableRateLimiting",
+    ":semanticCommits",
+    ":timezone(Europe/Copenhagen)",
+  ],
+  dependencyDashboard: true,
+  dependencyDashboardTitle: "Renovate Dashboard :robot:",
+  schedule: ["every weekend"],
+
+  // The point of this file. `pyproject.toml` pins nothing useful --
+  // `claude-agent-sdk>=0.1.0` is satisfied by every version ever published --
+  // so the version that actually ships is the one resolved into `uv.lock`, and
+  // the image is built from that lock. Without lockfile updates Renovate would
+  // find nothing to do here and the SDK would keep drifting exactly as it has:
+  // 0.2.148 installed against 0.2.158 released, which is Claude Code 2.1.251
+  // against 2.1.280, because the CLI is bundled inside the SDK.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["every weekend"],
+  },
+
+  packageRules: [
+    {
+      // Updating this is how Claude Code itself gets updated: the SDK bundles
+      // the CLI binary, and `_find_cli()` prefers that bundle over anything on
+      // PATH. Nothing installed into the running container can override it, and
+      // nothing would survive a restart anyway -- the root filesystem is
+      // read-only and there is no PVC. So this dependency is the update button.
+      description: "Claude Code, via the SDK that bundles its CLI",
+      matchPackageNames: ["claude-agent-sdk"],
+      semanticCommitType: "feat",
+      semanticCommitScope: "agent",
+      commitMessageTopic: "Claude Code SDK",
+      commitMessageExtra: "( {{currentVersion}} ➔ {{newVersion}} )",
+      minimumReleaseAge: "2 days",
+      labels: ["claude-code"],
+    },
+    {
+      // pi is the other agent CLI and drifts the same way, but it is pinned in
+      // the Dockerfile as an npm global install, which no manager reads. The
+      // customManager below finds it; this rule gives it the same treatment.
+      description: "pi coding agent",
+      matchPackageNames: ["@earendil-works/pi-coding-agent"],
+      semanticCommitType: "feat",
+      semanticCommitScope: "agent",
+      minimumReleaseAge: "2 days",
+    },
+    {
+      description: "Auto-merge GitHub Actions",
+      matchManagers: ["github-actions"],
+      automerge: true,
+      automergeType: "branch",
+      matchUpdateTypes: ["minor", "patch", "digest"],
+      minimumReleaseAge: "3 days",
+      ignoreTests: true,
+    },
+    {
+      // Front-end dependencies move constantly and the build is the thing that
+      // would notice. Patches merge themselves once CI is green; anything
+      // larger waits for a person.
+      description: "Auto-merge web patch updates once CI passes",
+      matchManagers: ["npm"],
+      matchUpdateTypes: ["patch", "pin", "digest"],
+      automerge: true,
+      automergeType: "branch",
+      minimumReleaseAge: "3 days",
+    },
+    {
+      matchUpdateTypes: ["major"],
+      semanticCommitType: "feat",
+      commitMessagePrefix: "{{semanticCommitType}}({{semanticCommitScope}})!:",
+      commitMessageExtra: "( {{currentVersion}} ➔ {{newVersion}} )",
+    },
+    {
+      matchUpdateTypes: ["minor"],
+      semanticCommitType: "feat",
+      commitMessageExtra: "( {{currentVersion}} ➔ {{newVersion}} )",
+    },
+    {
+      matchUpdateTypes: ["patch"],
+      semanticCommitType: "fix",
+      commitMessageExtra: "( {{currentVersion}} ➔ {{newVersion}} )",
+    },
+    {
+      matchUpdateTypes: ["digest"],
+      semanticCommitType: "chore",
+      commitMessageExtra: "( {{currentDigestShort}} ➔ {{newDigestShort}} )",
+    },
+    {
+      matchDatasources: ["docker"],
+      semanticCommitScope: "container",
+      commitMessageTopic: "image {{depName}}",
+    },
+    {
+      matchManagers: ["pep621"],
+      semanticCommitScope: "deps",
+    },
+    {
+      matchManagers: ["npm"],
+      semanticCommitScope: "web",
+    },
+  ],
+
+  customManagers: [
+    {
+      // `RUN npm install -g @earendil-works/pi-coding-agent@0.85.1` in the
+      // Dockerfile. No built-in manager reads npm packages installed inside a
+      // RUN line, so without this the GPT backend's CLI is pinned forever with
+      // nothing watching it.
+      customType: "regex",
+      description: "pi CLI pinned in the Dockerfile",
+      managerFilePatterns: ["/(^|/)Dockerfile$/"],
+      matchStrings: [
+        "npm install -g (?<depName>@earendil-works/pi-coding-agent)@(?<currentValue>[^\\s\"']+)",
+      ],
+      datasourceTemplate: "npm",
+    },
+  ],
+}
