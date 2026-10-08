@@ -306,6 +306,65 @@ async def merge_pr(params: dict) -> str:
             return json.dumps({"status": "failed", "message": msg})
 
 
+async def find_files(params: dict) -> str:
+    """Find files by path substring, so a path can be discovered instead of known.
+
+    Every other tool here needs an exact path, and nothing could produce one.
+    That left the agent unable to act on an ordinary request — "bump the niles
+    image" — without being told the file, and a guessed path returns a 404 that
+    reads like a missing file rather than a wrong guess. A memory per app would
+    paper over it one app at a time and go stale as the repo moves.
+
+    One request to the git trees API, filtered locally. Read-only.
+    """
+    repo = (params.get("repo") or "").strip() or settings.github_repo
+    if not repo:
+        return json.dumps({"error": "No repository configured and none given."})
+
+    query = (params.get("query") or "").strip().lower()
+    if not query:
+        return json.dumps({"error": "query is required, e.g. 'niles' or 'helmrelease.yaml'."})
+    ref = params.get("ref", "main")
+    limit = min(int(params.get("limit", 40)), 200)
+
+    async with httpx.AsyncClient() as client:
+        url = f"{GITHUB_API}/repos/{repo}/git/trees/{ref}"
+        resp = await client.get(
+            url, headers=_headers(), params={"recursive": "1"}, timeout=30.0
+        )
+        if resp.status_code == 404:
+            return json.dumps({"error": f"ref '{ref}' not found in {repo}"})
+        resp.raise_for_status()
+        data = resp.json()
+
+    # Directories are noise when the caller wants something to read or edit.
+    paths = [e["path"] for e in data.get("tree", []) if e.get("type") == "blob"]
+    matches = [p for p in paths if query in p.lower()]
+
+    # Rank shallower paths first: kubernetes/apps/home-automation/niles/app/
+    # helmrelease.yaml should outrank a doc that merely mentions the word.
+    matches.sort(key=lambda p: (p.count("/"), len(p)))
+
+    return json.dumps(
+        {
+            "repo": repo,
+            "ref": ref,
+            "query": query,
+            "total_files_in_repo": len(paths),
+            "match_count": len(matches),
+            # Truncation has to be visible, or a cut-off list reads as "that is
+            # all there is" and the agent picks from an arbitrary subset.
+            "truncated": len(matches) > limit,
+            "matches": matches[:limit],
+            # The tree API returns the whole repo in one response up to a size
+            # limit; past it GitHub omits entries rather than failing, so a
+            # caller that sees this should narrow `query` rather than trust the
+            # result to be complete.
+            "tree_truncated_by_github": bool(data.get("truncated")),
+        }
+    )
+
+
 async def get_file_content(params: dict) -> str:
     """Get a file's content from this repo, or from any repo on GitHub.
 
@@ -695,6 +754,46 @@ def get_github_tools() -> list[ToolDefinition]:
             handler=merge_pr,
         ),
         ToolDefinition(
+            name="github_find_files",
+            description=(
+                "Find files by a substring of their path. Use this FIRST whenever you "
+                "need a file and do not already know its exact path -- every other tool "
+                "here requires one, and a guessed path returns a 404 that looks like a "
+                "missing file rather than a wrong guess. Searching 'niles' finds that "
+                "app's manifests; 'helmrelease.yaml' finds every HelmRelease. Shallower "
+                "paths are returned first."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Substring to match anywhere in the path, case-insensitive, "
+                            "e.g. 'niles' or 'monitoring/loki'."
+                        ),
+                    },
+                    "ref": {
+                        "type": "string",
+                        "description": "Branch, tag or commit SHA (default: main)",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": (
+                            "owner/name of another repository. Omit for this "
+                            "cluster's own repository."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max matches to return (default 40, max 200)",
+                    },
+                },
+                "required": ["query"],
+            },
+            handler=find_files,
+        ),
+        ToolDefinition(
             name="github_get_file_content",
             description=(
                 "Read a file from this repository, or from any repository on GitHub. "
@@ -827,7 +926,7 @@ def _make_skill() -> SkillDefinition:
         id="github",
         name="GitHub",
         description=(
-            "GitHub API tools: list/review PRs, read files,"
+            "GitHub API tools: find and read files, list/review PRs,"
             " create branches, commit changes, and merge PRs."
         ),
         builtin=True,
