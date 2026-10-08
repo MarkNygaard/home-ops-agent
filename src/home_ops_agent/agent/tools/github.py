@@ -735,8 +735,15 @@ def get_github_tools() -> list[ToolDefinition]:
         ToolDefinition(
             name="github_merge_pr",
             description=(
-                "Merge a pull request using squash merge."
-                " Only use when auto-merge mode is enabled and all criteria are met."
+                "Merge a pull request using squash merge. CI must be green first -- "
+                "check the PR's check runs rather than assuming.\n\n"
+                "Merge when a person asks you to in conversation: a direct instruction "
+                "from the operator IS the authorisation, and you cannot see the PR mode "
+                "from a chat session, so treat its state as unknown rather than as a "
+                "reason to refuse. In an unattended PR-review run the verdict decides "
+                "instead, and nothing merges without SAFE_TO_MERGE: yes.\n\n"
+                "Merging is not deploying. Flux reconciles on its own schedule, so "
+                "confirm the change actually rolled out before reporting success."
             ),
             input_schema={
                 "type": "object",
