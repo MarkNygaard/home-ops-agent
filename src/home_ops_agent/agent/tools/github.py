@@ -329,9 +329,7 @@ async def find_files(params: dict) -> str:
 
     async with httpx.AsyncClient() as client:
         url = f"{GITHUB_API}/repos/{repo}/git/trees/{ref}"
-        resp = await client.get(
-            url, headers=_headers(), params={"recursive": "1"}, timeout=30.0
-        )
+        resp = await client.get(url, headers=_headers(), params={"recursive": "1"}, timeout=30.0)
         if resp.status_code == 404:
             return json.dumps({"error": f"ref '{ref}' not found in {repo}"})
         resp.raise_for_status()
