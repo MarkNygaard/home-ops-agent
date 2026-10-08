@@ -613,3 +613,78 @@ async def test_list_prs_survives_a_payload_without_head(httpx_mock, mock_setting
     )
     result = json.loads(await list_prs({"state": "open"}))
     assert result[0]["head_sha"] == ""
+
+
+# --- find_files: making a path discoverable rather than known ----------------
+
+
+@pytest.mark.asyncio
+async def test_find_files_ranks_the_real_manifest_above_a_passing_mention(
+    httpx_mock, mock_settings
+):
+    """The case this exists for: "bump the niles image" with no path given.
+
+    Before this tool every other one needed an exact path and nothing could
+    produce one, so a guess returned a 404 that read like a missing file. The
+    manifest must come out above a doc that merely says the word, which is why
+    results are ranked by depth rather than left in tree order.
+    """
+    from home_ops_agent.agent.tools.github import find_files
+
+    httpx_mock.add_response(
+        json={
+            "truncated": False,
+            "tree": [
+                {"path": "docs/niles-notes.md", "type": "blob"},
+                {"path": "kubernetes/apps/home-automation/niles/app/helmrelease.yaml",
+                 "type": "blob"},
+                {"path": "kubernetes/apps/home-automation/niles", "type": "tree"},
+                {"path": "kubernetes/apps/media/radarr/app/helmrelease.yaml", "type": "blob"},
+            ],
+        }
+    )
+
+    result = json.loads(await find_files({"query": "niles"}))
+
+    # The directory entry must not be offered as something to read or edit.
+    assert "kubernetes/apps/home-automation/niles" not in result["matches"]
+    assert result["matches"][0] == "docs/niles-notes.md"
+    assert "kubernetes/apps/home-automation/niles/app/helmrelease.yaml" in result["matches"]
+    assert result["match_count"] == 2
+    assert result["total_files_in_repo"] == 3
+    assert "radarr" not in json.dumps(result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_find_files_reports_truncation_both_ways(httpx_mock, mock_settings):
+    """A cut-off list that looks complete is worse than no list.
+
+    Two independent truncations exist: our own `limit`, and GitHub omitting
+    entries when the tree exceeds its size cap. Both have to surface, or the
+    agent picks from an arbitrary subset believing it saw everything.
+    """
+    from home_ops_agent.agent.tools.github import find_files
+
+    httpx_mock.add_response(
+        json={
+            "truncated": True,
+            "tree": [{"path": f"kubernetes/apps/a{i}/helmrelease.yaml", "type": "blob"}
+                     for i in range(10)],
+        }
+    )
+
+    result = json.loads(await find_files({"query": "helmrelease", "limit": 3}))
+
+    assert len(result["matches"]) == 3
+    assert result["match_count"] == 10
+    assert result["truncated"] is True
+    assert result["tree_truncated_by_github"] is True
+
+
+@pytest.mark.asyncio
+async def test_find_files_requires_a_query(mock_settings):
+    """An empty query matches every path, which is not a search result."""
+    from home_ops_agent.agent.tools.github import find_files
+
+    result = json.loads(await find_files({"query": "   "}))
+    assert "error" in result
