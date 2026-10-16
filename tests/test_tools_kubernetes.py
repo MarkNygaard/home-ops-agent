@@ -353,3 +353,124 @@ async def test_describe_pod_success(mock_core):
         await describe_resource({"kind": "pod", "name": "test-pod", "namespace": "default"})
     )
     assert result["metadata"]["name"] == "test-pod"
+
+
+# --- k8s_exec guardrails ----------------------------------------------------
+#
+# These are the point of the tool, not decoration around it. Exec is arbitrary
+# code execution inside another container, run unattended, so each limit gets a
+# test that fails loudly if someone loosens it.
+
+
+async def test_exec_rejects_a_shell():
+    """The whole no-shell property rests on this.
+
+    With `sh -c` allowed, every other guardrail is decorative: pipes, chaining
+    and redirection all come back, and an allowlist of binaries means nothing
+    because the shell can call anything.
+    """
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    result = json.loads(
+        await exec_in_pod(
+            {"name": "p", "namespace": "automation", "command": ["sh", "-c", "ps | grep Z"]}
+        )
+    )
+    assert "BLOCKED" in result["error"]
+    assert "sh" in result["error"]
+
+
+async def test_exec_rejects_a_destructive_binary():
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    result = json.loads(
+        await exec_in_pod({"name": "p", "namespace": "automation", "command": ["rm", "-rf", "/"]})
+    )
+    assert "BLOCKED" in result["error"]
+
+
+async def test_exec_judges_a_full_path_by_its_basename():
+    """Otherwise the allowlist is bypassed by spelling it /bin/sh."""
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    blocked = json.loads(
+        await exec_in_pod({"name": "p", "namespace": "automation", "command": ["/bin/sh"]})
+    )
+    assert "BLOCKED" in blocked["error"]
+
+    # ...and the same normalisation must not reject a legitimate absolute path.
+    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
+        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="  PID TTY\n"
+    ):
+        allowed = await exec_in_pod(
+            {"name": "p", "namespace": "automation", "command": ["/bin/ps", "-ef"]}
+        )
+    assert "BLOCKED" not in allowed
+
+
+async def test_exec_refuses_to_read_a_process_environment():
+    """cat is allowed and useful; cat /proc/1/environ is a secret reader.
+
+    The agent has no Secret-reading tool on purpose. Exec must not become one
+    by the back door, and the output would land in the transcript and the audit
+    log as well.
+    """
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    result = json.loads(
+        await exec_in_pod(
+            {"name": "p", "namespace": "automation", "command": ["cat", "/proc/1/environ"]}
+        )
+    )
+    assert "BLOCKED" in result["error"]
+    assert "secret" in result["error"].lower()
+
+
+async def test_exec_rejects_a_shell_string_instead_of_argv():
+    """A caller used to writing shell will try this; it must fail clearly."""
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    result = json.loads(
+        await exec_in_pod(
+            {"name": "p", "namespace": "automation", "command": "ps -eo pid,stat"}
+        )
+    )
+    assert "list" in result["error"]
+
+
+async def test_exec_returns_output_wrapped_as_untrusted():
+    """Container output is data from somewhere else, never instructions."""
+    from home_ops_agent.agent.tools.kubernetes import exec_in_pod
+
+    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
+        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="  PID PPID STAT COMMAND\n 42 1 Z defunct\n"
+    ):
+        out = await exec_in_pod(
+            {
+                "name": "ai-harness-1",
+                "namespace": "automation",
+                "container": "app",
+                "command": ["ps", "-eo", "pid,ppid,stat,comm"],
+            }
+        )
+
+    assert "Z defunct" in out
+    assert "exec automation/ai-harness-1 [app]" in out
+
+
+async def test_exec_says_when_it_truncated():
+    """A cut-off process listing reads as a complete one.
+
+    "No zombies" drawn from output that was silently clipped is a wrong answer
+    delivered confidently, which is the failure this tool exists to avoid.
+    """
+    from home_ops_agent.agent.tools.kubernetes import EXEC_MAX_OUTPUT_CHARS, exec_in_pod
+
+    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
+        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="x" * (EXEC_MAX_OUTPUT_CHARS + 500)
+    ):
+        out = await exec_in_pod(
+            {"name": "p", "namespace": "automation", "command": ["ps", "-ef"]}
+        )
+
+    assert "(truncated)" in out
