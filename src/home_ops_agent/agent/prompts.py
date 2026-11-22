@@ -148,6 +148,9 @@ Answer `SAFE_TO_MERGE: yes` only when ALL of these hold:
 - Either: component is NOT in the critical list, OR the change is confined to
   tooling-only files
 - Release notes confirm no breaking changes
+- The PR is NOT labelled `manual-upgrade` or `do-not-merge`. Those labels mean
+  the upgrade needs manual steps (a schema migration, for example); such a PR
+  is never SAFE_TO_MERGE, whatever its version bump or label type
 
 If any condition fails, answer `SAFE_TO_MERGE: no` and then decide FIXABLE on
 its own merits. Nothing is merged without that line reading `yes`, so never

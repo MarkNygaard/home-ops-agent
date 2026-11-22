@@ -399,8 +399,9 @@ async def test_exec_judges_a_full_path_by_its_basename():
     assert "BLOCKED" in blocked["error"]
 
     # ...and the same normalisation must not reject a legitimate absolute path.
-    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
-        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="  PID TTY\n"
+    with (
+        patch("home_ops_agent.agent.tools.kubernetes.core_v1"),
+        patch("home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="  PID TTY\n"),
     ):
         allowed = await exec_in_pod(
             {"name": "p", "namespace": "automation", "command": ["/bin/ps", "-ef"]}
@@ -431,9 +432,7 @@ async def test_exec_rejects_a_shell_string_instead_of_argv():
     from home_ops_agent.agent.tools.kubernetes import exec_in_pod
 
     result = json.loads(
-        await exec_in_pod(
-            {"name": "p", "namespace": "automation", "command": "ps -eo pid,stat"}
-        )
+        await exec_in_pod({"name": "p", "namespace": "automation", "command": "ps -eo pid,stat"})
     )
     assert "list" in result["error"]
 
@@ -442,8 +441,12 @@ async def test_exec_returns_output_wrapped_as_untrusted():
     """Container output is data from somewhere else, never instructions."""
     from home_ops_agent.agent.tools.kubernetes import exec_in_pod
 
-    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
-        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="  PID PPID STAT COMMAND\n 42 1 Z defunct\n"
+    with (
+        patch("home_ops_agent.agent.tools.kubernetes.core_v1"),
+        patch(
+            "home_ops_agent.agent.tools.kubernetes.k8s_stream",
+            return_value="  PID PPID STAT COMMAND\n 42 1 Z defunct\n",
+        ),
     ):
         out = await exec_in_pod(
             {
@@ -466,11 +469,13 @@ async def test_exec_says_when_it_truncated():
     """
     from home_ops_agent.agent.tools.kubernetes import EXEC_MAX_OUTPUT_CHARS, exec_in_pod
 
-    with patch("home_ops_agent.agent.tools.kubernetes.core_v1"), patch(
-        "home_ops_agent.agent.tools.kubernetes.k8s_stream", return_value="x" * (EXEC_MAX_OUTPUT_CHARS + 500)
+    with (
+        patch("home_ops_agent.agent.tools.kubernetes.core_v1"),
+        patch(
+            "home_ops_agent.agent.tools.kubernetes.k8s_stream",
+            return_value="x" * (EXEC_MAX_OUTPUT_CHARS + 500),
+        ),
     ):
-        out = await exec_in_pod(
-            {"name": "p", "namespace": "automation", "command": ["ps", "-ef"]}
-        )
+        out = await exec_in_pod({"name": "p", "namespace": "automation", "command": ["ps", "-ef"]})
 
     assert "(truncated)" in out
