@@ -7,6 +7,7 @@ import pytest
 from home_ops_agent.agent import untrusted
 from home_ops_agent.agent.tools.github import (
     ALLOWED_COMMIT_PATHS,
+    HOLD_LABELS,
     PROTECTED_BRANCHES,
     create_branch,
     create_commit,
@@ -208,18 +209,53 @@ async def test_get_check_runs(httpx_mock, mock_settings):
     assert result[0]["conclusion"] == "success"
 
 
+def _pr_with_labels(*names: str) -> dict:
+    return {"number": 42, "labels": [{"name": n} for n in names]}
+
+
 async def test_merge_pr_success(httpx_mock, mock_settings):
-    httpx_mock.add_response(status_code=200, json={"sha": "merge_sha_123"})
+    httpx_mock.add_response(method="GET", json=_pr_with_labels("type/patch"))
+    httpx_mock.add_response(method="PUT", status_code=200, json={"sha": "merge_sha_123"})
     result = json.loads(await merge_pr({"pr_number": 42}))
     assert result["status"] == "merged"
     assert result["sha"] == "merge_sha_123"
 
 
 async def test_merge_pr_failure(httpx_mock, mock_settings):
-    httpx_mock.add_response(status_code=409, json={"message": "Pull request not mergeable"})
+    httpx_mock.add_response(method="GET", json=_pr_with_labels())
+    httpx_mock.add_response(
+        method="PUT", status_code=409, json={"message": "Pull request not mergeable"}
+    )
     result = json.loads(await merge_pr({"pr_number": 42}))
     assert result["status"] == "failed"
     assert "not mergeable" in result["message"]
+
+
+@pytest.mark.parametrize("label", ["manual-upgrade", "do-not-merge", "Manual-Upgrade"])
+async def test_merge_pr_refuses_a_held_pr(httpx_mock, mock_settings, label):
+    """home-ops #1566 (rocicorp/zero, a schema migration needing manual steps)
+    was auto-merged. A hold label must stop every merge path, so the check
+    lives in merge_pr and no PUT /merge is ever sent."""
+    httpx_mock.add_response(method="GET", json=_pr_with_labels("type/minor", label))
+    result = json.loads(await merge_pr({"pr_number": 42}))
+    assert result["status"] == "failed"
+    assert f"held by label {label}" in result["message"]
+    assert "manual merge only" in result["message"]
+    assert all(r.method != "PUT" for r in httpx_mock.get_requests())
+
+
+async def test_merge_pr_fails_closed_when_labels_cannot_be_read(httpx_mock, mock_settings):
+    httpx_mock.add_response(method="GET", status_code=502, text="bad gateway")
+    result = json.loads(await merge_pr({"pr_number": 42}))
+    assert result["status"] == "failed"
+    assert "not merging" in result["message"]
+    assert all(r.method != "PUT" for r in httpx_mock.get_requests())
+
+
+def test_hold_labels_include_manual_upgrade():
+    """Renovate in home-ops (#1572) applies this exact label; renaming either
+    side silently re-opens auto-merge."""
+    assert "manual-upgrade" in HOLD_LABELS
 
 
 async def test_create_pr_comment_success(httpx_mock, mock_settings):
@@ -636,8 +672,10 @@ async def test_find_files_ranks_the_real_manifest_above_a_passing_mention(
             "truncated": False,
             "tree": [
                 {"path": "docs/niles-notes.md", "type": "blob"},
-                {"path": "kubernetes/apps/home-automation/niles/app/helmrelease.yaml",
-                 "type": "blob"},
+                {
+                    "path": "kubernetes/apps/home-automation/niles/app/helmrelease.yaml",
+                    "type": "blob",
+                },
                 {"path": "kubernetes/apps/home-automation/niles", "type": "tree"},
                 {"path": "kubernetes/apps/media/radarr/app/helmrelease.yaml", "type": "blob"},
             ],
@@ -668,8 +706,10 @@ async def test_find_files_reports_truncation_both_ways(httpx_mock, mock_settings
     httpx_mock.add_response(
         json={
             "truncated": True,
-            "tree": [{"path": f"kubernetes/apps/a{i}/helmrelease.yaml", "type": "blob"}
-                     for i in range(10)],
+            "tree": [
+                {"path": f"kubernetes/apps/a{i}/helmrelease.yaml", "type": "blob"}
+                for i in range(10)
+            ],
         }
     )
 

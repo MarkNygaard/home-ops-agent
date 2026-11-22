@@ -77,3 +77,19 @@ def test_the_reescalation_guard_matches_what_deep_review_writes():
     summary_lower = DEEP_REFUSAL.lower()
     already_deep = "deep_review" in summary_lower or "deep review" in summary_lower
     assert already_deep, "a completed deep review must not be escalated again"
+
+
+@pytest.mark.parametrize("pr_mode", ["auto_merge", "auto_merge_minor", "auto_merge_all"])
+async def test_a_held_pr_is_never_safe_to_auto_merge(db_session, monkeypatch, pr_mode):
+    """home-ops #1566: type/minor, reviewed SAFE_TO_MERGE, merged, and its schema
+    migration took zero-cache down. A hold label outranks every mode."""
+    from home_ops_agent.workers import pr_monitor
+
+    async def _mode():
+        return pr_mode
+
+    monkeypatch.setattr(pr_monitor, "_get_pr_mode", _mode)
+    held = {"number": 1566, "author": "renovate[bot]", "labels": ["type/patch", "manual-upgrade"]}
+    assert await _is_safe_to_auto_merge(held, CLEAN_APPROVAL) is False
+    unheld = {**held, "labels": ["type/patch"]}
+    assert await _is_safe_to_auto_merge(unheld, CLEAN_APPROVAL) is True

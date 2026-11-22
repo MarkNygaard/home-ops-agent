@@ -280,9 +280,30 @@ async def create_pr_comment(params: dict) -> str:
         return json.dumps({"status": "ok", "comment_id": resp.json()["id"]})
 
 
+# Labels that put a PR beyond any automated merge. Checked inside merge_pr
+# itself because every merge path ends there: the next-cycle gate, the inline
+# merge in auto_merge_all, the merge after a deep-review approval, its retry,
+# the merge after a Code Fix's CI, and a direct instruction in chat. A check
+# only in _is_safe_to_auto_merge left four of those open.
+#
+# Why it exists: home-ops #1566 bumped rocicorp/zero 1.11.4 -> 1.11.6, was
+# labelled type/minor and reviewed SAFE_TO_MERGE, and was merged. That release
+# ran a schema migration needing manual steps and took a production
+# zero-cache down. Renovate now labels such PRs `manual-upgrade`.
+HOLD_LABELS = frozenset({"manual-upgrade", "do-not-merge"})
+
+
+def hold_label(labels: list[str] | None) -> str | None:
+    """The first hold label on a PR, or None. Case-insensitive."""
+    for label in labels or []:
+        if label.lower() in HOLD_LABELS:
+            return label
+    return None
+
+
 @audit.records("github_merge_pr")
 async def merge_pr(params: dict) -> str:
-    """Merge a PR (squash merge)."""
+    """Merge a PR (squash merge), unless it carries a hold label."""
     if error := repo_configured():
         return error
 
@@ -293,6 +314,29 @@ async def merge_pr(params: dict) -> str:
     logger.warning("Merge requested for PR #%s", pr_number)
 
     async with httpx.AsyncClient() as client:
+        # Labels are read fresh from GitHub, not from the caller's copy: a
+        # label added after the PR was listed (or by Renovate on a rebase)
+        # must still stop the merge. Fails closed -- if the labels cannot be
+        # read, nothing is merged.
+        pr_url = f"{GITHUB_API}/repos/{settings.github_repo}/pulls/{pr_number}"
+        pr_resp = await client.get(pr_url, headers=_headers())
+        if pr_resp.status_code != 200:
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "message": (
+                        f"could not read PR labels to check for a merge hold "
+                        f"(HTTP {pr_resp.status_code}); not merging"
+                    ),
+                }
+            )
+        labels = [lbl.get("name", "") for lbl in pr_resp.json().get("labels", [])]
+        if held := hold_label(labels):
+            logger.warning("Merge of PR #%s refused: held by label %s", pr_number, held)
+            return json.dumps(
+                {"status": "failed", "message": f"held by label {held}: manual merge only"}
+            )
+
         url = f"{GITHUB_API}/repos/{settings.github_repo}/pulls/{pr_number}/merge"
         payload: dict[str, Any] = {"merge_method": "squash"}
         if commit_title:

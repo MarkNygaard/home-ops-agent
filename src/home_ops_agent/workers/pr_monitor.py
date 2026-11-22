@@ -12,6 +12,7 @@ from home_ops_agent.agent.costs import record_usage
 from home_ops_agent.agent.models import get_model_for_task
 from home_ops_agent.agent.prompts import get_prompt
 from home_ops_agent.agent.skills import registry
+from home_ops_agent.agent.tools.github import hold_label
 from home_ops_agent.auth.credentials import build_credentials
 from home_ops_agent.config import settings
 from home_ops_agent.database import AgentTask, Conversation, Message, Setting, async_session
@@ -153,6 +154,13 @@ async def _is_safe_to_auto_merge(pr: dict, summary: str) -> bool:
     """Check if a previously reviewed PR meets auto-merge criteria."""
     # Must be from renovate
     if pr.get("author") != "renovate[bot]":
+        return False
+
+    # A hold label is final whatever the review said. merge_pr enforces it
+    # too; refusing here as well keeps the gate from approving -- and then
+    # retrying and announcing a failed merge -- every cycle.
+    if held := hold_label(pr.get("labels")):
+        logger.info("PR #%s not auto-merged: held by label %s", pr.get("number"), held)
         return False
 
     # One reading of the text, shared with the router and the history label. A
@@ -472,6 +480,12 @@ async def _route(pr: dict, result: AgentResult, agent: Agent, pr_mode: str) -> b
             return False
 
     if pr_mode == "auto_merge_all":
+        if held := hold_label(pr.get("labels")):
+            # A deep review exists only to approve a merge, and a held PR
+            # cannot be merged by the agent, so it would be an Opus run whose
+            # best outcome is "approved (merge failed)".
+            logger.info("PR #%s held by label %s; skipping deep review", pr_number, held)
+            return False
         progress.step("deep_review", f"PR #{pr_number}")
         await deep_review_pr(pr, response, agent)
 
